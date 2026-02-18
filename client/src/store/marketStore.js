@@ -70,7 +70,7 @@ const resample1mToSeconds = (klines1m, secondInterval) => {
   return result;
 };
 
-const fetchJsonFromUrls = async (urls, endpoint, params = {}) => {
+const fetchJsonFromUrls = async (urls, endpoint, params = {}, validate = null) => {
   const query = new URLSearchParams(params);
   const suffix = query.toString() ? `${endpoint}?${query.toString()}` : endpoint;
   let lastError = null;
@@ -82,7 +82,11 @@ const fetchJsonFromUrls = async (urls, endpoint, params = {}) => {
         const text = await response.text();
         throw new Error(`HTTP ${response.status}: ${text || response.statusText}`);
       }
-      return await response.json();
+      const data = await response.json();
+      if (typeof validate === 'function' && !validate(data)) {
+        throw new Error(`Invalid payload from ${baseUrl}${endpoint}`);
+      }
+      return data;
     } catch (error) {
       lastError = error;
     }
@@ -92,7 +96,12 @@ const fetchJsonFromUrls = async (urls, endpoint, params = {}) => {
 };
 
 const fetchBinanceFuturesTokensDirect = async (searchQuery = '') => {
-  const tickers = await fetchJsonFromUrls(BINANCE_FUTURES_BASE_URLS, '/ticker/24hr');
+  const tickers = await fetchJsonFromUrls(
+    BINANCE_FUTURES_BASE_URLS,
+    '/ticker/24hr',
+    {},
+    (data) => Array.isArray(data)
+  );
   const list = Array.isArray(tickers) ? tickers : [];
   const searchLower = searchQuery.trim().toLowerCase();
 
@@ -119,6 +128,10 @@ const fetchBinanceFuturesTokensDirect = async (searchQuery = '') => {
       );
     });
 
+  if (tokens.length === 0) {
+    throw new Error('Direct Binance Futures fetch returned empty token list');
+  }
+
   return tokens;
 };
 
@@ -134,12 +147,17 @@ const fetchBinanceFuturesKlinesDirect = async (
     ? { '1s': 50, '5s': 84, '15s': 125 }[interval]
     : limit;
 
-  const rows = await fetchJsonFromUrls(BINANCE_FUTURES_BASE_URLS, '/klines', {
-    symbol: String(symbol || '').toUpperCase(),
-    interval: apiInterval,
-    limit: String(apiLimit),
-    ...(before ? { endTime: String(Math.floor(Number(before)) - 1) } : {}),
-  });
+  const rows = await fetchJsonFromUrls(
+    BINANCE_FUTURES_BASE_URLS,
+    '/klines',
+    {
+      symbol: String(symbol || '').toUpperCase(),
+      interval: apiInterval,
+      limit: String(apiLimit),
+      ...(before ? { endTime: String(Math.floor(Number(before)) - 1) } : {}),
+    },
+    (data) => Array.isArray(data)
+  );
 
   const klines = (Array.isArray(rows) ? rows : [])
     .filter((row) => Array.isArray(row) && row.length >= 6)
@@ -269,6 +287,22 @@ export const useMarketStore = create((set, get) => ({
     };
     
     try {
+      if (useDirectFuturesClientFetch) {
+        try {
+          const directTokens = await fetchBinanceFuturesTokensDirect(searchQuery);
+          set({
+            binanceTokens: directTokens,
+            loadingBinance: false,
+            binanceError: null,
+          });
+          return;
+        } catch (directError) {
+          console.warn('[MarketStore] Direct Binance Futures fetch failed, falling back to backend:', {
+            message: directError.message,
+          });
+        }
+      }
+
       const params = new URLSearchParams({
         exchangeType,
         ...(searchQuery && { search: searchQuery })
