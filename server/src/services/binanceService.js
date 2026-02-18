@@ -1,5 +1,6 @@
 const axios = require('axios');
 const WebSocket = require('ws');
+const futuresUsdtBaseline = require('../data/binanceFuturesUsdtSymbols.json');
 
 const FUTURES_BASE_URL = 'https://fapi.binance.com/fapi/v1';
 const SPOT_BASE_URL = 'https://api.binance.com/api/v3';
@@ -186,8 +187,13 @@ function fetchFuturesTokensViaWsSnapshot(timeoutMs = 12000, captureMs = 7000) {
     };
 
     const buildTokens = () => {
-      const list = Array.from(symbols)
-        .filter((symbol) => typeof symbol === 'string' && symbol.endsWith('USDT'))
+      const symbolUniverse = new Set(Array.isArray(futuresUsdtBaseline) ? futuresUsdtBaseline : []);
+      for (const symbol of symbols) {
+        symbolUniverse.add(symbol);
+      }
+
+      const list = Array.from(symbolUniverse)
+        .filter((symbol) => typeof symbol === 'string' && /^[A-Z0-9]+USDT$/.test(symbol))
         .map((fullSymbol) => {
           const ticker = tickerMap.get(fullSymbol) || {};
           const token = {
