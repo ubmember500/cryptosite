@@ -3,6 +3,7 @@ const axios = require('axios');
 const FUTURES_BASE_URL = 'https://fapi.binance.com/fapi/v1';
 const SPOT_BASE_URL = 'https://api.binance.com/api/v3';
 const FUTURES_BASE_URLS = [
+  'https://data-api.binance.vision/fapi/v1',
   'https://fapi.binance.com/fapi/v1',
   'https://fapi1.binance.com/fapi/v1',
   'https://fapi2.binance.com/fapi/v1',
@@ -558,6 +559,13 @@ async function fetchFuturesTokens(retries = 1) {
         return cache.futures.data;
       }
 
+      // Last data fallback: try lightweight price endpoint before failing hard.
+      try {
+        return await fetchLightweightTokens('futures');
+      } catch (lightweightError) {
+        console.warn('[Futures] Lightweight fallback failed:', lightweightError.message);
+      }
+
       if (isBinanceRestrictedLocationError(error)) {
         throw createUpstreamUnavailableError(
           'Binance Futures is unavailable from the current server region. Try another exchange.',
@@ -691,6 +699,13 @@ async function fetchSpotTokens(retries = 1) {
         return cache.spot.data;
       }
 
+      // Last data fallback: try lightweight price endpoint before failing hard.
+      try {
+        return await fetchLightweightTokens('spot');
+      } catch (lightweightError) {
+        console.warn('[Spot] Lightweight fallback failed:', lightweightError.message);
+      }
+
       if (isBinanceRestrictedLocationError(error)) {
         throw createUpstreamUnavailableError(
           'Binance Spot is unavailable from the current server region. Try another exchange.',
@@ -780,6 +795,13 @@ async function fetchTokensWithNATR(exchangeType, options = {}) {
 
       // NATR is already calculated instantly in fetchFuturesTokens/fetchSpotTokens
       // using ticker data (high24h, low24h, lastPrice)
+      if (!Array.isArray(tokens) || tokens.length === 0) {
+        console.warn(
+          `[${exchangeType.toUpperCase()}] Empty token list from primary source, trying lightweight fallback`
+        );
+        tokens = await fetchLightweightTokens(exchangeType);
+      }
+
       console.log(
         `[${exchangeType.toUpperCase()}] Returning ${tokens.length} tokens with instant NATR`
       );
