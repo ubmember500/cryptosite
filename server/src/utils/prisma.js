@@ -1,4 +1,3 @@
-const { PrismaBetterSqlite3 } = require('@prisma/adapter-better-sqlite3');
 const { execSync } = require('node:child_process');
 require('dotenv').config();
 
@@ -21,16 +20,12 @@ function loadPrismaClient() {
 }
 
 const { PrismaClient } = loadPrismaClient();
-const dbUrl = process.env.DATABASE_URL || 'file:./dev.db';
+const dbUrl = process.env.DATABASE_URL;
 
-if (process.env.RENDER === 'true') {
-	const isPersistentRenderPath = /^file:\/var\/data\//.test(dbUrl);
-	if (!isPersistentRenderPath) {
-		console.warn('[prisma] Running on Render without persistent DB path. Set DATABASE_URL=file:/var/data/dev.db and attach a Render Disk at /var/data to persist users.');
-	}
+if (!dbUrl) {
+	throw new Error('[prisma] DATABASE_URL is required. Use an external PostgreSQL URL (Neon/Supabase/Render Postgres).');
 }
 
-const adapter = new PrismaBetterSqlite3({ url: dbUrl });
-const prisma = new PrismaClient({ adapter });
+const prisma = new PrismaClient();
 
 module.exports = prisma;
