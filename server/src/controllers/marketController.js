@@ -106,6 +106,15 @@ async function getBinanceTokens(req, res, next) {
       totalCount: tokens.length,
     });
   } catch (error) {
+    if ([429, 502, 503].includes(error?.statusCode || error?.status)) {
+      return res.json({
+        tokens: [],
+        exchangeType: req.query.exchangeType,
+        totalCount: 0,
+        upstreamUnavailable: true,
+        warning: error.message,
+      });
+    }
     next(error);
   }
 }
@@ -323,6 +332,16 @@ async function getBinanceKlines(req, res, next) {
 
     res.json(response);
   } catch (error) {
+    if ([429, 502, 503].includes(error?.statusCode || error?.status)) {
+      return res.json({
+        klines: [],
+        symbol: String(req.query.symbol || '').toUpperCase(),
+        exchangeType: req.query.exchangeType,
+        interval: req.query.interval || '15m',
+        upstreamUnavailable: true,
+        warning: error.message,
+      });
+    }
     // Calculate error duration
     const errorTime = Date.now();
     const errorDuration = ((errorTime - requestStartTime) / 1000).toFixed(3);
