@@ -1,4 +1,5 @@
 const axios = require('axios');
+const WebSocket = require('ws');
 
 const FUTURES_BASE_URL = 'https://fapi.binance.com/fapi/v1';
 const SPOT_BASE_URL = 'https://api.binance.com/api/v3';
@@ -166,6 +167,80 @@ async function getLastPricesBySymbols(symbols, exchangeType) {
  */
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function fetchFuturesTokensViaWsSnapshot(timeoutMs = 9000) {
+  return new Promise((resolve, reject) => {
+    const wsUrl = 'wss://fstream.binance.com/ws/!ticker@arr';
+    const ws = new WebSocket(wsUrl);
+    let settled = false;
+
+    const cleanup = () => {
+      try {
+        ws.removeAllListeners();
+      } catch {}
+      try {
+        if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+          ws.close();
+        }
+      } catch {}
+    };
+
+    const finish = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      cleanup();
+      fn(value);
+    };
+
+    const timer = setTimeout(() => {
+      finish(reject, new Error('Timeout waiting Binance futures WS ticker snapshot'));
+    }, timeoutMs);
+
+    ws.on('message', (raw) => {
+      try {
+        const payload = JSON.parse(String(raw));
+        if (!Array.isArray(payload)) {
+          return;
+        }
+
+        const tokens = payload
+          .filter((item) => typeof item?.s === 'string' && item.s.endsWith('USDT'))
+          .map((item) => {
+            const token = {
+              symbol: item.s.replace('USDT', ''),
+              fullSymbol: item.s,
+              lastPrice: Number.isFinite(parseFloat(item.c)) ? parseFloat(item.c) : null,
+              volume24h: Number.isFinite(parseFloat(item.q)) ? parseFloat(item.q) : null,
+              priceChangePercent24h: Number.isFinite(parseFloat(item.P)) ? parseFloat(item.P) : null,
+              high24h: Number.isFinite(parseFloat(item.h)) ? parseFloat(item.h) : null,
+              low24h: Number.isFinite(parseFloat(item.l)) ? parseFloat(item.l) : null,
+            };
+            token.natr = calculateInstantNATR(token);
+            return token;
+          });
+
+        if (tokens.length === 0) {
+          return;
+        }
+
+        finish(resolve, tokens);
+      } catch (error) {
+        // ignore malformed frame, keep waiting
+      }
+    });
+
+    ws.on('error', (error) => {
+      finish(reject, error);
+    });
+
+    ws.on('close', () => {
+      if (!settled) {
+        finish(reject, new Error('Binance futures WS closed before snapshot'));
+      }
+    });
+  });
 }
 
 function toErrorMessage(error) {
@@ -560,6 +635,17 @@ async function fetchFuturesTokens(retries = 1) {
         return await fetchLightweightTokens('futures');
       } catch (lightweightError) {
         console.warn('[Futures] Lightweight fallback failed:', lightweightError.message);
+      }
+
+      // Region/network fallback: derive futures tickers from WS snapshot.
+      try {
+        const wsTokens = await fetchFuturesTokensViaWsSnapshot();
+        if (Array.isArray(wsTokens) && wsTokens.length > 0) {
+          console.warn(`[Futures] Using WS ticker snapshot fallback (${wsTokens.length} tokens)`);
+          return wsTokens;
+        }
+      } catch (wsError) {
+        console.warn('[Futures] WS snapshot fallback failed:', wsError.message);
       }
 
       if (isBinanceRestrictedLocationError(error)) {
