@@ -514,6 +514,32 @@ export const useMarketStore = create((set, get) => ({
     const historyKey = getChartHistoryKey({ exchange, exchangeType, symbol, interval });
     const useDirectFuturesClientFetch = exchange === 'binance' && exchangeType === 'futures';
     try {
+      if (useDirectFuturesClientFetch) {
+        try {
+          const directKlines = await fetchBinanceFuturesKlinesDirect(symbol, interval, CHART_PAGE_LIMIT);
+          if (Array.isArray(directKlines) && directKlines.length > 1) {
+            const earliestTime = Number(directKlines[0]?.time) || null;
+            set((state) => ({
+              chartData: directKlines,
+              chartDataMap: { ...state.chartDataMap, [symbol]: directKlines },
+              chartHistoryMap: {
+                ...state.chartHistoryMap,
+                [historyKey]: {
+                  earliestTime,
+                  hasMoreHistory: directKlines.length >= CHART_PAGE_LIMIT,
+                  loadingOlder: false,
+                },
+              },
+              loadingChart: false,
+              chartError: null,
+            }));
+            return;
+          }
+        } catch (directError) {
+          // Fall through to backend request
+        }
+      }
+
       const params = new URLSearchParams({
         symbol,
         exchangeType,
@@ -588,6 +614,7 @@ export const useMarketStore = create((set, get) => ({
   loadOlderChartData: async (symbol, exchangeType, interval = '15m', beforeTimestampMs) => {
     const exchange = get().exchange;
     const historyKey = getChartHistoryKey({ exchange, exchangeType, symbol, interval });
+    const useDirectFuturesClientFetch = exchange === 'binance' && exchangeType === 'futures';
     const historyMeta = get().chartHistoryMap[historyKey] || {
       earliestTime: null,
       hasMoreHistory: true,
@@ -614,6 +641,44 @@ export const useMarketStore = create((set, get) => ({
     }));
 
     try {
+      if (useDirectFuturesClientFetch) {
+        try {
+          const fetchedKlines = await fetchBinanceFuturesKlinesDirect(
+            symbol,
+            interval,
+            CHART_PAGE_LIMIT,
+            beforeTimestamp
+          );
+          const beforeSeconds = Math.floor(beforeTimestamp / 1000);
+          const olderKlines = fetchedKlines.filter((kline) => Number(kline.time) < beforeSeconds);
+
+          set((state) => {
+            const currentData = state.chartDataMap[symbol] || state.chartData || [];
+            const merged = mergeCandlesByTime(olderKlines, currentData);
+            const earliestTime = merged.length > 0 ? Number(merged[0].time) : null;
+            const hasMoreHistory = olderKlines.length > 0 && fetchedKlines.length >= CHART_PAGE_LIMIT;
+            const isSelectedSymbol = state.selectedToken?.fullSymbol === symbol;
+
+            return {
+              ...(isSelectedSymbol && { chartData: merged }),
+              chartDataMap: { ...state.chartDataMap, [symbol]: merged },
+              chartHistoryMap: {
+                ...state.chartHistoryMap,
+                [historyKey]: {
+                  earliestTime,
+                  hasMoreHistory,
+                  loadingOlder: false,
+                },
+              },
+            };
+          });
+
+          return olderKlines;
+        } catch (directError) {
+          // Fall through to backend request
+        }
+      }
+
       const params = new URLSearchParams({
         symbol,
         exchangeType,
