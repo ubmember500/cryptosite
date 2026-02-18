@@ -169,13 +169,50 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function fetchFuturesTokensViaWsSnapshot(timeoutMs = 9000) {
+function fetchFuturesTokensViaWsSnapshot(timeoutMs = 12000, captureMs = 7000) {
   return new Promise((resolve, reject) => {
-    const wsUrl = 'wss://fstream.binance.com/ws/!ticker@arr';
-    const ws = new WebSocket(wsUrl);
+    const tickerWsUrl = 'wss://fstream.binance.com/ws/!ticker@arr';
+    const bookTickerWsUrl = 'wss://fstream.binance.com/ws/!bookTicker';
+    const tickerWs = new WebSocket(tickerWsUrl);
+    const bookTickerWs = new WebSocket(bookTickerWsUrl);
     let settled = false;
 
-    const cleanup = () => {
+    const symbols = new Set();
+    const tickerMap = new Map();
+
+    const toNum = (value) => {
+      const parsed = parseFloat(value);
+      return Number.isFinite(parsed) ? parsed : null;
+    };
+
+    const buildTokens = () => {
+      const list = Array.from(symbols)
+        .filter((symbol) => typeof symbol === 'string' && symbol.endsWith('USDT'))
+        .map((fullSymbol) => {
+          const ticker = tickerMap.get(fullSymbol) || {};
+          const token = {
+            symbol: fullSymbol.replace('USDT', ''),
+            fullSymbol,
+            lastPrice: toNum(ticker.c),
+            volume24h: toNum(ticker.q),
+            priceChangePercent24h: toNum(ticker.P),
+            high24h: toNum(ticker.h),
+            low24h: toNum(ticker.l),
+          };
+          token.natr = calculateInstantNATR(token);
+          return token;
+        });
+
+      list.sort((left, right) => {
+        const leftVol = Number.isFinite(left.volume24h) ? left.volume24h : -1;
+        const rightVol = Number.isFinite(right.volume24h) ? right.volume24h : -1;
+        return rightVol - leftVol;
+      });
+
+      return list;
+    };
+
+    const cleanupWs = (ws) => {
       try {
         ws.removeAllListeners();
       } catch {}
@@ -186,60 +223,83 @@ function fetchFuturesTokensViaWsSnapshot(timeoutMs = 9000) {
       } catch {}
     };
 
+    const cleanup = () => {
+      cleanupWs(tickerWs);
+      cleanupWs(bookTickerWs);
+    };
+
     const finish = (fn, value) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      clearTimeout(timeoutTimer);
+      clearTimeout(captureTimer);
       cleanup();
       fn(value);
     };
 
-    const timer = setTimeout(() => {
-      finish(reject, new Error('Timeout waiting Binance futures WS ticker snapshot'));
+    const timeoutTimer = setTimeout(() => {
+      const tokens = buildTokens();
+      if (tokens.length > 0) {
+        finish(resolve, tokens);
+      } else {
+        finish(reject, new Error('Timeout waiting Binance futures WS ticker snapshot'));
+      }
     }, timeoutMs);
 
-    ws.on('message', (raw) => {
+    const captureTimer = setTimeout(() => {
+      const tokens = buildTokens();
+      if (tokens.length > 0) {
+        finish(resolve, tokens);
+      }
+    }, captureMs);
+
+    tickerWs.on('message', (raw) => {
       try {
         const payload = JSON.parse(String(raw));
-        if (!Array.isArray(payload)) {
-          return;
+        if (!Array.isArray(payload)) return;
+
+        for (const item of payload) {
+          if (typeof item?.s !== 'string') continue;
+          symbols.add(item.s);
+          tickerMap.set(item.s, item);
         }
+      } catch {
+        // ignore malformed frame
+      }
+    });
 
-        const tokens = payload
-          .filter((item) => typeof item?.s === 'string' && item.s.endsWith('USDT'))
-          .map((item) => {
-            const token = {
-              symbol: item.s.replace('USDT', ''),
-              fullSymbol: item.s,
-              lastPrice: Number.isFinite(parseFloat(item.c)) ? parseFloat(item.c) : null,
-              volume24h: Number.isFinite(parseFloat(item.q)) ? parseFloat(item.q) : null,
-              priceChangePercent24h: Number.isFinite(parseFloat(item.P)) ? parseFloat(item.P) : null,
-              high24h: Number.isFinite(parseFloat(item.h)) ? parseFloat(item.h) : null,
-              low24h: Number.isFinite(parseFloat(item.l)) ? parseFloat(item.l) : null,
-            };
-            token.natr = calculateInstantNATR(token);
-            return token;
-          });
-
-        if (tokens.length === 0) {
-          return;
+    bookTickerWs.on('message', (raw) => {
+      try {
+        const payload = JSON.parse(String(raw));
+        const symbol = payload?.s;
+        if (typeof symbol === 'string') {
+          symbols.add(symbol);
         }
+      } catch {
+        // ignore malformed frame
+      }
+    });
 
+    const onWsError = () => {
+      const tokens = buildTokens();
+      if (tokens.length > 0) {
         finish(resolve, tokens);
-      } catch (error) {
-        // ignore malformed frame, keep waiting
       }
-    });
+    };
 
-    ws.on('error', (error) => {
-      finish(reject, error);
-    });
+    tickerWs.on('error', onWsError);
+    bookTickerWs.on('error', onWsError);
 
-    ws.on('close', () => {
-      if (!settled) {
-        finish(reject, new Error('Binance futures WS closed before snapshot'));
+    const onWsClose = () => {
+      if (settled) return;
+      const tokens = buildTokens();
+      if (tokens.length > 0) {
+        finish(resolve, tokens);
       }
-    });
+    };
+
+    tickerWs.on('close', onWsClose);
+    bookTickerWs.on('close', onWsClose);
   });
 }
 
