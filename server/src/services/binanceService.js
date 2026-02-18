@@ -563,18 +563,10 @@ async function fetchFuturesTokens(retries = 1) {
       }
 
       if (isBinanceRestrictedLocationError(error)) {
-        console.warn(
-          '[Futures] Region restriction detected. Falling back to Binance Spot token universe.'
+        throw createUpstreamUnavailableError(
+          'Binance Futures is unavailable from the current server region. Try another exchange.',
+          503
         );
-        try {
-          const spotTokens = await fetchSpotTokens(1);
-          return spotTokens;
-        } catch (spotFallbackError) {
-          throw createUpstreamUnavailableError(
-            'Binance Futures is unavailable from the current server region. Try another exchange.',
-            503
-          );
-        }
       }
 
       console.error('Error fetching Futures tokens:', error.message);
@@ -849,7 +841,7 @@ async function fetchKlines(
   limit = 500,
   options = {}
 ) {
-  const { retries = 1, before = null, allowSpotFallback = true } = options || {};
+  const { retries = 1, before = null } = options || {};
   // Validate interval (1s, 5s, 15s may not be supported by all Binance endpoints)
   const validIntervals = ['1s', '5s', '15s', '1m', '5m', '15m', '30m', '1h', '4h', '1d'];
   if (!validIntervals.includes(interval)) {
@@ -1052,22 +1044,6 @@ async function fetchKlines(
       }
 
       if (isBinanceRestrictedLocationError(error)) {
-        if (exchangeType === 'futures' && allowSpotFallback) {
-          console.warn(
-            `[FUTURES] Region restriction for ${symbol}. Falling back to SPOT klines.`
-          );
-          try {
-            return await fetchKlines(symbol, 'spot', interval, limit, {
-              retries,
-              before,
-              allowSpotFallback: false,
-            });
-          } catch (spotFallbackError) {
-            console.warn(
-              `[FUTURES] Spot fallback failed for ${symbol}: ${spotFallbackError.message}`
-            );
-          }
-        }
         throw createUpstreamUnavailableError(
           `Binance ${exchangeType} chart data is unavailable from the server region (restricted location).`,
           503

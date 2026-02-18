@@ -103,18 +103,6 @@ async function getBinanceTokens(req, res, next) {
       forceFresh,
     });
 
-    // If futures returns empty due upstream restrictions/mismatch, fallback to spot tokens
-    // so UI still loads instruments and charts can open.
-    if (exchangeType === 'futures' && (!Array.isArray(tokens) || tokens.length === 0)) {
-      try {
-        tokens = await binanceService.fetchTokensWithNATR('spot', {
-          forceFresh,
-        });
-      } catch (fallbackError) {
-        console.warn('[getBinanceTokens] Spot fallback for futures returned no data:', fallbackError.message);
-      }
-    }
-
     // Filter by search query if provided
     if (search && search.trim()) {
       const searchLower = search.trim().toLowerCase();

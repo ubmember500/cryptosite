@@ -17,6 +17,153 @@ const mergeCandlesByTime = (olderCandles, currentCandles) => {
   return Array.from(mergedMap.values()).sort((left, right) => Number(left.time) - Number(right.time));
 };
 
+const BINANCE_FUTURES_BASE_URLS = [
+  'https://fapi.binance.com/fapi/v1',
+  'https://fapi1.binance.com/fapi/v1',
+  'https://fapi2.binance.com/fapi/v1',
+  'https://fapi3.binance.com/fapi/v1',
+];
+
+const BINANCE_FUTURES_INTERVAL_MAP = {
+  '1s': '1m',
+  '5s': '1m',
+  '15s': '1m',
+};
+
+const toNumericOrNull = (value) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const calculateInstantNatr = (token) => {
+  if (
+    token.high24h == null ||
+    token.low24h == null ||
+    token.lastPrice == null ||
+    token.lastPrice === 0
+  ) {
+    return null;
+  }
+  const natr = ((token.high24h - token.low24h) / token.lastPrice) * 100;
+  return Number.isFinite(natr) ? Number(natr.toFixed(2)) : null;
+};
+
+const resample1mToSeconds = (klines1m, secondInterval) => {
+  const spanSeconds = { '1s': 1, '5s': 5, '15s': 15 }[secondInterval];
+  const subPerMinute = 60 / spanSeconds;
+  const result = [];
+
+  for (const candle of klines1m) {
+    const volumePerSub = candle.volume / subPerMinute;
+    for (let index = 0; index < subPerMinute; index += 1) {
+      result.push({
+        time: candle.time + index * spanSeconds,
+        open: candle.open,
+        high: candle.high,
+        low: candle.low,
+        close: candle.close,
+        volume: volumePerSub,
+      });
+    }
+  }
+
+  return result;
+};
+
+const fetchJsonFromUrls = async (urls, endpoint, params = {}) => {
+  const query = new URLSearchParams(params);
+  const suffix = query.toString() ? `${endpoint}?${query.toString()}` : endpoint;
+  let lastError = null;
+
+  for (const baseUrl of urls) {
+    try {
+      const response = await fetch(`${baseUrl}${suffix}`, { method: 'GET' });
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`HTTP ${response.status}: ${text || response.statusText}`);
+      }
+      return await response.json();
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError || new Error(`Failed all endpoints for ${endpoint}`);
+};
+
+const fetchBinanceFuturesTokensDirect = async (searchQuery = '') => {
+  const tickers = await fetchJsonFromUrls(BINANCE_FUTURES_BASE_URLS, '/ticker/24hr');
+  const list = Array.isArray(tickers) ? tickers : [];
+  const searchLower = searchQuery.trim().toLowerCase();
+
+  const tokens = list
+    .filter((ticker) => typeof ticker?.symbol === 'string' && ticker.symbol.endsWith('USDT'))
+    .map((ticker) => {
+      const token = {
+        symbol: ticker.symbol.replace('USDT', ''),
+        fullSymbol: ticker.symbol,
+        lastPrice: toNumericOrNull(ticker.lastPrice),
+        volume24h: toNumericOrNull(ticker.quoteVolume ?? ticker.volume),
+        priceChangePercent24h: toNumericOrNull(ticker.priceChangePercent),
+        high24h: toNumericOrNull(ticker.highPrice),
+        low24h: toNumericOrNull(ticker.lowPrice),
+      };
+      token.natr = calculateInstantNatr(token);
+      return token;
+    })
+    .filter((token) => {
+      if (!searchLower) return true;
+      return (
+        token.symbol.toLowerCase().includes(searchLower) ||
+        token.fullSymbol.toLowerCase().includes(searchLower)
+      );
+    });
+
+  return tokens;
+};
+
+const fetchBinanceFuturesKlinesDirect = async (
+  symbol,
+  interval = '15m',
+  limit = CHART_PAGE_LIMIT,
+  before = null
+) => {
+  const isSecondInterval = ['1s', '5s', '15s'].includes(interval);
+  const apiInterval = BINANCE_FUTURES_INTERVAL_MAP[interval] || interval;
+  const apiLimit = isSecondInterval
+    ? { '1s': 50, '5s': 84, '15s': 125 }[interval]
+    : limit;
+
+  const rows = await fetchJsonFromUrls(BINANCE_FUTURES_BASE_URLS, '/klines', {
+    symbol: String(symbol || '').toUpperCase(),
+    interval: apiInterval,
+    limit: String(apiLimit),
+    ...(before ? { endTime: String(Math.floor(Number(before)) - 1) } : {}),
+  });
+
+  const klines = (Array.isArray(rows) ? rows : [])
+    .filter((row) => Array.isArray(row) && row.length >= 6)
+    .map((row) => ({
+      time: Math.floor(Number(row[0]) / 1000),
+      open: Number(row[1]),
+      high: Number(row[2]),
+      low: Number(row[3]),
+      close: Number(row[4]),
+      volume: Number(row[5]),
+    }))
+    .filter(
+      (row) =>
+        Number.isFinite(row.time) &&
+        Number.isFinite(row.open) &&
+        Number.isFinite(row.high) &&
+        Number.isFinite(row.low) &&
+        Number.isFinite(row.close) &&
+        Number.isFinite(row.volume)
+    );
+
+  return isSecondInterval ? resample1mToSeconds(klines, interval) : klines;
+};
+
 export const useMarketStore = create((set, get) => ({
   coins: [],
   prices: {}, // Map of coinId -> price
@@ -96,6 +243,7 @@ export const useMarketStore = create((set, get) => ({
   fetchBinanceTokens: async (exchangeType, searchQuery = '', retryCount = 0) => {
     const exchange = get().exchange;
     set({ loadingBinance: true, binanceError: null });
+    const useDirectFuturesClientFetch = exchange === 'binance' && exchangeType === 'futures';
     
     // Helper function to check if error is CORS-related
     const isCORSError = (error) => {
@@ -183,6 +331,27 @@ export const useMarketStore = create((set, get) => ({
           tokenCount: response.data.tokens.length,
           firstToken: response.data.tokens[0] || null
         });
+
+        const backendReturnedNoFutures =
+          useDirectFuturesClientFetch &&
+          (
+            response.data?.upstreamUnavailable ||
+            !Array.isArray(response.data.tokens) ||
+            response.data.tokens.length === 0
+          );
+
+        if (backendReturnedNoFutures) {
+          const directTokens = await fetchBinanceFuturesTokensDirect(searchQuery);
+          response = {
+            ...response,
+            data: {
+              tokens: directTokens,
+              exchangeType,
+              totalCount: directTokens.length,
+              source: 'binance-futures-client-direct',
+            },
+          };
+        }
       } catch (axiosError) {
         // Check for CORS errors
         if (isCORSError(axiosError)) {
@@ -210,7 +379,20 @@ export const useMarketStore = create((set, get) => ({
           return get().fetchBinanceTokens(exchangeType, searchQuery, retryCount + 1);
         }
 
-        throw axiosError;
+        if (useDirectFuturesClientFetch) {
+          const directTokens = await fetchBinanceFuturesTokensDirect(searchQuery);
+          response = {
+            data: {
+              tokens: directTokens,
+              exchangeType,
+              totalCount: directTokens.length,
+              source: 'binance-futures-client-direct',
+            },
+            status: 200,
+          };
+        } else {
+          throw axiosError;
+        }
       }
       
       set({
@@ -269,6 +451,7 @@ export const useMarketStore = create((set, get) => ({
     set({ loadingChart: true, chartError: null });
     const exchange = get().exchange;
     const historyKey = getChartHistoryKey({ exchange, exchangeType, symbol, interval });
+    const useDirectFuturesClientFetch = exchange === 'binance' && exchangeType === 'futures';
     try {
       const params = new URLSearchParams({
         symbol,
@@ -283,8 +466,12 @@ export const useMarketStore = create((set, get) => ({
       if (!response.data?.klines || !Array.isArray(response.data.klines)) {
         throw new Error('Invalid chart data format');
       }
-      
-      const klines = response.data.klines;
+
+      let klines = response.data.klines;
+      if (useDirectFuturesClientFetch && (response.data?.upstreamUnavailable || klines.length === 0)) {
+        klines = await fetchBinanceFuturesKlinesDirect(symbol, interval, CHART_PAGE_LIMIT);
+      }
+
       const earliestTime = klines.length > 0 ? Number(klines[0].time) : null;
       set((state) => ({
         chartData: klines,
@@ -301,6 +488,30 @@ export const useMarketStore = create((set, get) => ({
         chartError: null
       }));
     } catch (error) {
+      if (useDirectFuturesClientFetch) {
+        try {
+          const klines = await fetchBinanceFuturesKlinesDirect(symbol, interval, CHART_PAGE_LIMIT);
+          const earliestTime = klines.length > 0 ? Number(klines[0].time) : null;
+          set((state) => ({
+            chartData: klines,
+            chartDataMap: { ...state.chartDataMap, [symbol]: klines },
+            chartHistoryMap: {
+              ...state.chartHistoryMap,
+              [historyKey]: {
+                earliestTime,
+                hasMoreHistory: klines.length >= CHART_PAGE_LIMIT,
+                loadingOlder: false,
+              },
+            },
+            loadingChart: false,
+            chartError: null,
+          }));
+          return;
+        } catch {
+          // fall through to normal error handling
+        }
+      }
+
       const errorMessage = error.response?.data?.error || 
                           error.message || 
                           'Failed to fetch chart data';
