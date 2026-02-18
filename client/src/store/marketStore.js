@@ -96,26 +96,47 @@ const fetchJsonFromUrls = async (urls, endpoint, params = {}, validate = null) =
 };
 
 const fetchBinanceFuturesTokensDirect = async (searchQuery = '') => {
-  const tickers = await fetchJsonFromUrls(
+  const prices = await fetchJsonFromUrls(
     BINANCE_FUTURES_BASE_URLS,
-    '/ticker/24hr',
+    '/ticker/price',
     {},
     (data) => Array.isArray(data)
   );
-  const list = Array.isArray(tickers) ? tickers : [];
+
+  let stats24h = [];
+  try {
+    const payload = await fetchJsonFromUrls(
+      BINANCE_FUTURES_BASE_URLS,
+      '/ticker/24hr',
+      {},
+      (data) => Array.isArray(data)
+    );
+    stats24h = Array.isArray(payload) ? payload : [];
+  } catch {
+    stats24h = [];
+  }
+
+  const priceList = Array.isArray(prices) ? prices : [];
+  const statsMap = new Map(
+    stats24h
+      .filter((item) => typeof item?.symbol === 'string')
+      .map((item) => [item.symbol, item])
+  );
+
   const searchLower = searchQuery.trim().toLowerCase();
 
-  const tokens = list
+  const tokens = priceList
     .filter((ticker) => typeof ticker?.symbol === 'string' && ticker.symbol.endsWith('USDT'))
     .map((ticker) => {
+      const stats = statsMap.get(ticker.symbol) || {};
       const token = {
         symbol: ticker.symbol.replace('USDT', ''),
         fullSymbol: ticker.symbol,
-        lastPrice: toNumericOrNull(ticker.lastPrice),
-        volume24h: toNumericOrNull(ticker.quoteVolume ?? ticker.volume),
-        priceChangePercent24h: toNumericOrNull(ticker.priceChangePercent),
-        high24h: toNumericOrNull(ticker.highPrice),
-        low24h: toNumericOrNull(ticker.lowPrice),
+        lastPrice: toNumericOrNull(ticker.price ?? stats.lastPrice),
+        volume24h: toNumericOrNull(stats.quoteVolume ?? stats.volume),
+        priceChangePercent24h: toNumericOrNull(stats.priceChangePercent),
+        high24h: toNumericOrNull(stats.highPrice),
+        low24h: toNumericOrNull(stats.lowPrice),
       };
       token.natr = calculateInstantNatr(token);
       return token;
@@ -127,6 +148,12 @@ const fetchBinanceFuturesTokensDirect = async (searchQuery = '') => {
         token.fullSymbol.toLowerCase().includes(searchLower)
       );
     });
+
+  tokens.sort((left, right) => {
+    const leftVol = Number.isFinite(left.volume24h) ? left.volume24h : -1;
+    const rightVol = Number.isFinite(right.volume24h) ? right.volume24h : -1;
+    return rightVol - leftVol;
+  });
 
   if (tokens.length === 0) {
     throw new Error('Direct Binance Futures fetch returned empty token list');
