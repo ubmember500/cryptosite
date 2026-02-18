@@ -740,7 +740,7 @@ export const useMarketStore = create((set, get) => ({
   },
 
   getChartDataForSymbol: (symbol) => {
-    return get().chartDataMap[symbol] ?? get().chartData ?? null;
+    return get().chartDataMap[symbol] ?? null;
   },
 
   // Subscribe to real-time kline updates
