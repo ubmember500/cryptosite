@@ -5,9 +5,10 @@
   "main": "index.js",
   "scripts": {
     "dev": "node src/index.js",
-    "start": "prisma generate && node src/index.js",
+    "start": "prisma generate && prisma db push && node src/index.js",
     "postinstall": "prisma generate",
     "prisma:generate": "prisma generate",
+    "prisma:push": "prisma db push",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
