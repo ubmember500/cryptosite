@@ -1,6 +1,11 @@
 const axios = require('axios');
 const WebSocket = require('ws');
-const futuresUsdtBaseline = require('../data/binanceFuturesUsdtSymbols.json');
+let futuresUsdtBaseline = [];
+try {
+  futuresUsdtBaseline = require('../data/binanceFuturesUsdtSymbols.json');
+} catch (error) {
+  console.warn('[Binance] Futures baseline file not found, continuing with live symbol sources only');
+}
 
 const FUTURES_BASE_URL = 'https://fapi.binance.com/fapi/v1';
 const SPOT_BASE_URL = 'https://api.binance.com/api/v3';
