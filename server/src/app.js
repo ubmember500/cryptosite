@@ -20,10 +20,13 @@ const isLocalDevOrigin = (origin) =>
   /^http:\/\/localhost:\d+$/.test(origin) ||
   /^http:\/\/127\.0\.0\.1:\d+$/.test(origin);
 
+const isTrustedVercelOrigin = (origin) =>
+  /^https:\/\/[a-z0-9-]+\.vercel\.app$/i.test(origin);
+
 // CORS configuration
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.has(origin) || isLocalDevOrigin(origin)) {
+    if (!origin || allowedOrigins.has(origin) || isLocalDevOrigin(origin) || isTrustedVercelOrigin(origin)) {
       return callback(null, true);
     }
     return callback(new Error(`CORS blocked for origin: ${origin}`));
