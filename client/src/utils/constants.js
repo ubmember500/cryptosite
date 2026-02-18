@@ -1,4 +1,9 @@
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
+const PROD_API_FALLBACK = 'https://cryptosite-rud8.onrender.com/api';
+const DEV_API_FALLBACK = 'http://localhost:5000/api';
+
+export const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL ||
+  (import.meta.env.PROD ? PROD_API_FALLBACK : DEV_API_FALLBACK);
 export const SOCKET_URL =
   import.meta.env.VITE_SOCKET_URL || API_BASE_URL.replace(/\/api\/?$/, '');
 
