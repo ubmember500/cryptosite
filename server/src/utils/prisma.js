@@ -1,3 +1,4 @@
+const { PrismaPg } = require('@prisma/adapter-pg');
 const { execSync } = require('node:child_process');
 require('dotenv').config();
 
@@ -26,6 +27,7 @@ if (!dbUrl) {
 	throw new Error('[prisma] DATABASE_URL is required. Use an external PostgreSQL URL (Neon/Supabase/Render Postgres).');
 }
 
-const prisma = new PrismaClient();
+const adapter = new PrismaPg({ connectionString: dbUrl });
+const prisma = new PrismaClient({ adapter });
 
 module.exports = prisma;
