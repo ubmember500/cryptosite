@@ -1,0 +1,92 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model User {
+  id                   String                @id @default(uuid())
+  email                String                @unique
+  username             String                @unique
+  passwordHash         String
+  subscriptionPlan     String                @default("free")  // "free" | "lite" | "pro"
+  telegramChatId       String?               @unique
+  telegramUsername     String?
+  telegramConnectedAt  DateTime?
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+  alerts               Alert[]
+  watchlist            Watchlist[]
+  passwordResetTokens  PasswordResetToken[]
+  telegramConnectTokens TelegramConnectToken[]
+}
+
+model PasswordResetToken {
+  id         String    @id @default(uuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash  String    // store only hash of the token, not plain
+  expiresAt  DateTime
+  usedAt     DateTime?
+  createdAt  DateTime  @default(now())
+}
+
+model TelegramConnectToken {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([token])
+  @@index([expiresAt])
+}
+
+model Alert {
+  id                   String    @id @default(uuid())
+  userId               String
+  user                 User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name                 String    @default("")   // user-facing alert name (backfill existing: coinSymbol + " " + condition)
+  exchange             String    @default("binance")  // e.g. "binance" | "bybit" | "okx"
+  market               String    @default("futures")   // e.g. "futures" | "spot"
+  alertType            String    @default("price")    // "price" | "complex"
+  description          String?   // optional short summary for list view
+  symbols              String?   // JSON array of symbols e.g. ["BTCUSDT","ETHUSDT"]
+  conditions           String?   // JSON for complex conditions; null for simple price alerts
+  notificationOptions  String?   // JSON e.g. { "pronounceName": true }
+  coinId               String    // e.g. "bitcoin" (legacy)
+  coinSymbol           String    // e.g. "BTC" (legacy)
+  condition            String    // "above" | "below" | "pct_change" (legacy)
+  targetValue          Float     // threshold price or % (legacy)
+  initialPrice         Float?    // price at creation for price alerts
+  isActive             Boolean   @default(true)
+  triggered            Boolean   @default(false)
+  triggeredAt          DateTime?
+  createdAt            DateTime  @default(now())
+  
+  @@index([isActive, triggered, alertType])
+}
+
+model Watchlist {
+  id            String    @id @default(uuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  coinId        String
+  coinSymbol    String
+  addedAt       DateTime  @default(now())
+  @@unique([userId, coinId])
+}
+
+// Futures listings from CCXT: only future/swap markets, added from "now on", kept forever
+model FutureListing {
+  id          String   @id @default(uuid())
+  exchange    String   // e.g. Binance, Bybit
+  symbol      String   // e.g. BTC/USDT
+  firstSeenAt DateTime @default(now())
+  @@unique([exchange, symbol])
+  @@index([exchange])
+}

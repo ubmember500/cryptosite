@@ -1,0 +1,138 @@
+import React, { useEffect, useState } from 'react';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { useAuthStore } from './store/authStore';
+import { useAlertStore } from './store/alertStore';
+import { useThemeStore } from './store/themeStore';
+import { useSocket } from './hooks/useSocket';
+import { playAlertSound } from './utils/alertSound';
+import Layout from './components/layout/Layout';
+import ProtectedRoute from './components/common/ProtectedRoute';
+import Toast from './components/common/Toast';
+import AlertTriggeredModal from './components/alerts/AlertTriggeredModal';
+
+function ThemeSync() {
+  const theme = useThemeStore((state) => state.theme);
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+  }, [theme]);
+  return null;
+}
+
+// Pages
+import Account from './pages/Account';
+import Charts from './pages/Charts';
+import Alerts from './pages/Alerts';
+import Market from './pages/Market';
+import Login from './pages/Login';
+import Register from './pages/Register';
+import ForgotPassword from './pages/ForgotPassword';
+import ResetPassword from './pages/ResetPassword';
+import Profile from './pages/Profile';
+import TelegramBots from './pages/TelegramBots';
+import Subscription from './pages/Subscription';
+import Listings from './pages/Listings';
+import WallScanner from './pages/WallScanner';
+import MarketMap from './pages/MarketMap';
+
+function App() {
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const initialize = useAuthStore((state) => state.initialize);
+  const removeAlert = useAlertStore((state) => state.removeAlert);
+  const addOrUpdateAlert = useAlertStore((state) => state.addOrUpdateAlert);
+  const [triggeredAlert, setTriggeredAlert] = useState(null);
+
+  // Initialize auth check on mount
+  useEffect(() => {
+    initialize();
+  }, [initialize]);
+
+  // Handle real-time alert triggers via Socket.IO
+  useSocket({
+    onAlertTriggered: (alertData) => {
+      playAlertSound(); // Play loud alert sound immediately when alert triggers
+      
+      // Show the alert modal with full details
+      setTriggeredAlert(alertData);
+      
+      // Price alerts: remove from store (they are deleted from DB)
+      // Complex alerts: update triggered status but keep in store (isActive: true)
+      if (alertData.alertType === 'price') {
+        removeAlert(alertData.id);
+      } else {
+        // Complex alerts: update with triggered status but keep isActive: true
+        addOrUpdateAlert({
+          ...alertData,
+          triggeringSymbol: alertData.symbol ?? alertData.triggeringSymbol ?? null,
+          isActive: true, // Complex alerts continue working after trigger
+        });
+      }
+    },
+  });
+
+  return (
+    <BrowserRouter>
+      <ThemeSync />
+      <div className="min-h-screen bg-background text-textPrimary">
+        <Routes>
+          {/* Public routes */}
+          <Route
+            path="/login"
+            element={
+              isAuthenticated ? <Navigate to="/account" replace /> : <Login />
+            }
+          />
+          <Route
+            path="/register"
+            element={
+              isAuthenticated ? <Navigate to="/account" replace /> : <Register />
+            }
+          />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
+          <Route path="/reset-password" element={<ResetPassword />} />
+
+          {/* Public Market route */}
+          <Route path="/market" element={<Market />} />
+          <Route path="/market-map" element={<MarketMap />} />
+
+          {/* Protected routes */}
+          <Route
+            path="/"
+            element={
+              <ProtectedRoute>
+                <Layout />
+              </ProtectedRoute>
+            }
+          >
+            <Route index element={<Navigate to="/account" replace />} />
+            <Route path="account" element={<Account />} />
+            <Route path="dashboard" element={<Account />} />
+            <Route path="charts" element={<Charts />} />
+            <Route path="charts/:coinId" element={<Charts />} />
+            <Route path="alerts" element={<Alerts />} />
+            <Route path="telegram-bots" element={<TelegramBots />} />
+            <Route path="subscription" element={<Subscription />} />
+            <Route path="listings" element={<Listings />} />
+            <Route path="wall-scanner" element={<WallScanner />} />
+            <Route path="profile" element={<Profile />} />
+          </Route>
+
+          {/* Catch all - redirect to account or login */}
+          <Route
+            path="*"
+            element={
+              <Navigate to={isAuthenticated ? '/account' : '/login'} replace />
+            }
+          />
+        </Routes>
+        <Toast />
+        <AlertTriggeredModal
+          isOpen={triggeredAlert !== null}
+          onClose={() => setTriggeredAlert(null)}
+          alert={triggeredAlert}
+        />
+      </div>
+    </BrowserRouter>
+  );
+}
+
+export default App;

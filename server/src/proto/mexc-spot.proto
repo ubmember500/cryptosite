@@ -1,0 +1,33 @@
+syntax = "proto3";
+
+option java_package = "com.mxc.push.common.protobuf";
+option optimize_for = SPEED;
+option java_multiple_files = true;
+
+// Spot K-line data structure
+message PublicSpotKlineV3Api {
+  string interval = 1;           // K-line interval (Min1, Min5, Min15, etc.)
+  int64 windowStart = 2;         // Start time of the K-line (seconds)
+  string openingPrice = 3;       // Opening price
+  string closingPrice = 4;       // Closing price
+  string highestPrice = 5;       // Highest price
+  string lowestPrice = 6;        // Lowest price
+  string volume = 7;             // Trade volume
+  string amount = 8;             // Trade amount
+  int64 windowEnd = 9;           // End time of the K-line (seconds)
+}
+
+// Main wrapper for spot push data
+message PushDataV3ApiWrapper {
+  string channel = 1;
+  
+  // Using oneof with correct field number 308 for kline
+  oneof body {
+    PublicSpotKlineV3Api publicSpotKline = 308;
+  }
+  
+  optional string symbol = 3;
+  optional string symbolId = 4;
+  optional int64 createTime = 5;
+  optional int64 sendTime = 6;
+}

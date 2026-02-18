@@ -1,0 +1,13 @@
+{
+  "name": "crypto-exchange-alerts",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:server": "cd server && npm run dev",
+    "dev:client": "cd client && npm run dev",
+    "setup": "cd server && npm install && npx prisma migrate dev && cd ../client && npm install"
+  },
+  "devDependencies": {
+    "concurrently": "^8.0.0"
+  }
+}
