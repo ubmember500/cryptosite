@@ -146,7 +146,7 @@ export const useMarketStore = create((set, get) => ({
         headers: api.defaults.headers
       });
       
-      // Try with axios first (includes auth if available)
+      // Use axios request (includes auth if available)
       let response;
       try {
         response = await api.get(url);
@@ -209,49 +209,8 @@ export const useMarketStore = create((set, get) => ({
           // Retry the request
           return get().fetchBinanceTokens(exchangeType, searchQuery, retryCount + 1);
         }
-        
-        // If axios fails, try direct fetch as fallback
-        console.warn('[MarketStore] Axios failed, trying direct fetch:', {
-          message: axiosError.message,
-          code: axiosError.code,
-          response: axiosError.response?.data,
-          status: axiosError.response?.status,
-          retryCount
-        });
-        
-        const fetchResponse = await fetch(fullUrl, {
-          method: 'GET',
-          headers: {
-            'Content-Type': 'application/json',
-            // Include auth token if available
-            ...(api.defaults.headers.common['Authorization'] && {
-              'Authorization': api.defaults.headers.common['Authorization']
-            })
-          },
-        });
-        
-        if (!fetchResponse.ok) {
-          const errorText = await fetchResponse.text();
-          throw new Error(`HTTP ${fetchResponse.status}: ${errorText}`);
-        }
-        
-        const data = await fetchResponse.json();
-        
-        // Verify data structure from fetch
-        if (!Array.isArray(data?.tokens)) {
-          console.warn('[MarketStore] tokens from fetch is not an array:', {
-            type: typeof data?.tokens,
-            value: data?.tokens,
-            dataKeys: Object.keys(data || {})
-          });
-          throw new Error(`Invalid tokens data: expected array, got ${typeof data?.tokens}`);
-        }
-        
-        response = { data, status: fetchResponse.status };
-        console.log('[MarketStore] Fetch Response:', {
-          status: response.status,
-          tokenCount: data?.tokens?.length
-        });
+
+        throw axiosError;
       }
       
       set({

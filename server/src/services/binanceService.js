@@ -9,6 +9,7 @@ const FUTURES_BASE_URLS = [
   'https://fapi3.binance.com/fapi/v1',
 ];
 const SPOT_BASE_URLS = [
+  'https://data-api.binance.vision/api/v3',
   'https://api.binance.com/api/v3',
   'https://api1.binance.com/api/v3',
   'https://api2.binance.com/api/v3',
@@ -35,6 +36,12 @@ const cache = {
   spot: { data: null, timestamp: null },
 };
 const CACHE_TTL = 300000; // 5 minutes (optimized for faster loading)
+
+// Deduplicate concurrent token fetches per market to prevent thundering-herd rate limits.
+const tokensInFlight = {
+  futures: null,
+  spot: null,
+};
 
 // Cache for active symbols (1 hour TTL)
 const activeSymbolsCache = {
@@ -160,6 +167,41 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function toErrorMessage(error) {
+  const upstreamMsg = error?.response?.data?.msg;
+  if (typeof upstreamMsg === 'string' && upstreamMsg.trim()) {
+    return upstreamMsg;
+  }
+  return error?.message || 'Unknown Binance upstream error';
+}
+
+function isBinanceRestrictedLocationError(error) {
+  const status = error?.response?.status;
+  const msg = toErrorMessage(error).toLowerCase();
+  const restrictedMsg =
+    msg.includes('restricted location') ||
+    msg.includes('not available in your region') ||
+    msg.includes('service unavailable from a restricted location');
+  return restrictedMsg || status === 451;
+}
+
+function createUpstreamUnavailableError(message, statusCode = 503) {
+  const err = new Error(message);
+  err.statusCode = statusCode;
+  return err;
+}
+
+function getErrorStatus(error) {
+  return error?.response?.status || error?.statusCode || error?.status || null;
+}
+
+function isRateLimitError(error) {
+  const status = getErrorStatus(error);
+  if (status === 429) return true;
+  const message = String(error?.message || '').toLowerCase();
+  return message.includes('rate limit exceeded') || message.includes('too many requests');
+}
+
 /**
  * Try the same Binance endpoint across multiple hosts to reduce single-host outages / 418 blocks.
  * @param {'futures'|'spot'} exchangeType
@@ -176,6 +218,7 @@ async function requestBinanceWithFallback(
 ) {
   const baseUrls = exchangeType === 'futures' ? FUTURES_BASE_URLS : SPOT_BASE_URLS;
   let lastError;
+  let restrictedLocationDetected = false;
 
   for (const baseUrl of baseUrls) {
     try {
@@ -191,6 +234,9 @@ async function requestBinanceWithFallback(
       return response;
     } catch (error) {
       lastError = error;
+      if (isBinanceRestrictedLocationError(error)) {
+        restrictedLocationDetected = true;
+      }
       const status = error?.response?.status;
       console.warn(
         `[${exchangeType.toUpperCase()}] ${baseUrl}${endpoint} failed${status ? ` (${status})` : ''}: ${error.message}`
@@ -198,6 +244,13 @@ async function requestBinanceWithFallback(
       // Always try next host (418/429/network can be host-specific or temporary).
       continue;
     }
+  }
+
+  if (restrictedLocationDetected) {
+    throw createUpstreamUnavailableError(
+      `Binance ${exchangeType} data is not available from the server region (restricted location). Please switch exchange or try again later.`,
+      503
+    );
   }
 
   throw lastError || new Error(`All Binance ${exchangeType} hosts failed for ${endpoint}`);
@@ -318,12 +371,57 @@ function getCachedSymbolMeta(exchangeType) {
   return activeSymbolsCache[cacheKey].meta || null;
 }
 
+async function fetchLightweightTokens(exchangeType) {
+  const response = await requestBinanceWithFallback(
+    exchangeType,
+    '/ticker/price',
+    {},
+    (data) => Array.isArray(data)
+  );
+
+  const activeSymbols = await fetchActiveSymbols(exchangeType);
+  const symbolMeta = getCachedSymbolMeta(exchangeType);
+  const prices = Array.isArray(response.data) ? response.data : [];
+
+  const priceMap = new Map(
+    prices
+      .filter((ticker) => typeof ticker?.symbol === 'string' && ticker.symbol.endsWith('USDT'))
+      .map((ticker) => [ticker.symbol, parseFloat(ticker.price)])
+  );
+
+  const symbolUniverse = activeSymbols && activeSymbols.size > 0
+    ? Array.from(activeSymbols)
+    : Array.from(priceMap.keys());
+
+  const tokens = symbolUniverse.map((fullSymbol) => {
+    const price = priceMap.get(fullSymbol);
+    const meta = symbolMeta?.get(fullSymbol);
+    const isTrading = meta ? meta.status === 'TRADING' : true;
+    return {
+      symbol: fullSymbol.replace('USDT', ''),
+      fullSymbol,
+      lastPrice: isTrading && Number.isFinite(price) && price > 0 ? price : null,
+      volume24h: null,
+      priceChangePercent24h: null,
+      high24h: null,
+      low24h: null,
+      natr: null,
+    };
+  });
+
+  console.warn(
+    `[${exchangeType.toUpperCase()}] Using lightweight /ticker/price fallback (${tokens.length} tokens) due to upstream limits`
+  );
+
+  return tokens;
+}
+
 /**
  * Fetch Futures tokens from Binance
  * Filters only USDT pairs
  * Implements retry logic for rate limiting
  */
-async function fetchFuturesTokens(retries = 3) {
+async function fetchFuturesTokens(retries = 1) {
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
       const response = await requestBinanceWithFallback(
@@ -425,7 +523,7 @@ async function fetchFuturesTokens(retries = 3) {
       return tokens;
     } catch (error) {
       // Handle rate limiting (429) with retry
-      if (error.response?.status === 429) {
+      if (isRateLimitError(error)) {
         if (attempt < retries) {
           const waitTime = Math.pow(2, attempt) * 1000;
           console.warn(
@@ -435,8 +533,16 @@ async function fetchFuturesTokens(retries = 3) {
           continue;
         } else {
           console.error('Rate limit exceeded for Futures tokens after retries');
-          throw new Error('Rate limit exceeded. Please try again later.');
+          try {
+            return await fetchLightweightTokens('futures');
+          } catch {
+            throw createUpstreamUnavailableError('Rate limit exceeded. Please try again later.', 429);
+          }
         }
+      }
+
+      if (error?.statusCode === 503) {
+        throw error;
       }
 
       // Handle network errors
@@ -452,8 +558,15 @@ async function fetchFuturesTokens(retries = 3) {
         return cache.futures.data;
       }
 
+      if (isBinanceRestrictedLocationError(error)) {
+        throw createUpstreamUnavailableError(
+          'Binance Futures is unavailable from the current server region. Try another exchange.',
+          503
+        );
+      }
+
       console.error('Error fetching Futures tokens:', error.message);
-      throw new Error('Failed to fetch Futures tokens from Binance');
+      throw createUpstreamUnavailableError('Failed to fetch Futures tokens from Binance', 502);
     }
   }
 }
@@ -463,7 +576,7 @@ async function fetchFuturesTokens(retries = 3) {
  * Filters only USDT pairs
  * Implements retry logic for rate limiting
  */
-async function fetchSpotTokens(retries = 3) {
+async function fetchSpotTokens(retries = 1) {
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
       const response = await requestBinanceWithFallback(
@@ -543,7 +656,7 @@ async function fetchSpotTokens(retries = 3) {
       return tokens;
     } catch (error) {
       // Handle rate limiting (429) with retry
-      if (error.response?.status === 429) {
+      if (isRateLimitError(error)) {
         if (attempt < retries) {
           const waitTime = Math.pow(2, attempt) * 1000;
           console.warn(
@@ -553,8 +666,16 @@ async function fetchSpotTokens(retries = 3) {
           continue;
         } else {
           console.error('Rate limit exceeded for Spot tokens after retries');
-          throw new Error('Rate limit exceeded. Please try again later.');
+          try {
+            return await fetchLightweightTokens('spot');
+          } catch {
+            throw createUpstreamUnavailableError('Rate limit exceeded. Please try again later.', 429);
+          }
         }
+      }
+
+      if (error?.statusCode === 503) {
+        throw error;
       }
 
       // Handle network errors
@@ -570,8 +691,15 @@ async function fetchSpotTokens(retries = 3) {
         return cache.spot.data;
       }
 
+      if (isBinanceRestrictedLocationError(error)) {
+        throw createUpstreamUnavailableError(
+          'Binance Spot is unavailable from the current server region. Try another exchange.',
+          503
+        );
+      }
+
       console.error('Error fetching Spot tokens:', error.message);
-      throw new Error('Failed to fetch Spot tokens from Binance');
+      throw createUpstreamUnavailableError('Failed to fetch Spot tokens from Binance', 502);
     }
   }
 }
@@ -611,6 +739,10 @@ async function fetchTokensWithNATR(exchangeType, options = {}) {
   const now = Date.now();
   const cacheKey = exchangeType;
 
+  if (!['futures', 'spot'].includes(cacheKey)) {
+    throw new Error('Invalid exchangeType. Must be "futures" or "spot"');
+  }
+
   // Check cache - return immediately if valid cache exists
   if (
     !forceFresh &&
@@ -631,32 +763,50 @@ async function fetchTokensWithNATR(exchangeType, options = {}) {
     activeSymbolsCache[cacheKey].timestamp = null;
   }
 
-  try {
-    // Fetch tokens based on exchange type
-    let tokens;
-    if (exchangeType === 'futures') {
-      tokens = await fetchFuturesTokens();
-    } else if (exchangeType === 'spot') {
-      tokens = await fetchSpotTokens();
-    } else {
-      throw new Error('Invalid exchangeType. Must be "futures" or "spot"');
+  if (!forceFresh && tokensInFlight[cacheKey]) {
+    console.log(`[${exchangeType.toUpperCase()}] Awaiting in-flight token request`);
+    return tokensInFlight[cacheKey];
+  }
+
+  const runFetch = async () => {
+    try {
+      // Fetch tokens based on exchange type
+      let tokens;
+      if (exchangeType === 'futures') {
+        tokens = await fetchFuturesTokens();
+      } else {
+        tokens = await fetchSpotTokens();
+      }
+
+      // NATR is already calculated instantly in fetchFuturesTokens/fetchSpotTokens
+      // using ticker data (high24h, low24h, lastPrice)
+      console.log(
+        `[${exchangeType.toUpperCase()}] Returning ${tokens.length} tokens with instant NATR`
+      );
+
+      // Update cache with tokens (NATR already included)
+      cache[cacheKey].data = tokens;
+      cache[cacheKey].timestamp = now;
+
+      // Return tokens with instant NATR (already calculated from ticker data)
+      return tokens;
+    } catch (error) {
+      console.error(`Error fetching tokens with NATR for ${exchangeType}:`, error);
+      throw error;
     }
+  };
 
-    // NATR is already calculated instantly in fetchFuturesTokens/fetchSpotTokens
-    // using ticker data (high24h, low24h, lastPrice)
-    console.log(
-      `[${exchangeType.toUpperCase()}] Returning ${tokens.length} tokens with instant NATR`
-    );
+  const promise = runFetch();
+  if (!forceFresh) {
+    tokensInFlight[cacheKey] = promise;
+  }
 
-    // Update cache with tokens (NATR already included)
-    cache[cacheKey].data = tokens;
-    cache[cacheKey].timestamp = now;
-
-    // Return tokens with instant NATR (already calculated from ticker data)
-    return tokens;
-  } catch (error) {
-    console.error(`Error fetching tokens with NATR for ${exchangeType}:`, error);
-    throw error;
+  try {
+    return await promise;
+  } finally {
+    if (!forceFresh && tokensInFlight[cacheKey] === promise) {
+      tokensInFlight[cacheKey] = null;
+    }
   }
 }
 
@@ -724,23 +874,24 @@ async function fetchKlines(
   for (let attempt = 0; attempt <= retries; attempt++) {
     const requestStartTime = Date.now();
     try {
-      const baseUrl =
-        exchangeType === 'futures' ? FUTURES_BASE_URL : SPOT_BASE_URL;
-      const endpoint = `${baseUrl}/klines`;
-
       console.log(
         `[${exchangeType.toUpperCase()}] Fetching klines for ${symbol} (${binanceInterval}, limit: ${binanceLimit})${isSecondInterval ? ` -> resample to ${interval}` : ''}${attempt > 0 ? ` [Retry ${attempt}/${retries}]` : ''} [Start: ${new Date(requestStartTime).toISOString()}]`
       );
 
-      const response = await axios.get(endpoint, {
-        params: {
-          symbol: symbol.toUpperCase(),
-          interval: binanceInterval,
-          limit: binanceLimit,
-          ...(hasBefore ? { endTime: Math.floor(Number(before)) - 1 } : {}),
+      const response = await requestBinanceWithFallback(
+        exchangeType,
+        '/klines',
+        {
+          params: {
+            symbol: symbol.toUpperCase(),
+            interval: binanceInterval,
+            limit: binanceLimit,
+            ...(hasBefore ? { endTime: Math.floor(Number(before)) - 1 } : {}),
+          },
+          timeout: 5000,
         },
-        timeout: 5000, // 5 second timeout (reduced for faster failure)
-      });
+        (data) => Array.isArray(data)
+      );
 
       // Validate response data
       if (!Array.isArray(response.data)) {
@@ -871,10 +1022,18 @@ async function fetchKlines(
           console.error(
             `[${exchangeType.toUpperCase()}] Rate limit exceeded for ${symbol} after ${retries + 1} attempts (duration: ${(requestDuration / 1000).toFixed(2)}s)`
           );
-          throw new Error(
-            `Rate limit exceeded. Binance API is temporarily unavailable. Please try again later.`
+          throw createUpstreamUnavailableError(
+            'Rate limit exceeded. Binance API is temporarily unavailable. Please try again later.',
+            429
           );
         }
+      }
+
+      if (isBinanceRestrictedLocationError(error)) {
+        throw createUpstreamUnavailableError(
+          `Binance ${exchangeType} chart data is unavailable from the server region (restricted location).`,
+          503
+        );
       }
 
       // Handle invalid symbols or parameters (400)

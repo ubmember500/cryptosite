@@ -28,8 +28,6 @@ const ExchangeSelector = () => {
     exchangeType, 
     setExchange, 
     setExchangeType, 
-    fetchBinanceTokens, 
-    searchQuery,
     watchlists,
     selectedWatchlist,
     selectWatchlist,
@@ -55,7 +53,6 @@ const ExchangeSelector = () => {
       // Switch to default exchange after deletion
       setExchange('binance');
       setExchangeType('futures');
-      fetchBinanceTokens('futures', searchQuery);
     }
     setIsDeleteModalOpen(false);
   };
@@ -94,7 +91,6 @@ const ExchangeSelector = () => {
     if (!option) return;
     setExchange(option.exchange);
     setExchangeType(option.exchangeType);
-    fetchBinanceTokens(option.exchangeType, searchQuery);
     setExchangeOrWatchlist(value);
   };
 
