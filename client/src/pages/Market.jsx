@@ -12,7 +12,7 @@ import { cn } from '../utils/cn';
 import CreateWatchlistModal from '../components/market/CreateWatchlistModal';
 import { Link, useNavigate } from 'react-router-dom';
 import { Search, X, TrendingUp, Maximize2, Minimize2 } from 'lucide-react';
-import { ROUTES } from '../utils/constants';
+import { API_BASE_URL, ROUTES } from '../utils/constants';
 import { debounce } from 'lodash';
 import { testBinanceApi, checkApiConfig } from '../utils/debugApi';
 
@@ -223,7 +223,7 @@ const Market = () => {
         console.log('Last candle:', chartData?.[chartData.length - 1]);
         
         // Test subscription status from server
-        fetch('http://localhost:5000/api/market/debug/subscriptions')
+        fetch(`${API_BASE_URL}/market/debug/subscriptions`)
           .then(r => r.json())
           .then(data => {
             console.log('Server subscriptions:', data);

@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
 import { useAuthStore } from '../store/authStore';
+import { SOCKET_URL } from '../utils/constants';
 
 /**
  * useSocket hook - manages Socket.IO connection for real-time alerts and klines
@@ -20,7 +21,7 @@ export const useSocket = (options = {}) => {
     }
 
     // Connect to Socket.IO server
-    const socket = io('http://localhost:5000', {
+    const socket = io(SOCKET_URL, {
       auth: {
         token: accessToken,
       },

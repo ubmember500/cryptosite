@@ -6,9 +6,28 @@ const subscriptionController = require('./controllers/subscriptionController');
 
 const app = express();
 
+const configuredFrontendOrigins = String(process.env.FRONTEND_URL || '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+const allowedOrigins = new Set([
+  'http://localhost:5173',
+  ...configuredFrontendOrigins,
+]);
+
+const isLocalDevOrigin = (origin) =>
+  /^http:\/\/localhost:\d+$/.test(origin) ||
+  /^http:\/\/127\.0\.0\.1:\d+$/.test(origin);
+
 // CORS configuration
 app.use(cors({
-  origin: 'http://localhost:5173',
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.has(origin) || isLocalDevOrigin(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error(`CORS blocked for origin: ${origin}`));
+  },
   credentials: true,
 }));
 
