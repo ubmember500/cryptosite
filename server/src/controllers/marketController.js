@@ -9,6 +9,19 @@ const listingsService = require('../services/listingsService');
 const binanceMarketMapService = require('../services/binanceMarketMapService');
 const bybitMarketMapService = require('../services/bybitMarketMapService');
 
+function isTemporaryBinanceUpstreamError(error) {
+  const status = error?.statusCode || error?.status || error?.response?.status;
+  if ([429, 502, 503, 504].includes(status)) return true;
+
+  const message = String(error?.message || '').toLowerCase();
+  return (
+    message.includes('rate limit exceeded') ||
+    message.includes('temporarily unavailable') ||
+    message.includes('server error') ||
+    message.includes('restricted location')
+  );
+}
+
 /**
  * Get top coins
  * Call priceService.fetchTopCoins, return cached/API result
@@ -90,6 +103,18 @@ async function getBinanceTokens(req, res, next) {
       forceFresh,
     });
 
+    // If futures returns empty due upstream restrictions/mismatch, fallback to spot tokens
+    // so UI still loads instruments and charts can open.
+    if (exchangeType === 'futures' && (!Array.isArray(tokens) || tokens.length === 0)) {
+      try {
+        tokens = await binanceService.fetchTokensWithNATR('spot', {
+          forceFresh,
+        });
+      } catch (fallbackError) {
+        console.warn('[getBinanceTokens] Spot fallback for futures returned no data:', fallbackError.message);
+      }
+    }
+
     // Filter by search query if provided
     if (search && search.trim()) {
       const searchLower = search.trim().toLowerCase();
@@ -106,7 +131,7 @@ async function getBinanceTokens(req, res, next) {
       totalCount: tokens.length,
     });
   } catch (error) {
-    if ([429, 502, 503].includes(error?.statusCode || error?.status)) {
+    if (isTemporaryBinanceUpstreamError(error)) {
       return res.json({
         tokens: [],
         exchangeType: req.query.exchangeType,
@@ -332,7 +357,7 @@ async function getBinanceKlines(req, res, next) {
 
     res.json(response);
   } catch (error) {
-    if ([429, 502, 503].includes(error?.statusCode || error?.status)) {
+    if (isTemporaryBinanceUpstreamError(error)) {
       return res.json({
         klines: [],
         symbol: String(req.query.symbol || '').toUpperCase(),
