@@ -542,10 +542,6 @@ async function fetchFuturesTokens(retries = 1) {
         }
       }
 
-      if (error?.statusCode === 503) {
-        throw error;
-      }
-
       // Handle network errors
       if (!error.response && attempt < retries) {
         const waitTime = Math.pow(2, attempt) * 1000;
@@ -688,10 +684,6 @@ async function fetchSpotTokens(retries = 1) {
             throw createUpstreamUnavailableError('Rate limit exceeded. Please try again later.', 429);
           }
         }
-      }
-
-      if (error?.statusCode === 503) {
-        throw error;
       }
 
       // Handle network errors
