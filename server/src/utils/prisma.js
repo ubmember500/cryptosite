@@ -22,6 +22,14 @@ function loadPrismaClient() {
 
 const { PrismaClient } = loadPrismaClient();
 const dbUrl = process.env.DATABASE_URL || 'file:./dev.db';
+
+if (process.env.RENDER === 'true') {
+	const isPersistentRenderPath = /^file:\/var\/data\//.test(dbUrl);
+	if (!isPersistentRenderPath) {
+		console.warn('[prisma] Running on Render without persistent DB path. Set DATABASE_URL=file:/var/data/dev.db and attach a Render Disk at /var/data to persist users.');
+	}
+}
+
 const adapter = new PrismaBetterSqlite3({ url: dbUrl });
 const prisma = new PrismaClient({ adapter });
 
