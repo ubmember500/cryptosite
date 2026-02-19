@@ -294,48 +294,50 @@ const fetchJsonFromUrls = async (urls, endpoint, params = {}, validate = null) =
 };
 
 const fetchBinanceFuturesTokensDirect = async (searchQuery = '') => {
-  const stats24h = await fetchJsonFromUrls(
+  const prices = await fetchJsonFromUrls(
     BINANCE_FUTURES_BASE_URLS,
-    '/ticker/24hr',
+    '/ticker/price',
     {},
     (data) => Array.isArray(data)
   );
 
-  const tickerList = Array.isArray(stats24h) ? stats24h : [];
+  let stats24h = [];
+  try {
+    const payload = await fetchJsonFromUrls(
+      BINANCE_FUTURES_BASE_URLS,
+      '/ticker/24hr',
+      {},
+      (data) => Array.isArray(data)
+    );
+    stats24h = Array.isArray(payload) ? payload : [];
+  } catch {
+    stats24h = [];
+  }
+
+  const priceList = Array.isArray(prices) ? prices : [];
+  const statsMap = new Map(
+    stats24h
+      .filter((item) => typeof item?.symbol === 'string')
+      .map((item) => [item.symbol, item])
+  );
 
   const searchLower = searchQuery.trim().toLowerCase();
 
-  const tokens = tickerList
-    .filter((ticker) => {
-      if (typeof ticker?.symbol !== 'string' || !ticker.symbol.endsWith('USDT')) {
-        return false;
-      }
-
-      const volume24h = resolveUsdVolume24h({
-        quoteVolume: ticker.quoteVolume,
-        volume: ticker.volume,
-        lastPrice: ticker.lastPrice,
-        weightedAvgPrice: ticker.weightedAvgPrice,
-      });
-      const lastPrice = toNumericOrNull(ticker.lastPrice);
-
-      if (volume24h == null || volume24h <= 0) return false;
-      if (lastPrice == null || lastPrice <= 0) return false;
-
-      return true;
-    })
+  const tokens = priceList
+    .filter((ticker) => typeof ticker?.symbol === 'string' && ticker.symbol.endsWith('USDT'))
     .map((ticker) => {
+      const stats = statsMap.get(ticker.symbol) || {};
       return normalizeMarketTokenMetrics({
         symbol: ticker.symbol.replace('USDT', ''),
         fullSymbol: ticker.symbol,
-        lastPrice: ticker.lastPrice,
-        volume24h: ticker.volume24h,
-        quoteVolume: ticker.quoteVolume,
-        volume: ticker.volume,
-        weightedAvgPrice: ticker.weightedAvgPrice,
-        priceChangePercent24h: ticker.priceChangePercent,
-        high24h: ticker.highPrice,
-        low24h: ticker.lowPrice,
+        lastPrice: ticker.price ?? stats.lastPrice,
+        volume24h: stats.volume24h,
+        quoteVolume: stats.quoteVolume,
+        volume: stats.volume,
+        weightedAvgPrice: stats.weightedAvgPrice,
+        priceChangePercent24h: stats.priceChangePercent,
+        high24h: stats.highPrice,
+        low24h: stats.lowPrice,
       });
     })
     .filter((token) => {
@@ -709,24 +711,8 @@ export const useMarketStore = create((set, get) => ({
         ? response.data.tokens.map((token) => normalizeMarketTokenMetrics(token))
         : [];
 
-      const spotStyleFilteredTokens =
-        exchange === 'binance' && exchangeType === 'futures'
-          ? normalizedTokens.filter((token) => {
-              const volume24h = toNumericOrNull(token?.volume24h);
-              const lastPrice = toNumericOrNull(token?.lastPrice);
-              return (
-                typeof token?.fullSymbol === 'string' &&
-                token.fullSymbol.endsWith('USDT') &&
-                volume24h != null &&
-                volume24h > 0 &&
-                lastPrice != null &&
-                lastPrice > 0
-              );
-            })
-          : normalizedTokens;
-
       set({
-        binanceTokens: spotStyleFilteredTokens,
+        binanceTokens: normalizedTokens,
         loadingBinance: false,
         binanceError: null
       });

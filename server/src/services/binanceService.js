@@ -585,31 +585,25 @@ async function fetchFuturesTokens(retries = 1) {
       // Get active symbols from exchangeInfo
       const activeSymbols = await fetchActiveSymbols('futures');
 
-      // Spot-equivalent filtering logic for Futures:
-      // - USDT symbols only
-      // - active symbols only (if metadata is available)
-      // - valid positive quote/base volume
-      // - valid positive last price
-      const usdtTickers = response.data.filter((ticker) => {
-        if (typeof ticker?.symbol !== 'string' || !ticker.symbol.endsWith('USDT')) return false;
-        if (activeSymbols && !activeSymbols.has(ticker.symbol)) return false;
-
-        const volume = parseFloat(ticker.quoteVolume || ticker.volume);
-        const lastPrice = parseFloat(ticker.lastPrice);
-        if (volume === 0 || Number.isNaN(volume)) return false;
-        if (lastPrice === 0 || Number.isNaN(lastPrice)) return false;
-
-        return true;
-      });
-
-      const usdtCount = usdtTickers.length;
-      const activeCount = activeSymbols ? activeSymbols.size : 'unknown';
-      console.log(
-        `[Futures] Active symbols from exchangeInfo: ${activeCount}, After filtering: ${usdtCount} tokens`
+      const tickerMap = new Map(
+        response.data
+          .filter((ticker) => typeof ticker?.symbol === 'string' && ticker.symbol.endsWith('USDT'))
+          .map((ticker) => [ticker.symbol, ticker])
       );
 
-      // Transform data (same style as Spot)
-      const tokens = usdtTickers.map((ticker) => {
+      // Keep full active universe for Futures (same behavior as before strict filtering change).
+      const symbolUniverse = activeSymbols && activeSymbols.size > 0
+        ? Array.from(activeSymbols)
+        : Array.from(tickerMap.keys());
+
+      const usdtCount = symbolUniverse.length;
+      const activeCount = activeSymbols ? activeSymbols.size : 'unknown';
+      console.log(
+        `[Futures] Active symbols from exchangeInfo: ${activeCount}, Returning full universe: ${usdtCount} tokens`
+      );
+
+      const tokens = symbolUniverse.map((fullSymbol) => {
+        const ticker = tickerMap.get(fullSymbol) || {};
         const lastPrice = parseFloat(ticker.lastPrice);
         const volume24h = parseFloat(ticker.quoteVolume || ticker.volume);
         const priceChangePercent24h = parseFloat(ticker.priceChangePercent);
@@ -617,8 +611,8 @@ async function fetchFuturesTokens(retries = 1) {
         const low24h = parseFloat(ticker.lowPrice);
 
         const token = {
-          symbol: ticker.symbol.replace('USDT', ''),
-          fullSymbol: ticker.symbol,
+          symbol: fullSymbol.replace('USDT', ''),
+          fullSymbol,
           lastPrice: Number.isNaN(lastPrice) ? null : lastPrice,
           volume24h: Number.isNaN(volume24h) ? null : volume24h,
           priceChangePercent24h: Number.isNaN(priceChangePercent24h)
