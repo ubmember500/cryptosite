@@ -1,3 +1,102 @@
+// Bybit API endpoints
+const BYBIT_BASE_URLS = [
+  'https://api.bybit.com',
+];
+
+const mapIntervalToBybit = (interval) => {
+  const map = {
+    '1m': '1',
+    '5m': '5',
+    '15m': '15',
+    '30m': '30',
+    '1h': '60',
+    '4h': '240',
+    '1d': 'D',
+  };
+  return map[interval] || '15';
+};
+
+const fetchBybitTokensDirect = async (exchangeType = 'futures', searchQuery = '') => {
+  const category = exchangeType === 'futures' ? 'linear' : 'spot';
+  let tokens = [];
+  for (const baseUrl of BYBIT_BASE_URLS) {
+    try {
+      const response = await fetch(`${baseUrl}/v5/market/tickers?category=${category}`);
+      const data = await response.json();
+      if (data?.retCode !== 0) throw new Error(data?.retMsg || 'Bybit API error');
+      const list = data?.result?.list || [];
+      const isFutures = exchangeType === 'futures';
+      tokens = list
+        .filter((t) => {
+          if (!t.symbol) return false;
+          if (isFutures) return true;
+          return t.symbol.endsWith('USDT');
+        })
+        .map((t) => {
+          const lastPrice = parseFloat(t.lastPrice);
+          const high24h = parseFloat(t.highPrice24h);
+          const low24h = parseFloat(t.lowPrice24h);
+          const price24hPcnt = parseFloat(t.price24hPcnt);
+          const volume24h = parseFloat(t.volume24h);
+          const turnover24h = parseFloat(t.turnover24h);
+          const token = {
+            symbol: t.symbol.replace('USDT', ''),
+            fullSymbol: t.symbol,
+            lastPrice: Number.isFinite(lastPrice) ? lastPrice : null,
+            volume24h: Number.isFinite(turnover24h) ? turnover24h : (Number.isFinite(volume24h) ? volume24h : null),
+            priceChangePercent24h: Number.isFinite(price24hPcnt) ? price24hPcnt * 100 : null,
+            high24h: Number.isFinite(high24h) ? high24h : null,
+            low24h: Number.isFinite(low24h) ? low24h : null,
+          };
+          token.natr = calculateInstantNatr(token);
+          return token;
+        });
+      break;
+    } catch (e) {}
+  }
+  if (searchQuery) {
+    const searchLower = searchQuery.trim().toLowerCase();
+    tokens = tokens.filter((token) =>
+      token.symbol.toLowerCase().includes(searchLower) ||
+      token.fullSymbol.toLowerCase().includes(searchLower)
+    );
+  }
+  tokens.sort((a, b) => (b.volume24h || 0) - (a.volume24h || 0));
+  return tokens;
+};
+
+const fetchBybitKlinesDirect = async (symbol, exchangeType = 'futures', interval = '15m', limit = CHART_PAGE_LIMIT, before = null) => {
+  const category = exchangeType === 'futures' ? 'linear' : 'spot';
+  const bybitInterval = mapIntervalToBybit(interval);
+  const params = new URLSearchParams({
+    category,
+    symbol: symbol.toUpperCase(),
+    interval: bybitInterval,
+    limit: String(limit),
+    ...(before ? { end: String(Math.floor(Number(before)) - 1) } : {}),
+  });
+  for (const baseUrl of BYBIT_BASE_URLS) {
+    try {
+      const response = await fetch(`${baseUrl}/v5/market/kline?${params.toString()}`);
+      const data = await response.json();
+      if (data?.retCode !== 0) throw new Error(data?.retMsg || 'Bybit API error');
+      const rawList = data?.result?.list || [];
+      const klines = rawList.map((arr) => {
+        const startTimeMs = parseInt(arr[0], 10);
+        const time = Math.floor(startTimeMs / 1000);
+        const open = parseFloat(arr[1]);
+        const high = parseFloat(arr[2]);
+        const low = parseFloat(arr[3]);
+        const close = parseFloat(arr[4]);
+        const volume = parseFloat(arr[5]) || 0;
+        return { time, open, high, low, close, volume };
+      });
+      klines.reverse();
+      return klines;
+    } catch (e) {}
+  }
+  throw new Error('Failed to fetch Bybit klines');
+};
 import { create } from 'zustand';
 import { marketService } from '../services/marketService';
 import api from '../services/api';
@@ -556,94 +655,72 @@ export const useMarketStore = create((set, get) => ({
     const exchange = get().exchange;
     set({ loadingBinance: true, binanceError: null });
     const useDirectFuturesClientFallback = exchange === 'binance' && exchangeType === 'futures';
-    
-    // Helper function to check if error is CORS-related
+    const useDirectBybitClientFallback = exchange === 'bybit';
+
     const isCORSError = (error) => {
-      return error.message?.includes('CORS') || 
-             error.message?.includes('CORS') ||
-             error.message?.includes('cross-origin') ||
-             (error.response?.status === 0 && error.message?.includes('Network'));
+      return error.message?.includes('CORS') ||
+        error.message?.includes('cross-origin') ||
+        (error.response?.status === 0 && error.message?.includes('Network'));
     };
-    
-    // Helper function to check if error is retryable (network errors, not 4xx/5xx)
+
     const isRetryableError = (error) => {
-      // Don't retry on 4xx/5xx errors
-      if (error.response?.status >= 400) {
-        return false;
-      }
-      
-      // Retry on network errors
+      if (error.response?.status >= 400) return false;
       return error.code === 'ERR_NETWORK' ||
-             error.code === 'ECONNREFUSED' ||
-             error.message?.includes('Failed to fetch') ||
-             error.message?.includes('Network') ||
-             !error.response; // No response means network issue
+        error.code === 'ECONNREFUSED' ||
+        error.message?.includes('Failed to fetch') ||
+        error.message?.includes('Network') ||
+        !error.response;
     };
-    
+
     try {
+      if (useDirectBybitClientFallback) {
+        try {
+          const params = new URLSearchParams({
+            exchangeType,
+            ...(searchQuery && { search: searchQuery })
+          });
+          const url = `/market/${exchange}/tokens?${params}`;
+          let response = await api.get(url);
+          if (!response.data || !Array.isArray(response.data.tokens) || response.data.tokens.length === 0) {
+            const directTokens = await fetchBybitTokensDirect(exchangeType, searchQuery);
+            response = {
+              data: {
+                tokens: directTokens,
+                exchangeType,
+                totalCount: directTokens.length,
+                source: 'bybit-client-direct',
+              },
+              status: 200,
+            };
+          }
+          const normalizedTokens = Array.isArray(response.data.tokens)
+            ? response.data.tokens.map((token) => normalizeMarketTokenMetrics(token))
+            : [];
+          set({
+            binanceTokens: normalizedTokens,
+            loadingBinance: false,
+            binanceError: null
+          });
+          return;
+        } catch (err) {
+          const directTokens = await fetchBybitTokensDirect(exchangeType, searchQuery);
+          set({
+            binanceTokens: directTokens,
+            loadingBinance: false,
+            binanceError: null
+          });
+          return;
+        }
+      }
+
       const params = new URLSearchParams({
         exchangeType,
         ...(searchQuery && { search: searchQuery })
       });
-      
       const url = `/market/${exchange}/tokens?${params}`;
-      const fullUrl = `${api.defaults.baseURL}${url}`;
-
-      console.log('[MarketStore] Fetching tokens:', {
-        exchange,
-        url,
-        fullUrl,
-        exchangeType,
-        searchQuery: searchQuery || '(none)',
-        retryCount
-      });
-      
-      // Log API configuration BEFORE making request
-      console.log('[MarketStore] Making request to:', `${api.defaults.baseURL}${url}`);
-      console.log('[MarketStore] API config:', {
-        baseURL: api.defaults.baseURL,
-        timeout: api.defaults.timeout,
-        headers: api.defaults.headers
-      });
-      
-      // Use axios request (includes auth if available)
       let response;
       try {
         response = await api.get(url);
-        
-        // Log response details AFTER successful request
-        console.log('[MarketStore] Response received:', {
-          status: response.status,
-          statusText: response.statusText,
-          headers: response.headers,
-          dataKeys: Object.keys(response.data || {}),
-          tokenCount: response.data?.tokens?.length
-        });
-        console.log('[MarketStore] Axios Response:', {
-          status: response.status,
-          tokenCount: response.data?.tokens?.length,
-          exchangeType: response.data?.exchangeType
-        });
-        
-        // Verify data structure
-        if (!response.data) {
-          throw new Error('Invalid response: no data received');
-        }
-        
-        if (!Array.isArray(response.data.tokens)) {
-          console.warn('[MarketStore] tokens is not an array:', {
-            type: typeof response.data.tokens,
-            value: response.data.tokens,
-            dataKeys: Object.keys(response.data)
-          });
-          throw new Error(`Invalid tokens data: expected array, got ${typeof response.data.tokens}`);
-        }
-        
-        console.log('[MarketStore] Tokens data structure verified:', {
-          tokenCount: response.data.tokens.length,
-          firstToken: response.data.tokens[0] || null
-        });
-
         const backendReturnedNoFutures =
           useDirectFuturesClientFallback &&
           (
@@ -651,7 +728,6 @@ export const useMarketStore = create((set, get) => ({
             !Array.isArray(response.data.tokens) ||
             response.data.tokens.length === 0
           );
-
         if (backendReturnedNoFutures) {
           const directTokens = await fetchBinanceFuturesTokensDirect(searchQuery);
           response = {
@@ -665,32 +741,13 @@ export const useMarketStore = create((set, get) => ({
           };
         }
       } catch (axiosError) {
-        // Check for CORS errors
         if (isCORSError(axiosError)) {
-          console.error('[MarketStore] CORS error detected:', {
-            message: axiosError.message,
-            code: axiosError.code,
-            response: axiosError.response,
-            fullError: axiosError
-          });
           throw new Error('CORS error: Backend CORS configuration issue. Please check server CORS settings.');
         }
-        
-        // Check if error is retryable and we haven't retried yet
         if (isRetryableError(axiosError) && retryCount === 0) {
-          console.warn('[MarketStore] Retryable error detected, retrying after 1 second...', {
-            message: axiosError.message,
-            code: axiosError.code,
-            retryCount: retryCount + 1
-          });
-          
-          // Wait 1 second before retry
           await new Promise(resolve => setTimeout(resolve, 1000));
-          
-          // Retry the request
           return get().fetchBinanceTokens(exchangeType, searchQuery, retryCount + 1);
         }
-
         if (useDirectFuturesClientFallback) {
           const directTokens = await fetchBinanceFuturesTokensDirect(searchQuery);
           response = {
@@ -706,45 +763,18 @@ export const useMarketStore = create((set, get) => ({
           throw axiosError;
         }
       }
-      
       const normalizedTokens = Array.isArray(response.data.tokens)
         ? response.data.tokens.map((token) => normalizeMarketTokenMetrics(token))
         : [];
-
       set({
         binanceTokens: normalizedTokens,
         loadingBinance: false,
         binanceError: null
       });
     } catch (error) {
-      // Enhanced error logging in catch block
-      console.error('[MarketStore] ERROR DETAILS (fetchBinanceTokens):', {
-        message: error.message,
-        code: error.code,
-        name: error.name,
-        stack: error.stack?.substring(0, 500),
-        response: error.response ? {
-          status: error.response.status,
-          statusText: error.response.statusText,
-          data: error.response.data,
-          headers: error.response.headers
-        } : null,
-        request: error.request ? 'Request made but no response' : null,
-        fullError: error,
-        retryCount
-      });
-      
-      // Enhanced error message
       let errorMessage = 'Failed to fetch tokens';
-      
-      // Handle CORS errors specifically
       if (isCORSError(error) || error.message?.includes('CORS')) {
         errorMessage = 'CORS error: Backend CORS configuration issue. Please check server CORS settings.';
-        console.error('[MarketStore] CORS error detected:', {
-          message: error.message,
-          code: error.code,
-          fullError: error
-        });
       } else if (error.code === 'ECONNREFUSED' || error.code === 'ERR_NETWORK' || error.message.includes('Failed to fetch')) {
         errorMessage = 'Cannot connect to server. Please ensure the backend is running on port 5000.';
       } else if (error.response) {
@@ -754,11 +784,10 @@ export const useMarketStore = create((set, get) => ({
       } else if (error.message) {
         errorMessage = error.message;
       }
-      
       set({
         binanceError: errorMessage,
         loadingBinance: false,
-        binanceTokens: [] // Clear tokens on error
+        binanceTokens: []
       });
     }
   },
@@ -769,6 +798,7 @@ export const useMarketStore = create((set, get) => ({
     const historyKey = getChartHistoryKey({ exchange, exchangeType, symbol, interval });
     const seriesKey = getChartSeriesKey({ exchange, exchangeType, symbol, interval });
     const useDirectFuturesClientFetch = exchange === 'binance' && exchangeType === 'futures';
+    const useDirectBybitClientFetch = exchange === 'bybit';
 
     const applyKlinesToState = (klines) => {
       const earliestTime = klines.length > 0 ? Number(klines[0].time) : null;
@@ -790,15 +820,19 @@ export const useMarketStore = create((set, get) => ({
 
     try {
       let directKlines = [];
-      if (useDirectFuturesClientFetch) {
+      if (useDirectFuturesClientFetch || useDirectBybitClientFetch) {
         try {
-          directKlines = await fetchBinanceFuturesKlinesDirect(symbol, interval, CHART_PAGE_LIMIT);
+          if (useDirectFuturesClientFetch) {
+            directKlines = await fetchBinanceFuturesKlinesDirect(symbol, interval, CHART_PAGE_LIMIT);
+          } else if (useDirectBybitClientFetch) {
+            directKlines = await fetchBybitKlinesDirect(symbol, exchangeType, interval, CHART_PAGE_LIMIT);
+          }
           logChartTelemetry('fetchChartData.directPrimaryResponse', {
             exchange,
             exchangeType,
             symbol,
             interval,
-            source: 'client_direct_futures',
+            source: useDirectFuturesClientFetch ? 'client_direct_futures' : 'client_direct_bybit',
             ...getKlineRangeSummary(directKlines),
           });
           if (Array.isArray(directKlines) && directKlines.length >= 20) {
@@ -808,7 +842,7 @@ export const useMarketStore = create((set, get) => ({
               symbol,
               interval,
               seriesKey,
-              source: 'client_direct_futures_primary',
+              source: useDirectFuturesClientFetch ? 'client_direct_futures_primary' : 'client_direct_bybit_primary',
               ...getKlineRangeSummary(directKlines),
             });
             applyKlinesToState(directKlines);
@@ -821,7 +855,7 @@ export const useMarketStore = create((set, get) => ({
             exchangeType,
             symbol,
             interval,
-            source: 'client_direct_futures',
+            source: useDirectFuturesClientFetch ? 'client_direct_futures' : 'client_direct_bybit',
           });
         }
       }
@@ -832,14 +866,10 @@ export const useMarketStore = create((set, get) => ({
         interval,
         limit: String(CHART_PAGE_LIMIT)
       });
-
       const response = await api.get(`/market/${exchange}/klines?${params}`);
-      
-      // Verify response
       if (!response.data?.klines || !Array.isArray(response.data.klines)) {
         throw new Error('Invalid chart data format');
       }
-
       let klines = response.data.klines;
       const backendSummary = getKlineRangeSummary(klines);
       logChartTelemetry('fetchChartData.backendResponse', {
@@ -851,28 +881,32 @@ export const useMarketStore = create((set, get) => ({
         upstreamUnavailable: !!response.data?.upstreamUnavailable,
         ...backendSummary,
       });
-
       if (
-        useDirectFuturesClientFetch &&
+        (useDirectFuturesClientFetch || useDirectBybitClientFetch) &&
         (response.data?.upstreamUnavailable || isSuspiciousInitialHistory(klines))
       ) {
         const fallbackReason = response.data?.upstreamUnavailable
           ? 'backend_upstream_unavailable'
           : 'backend_suspicious_short_history';
         try {
-          const directKlines = await fetchBinanceFuturesKlinesDirect(symbol, interval, CHART_PAGE_LIMIT);
-          const directSummary = getKlineRangeSummary(directKlines);
+          let directKlinesFallback = [];
+          if (useDirectFuturesClientFetch) {
+            directKlinesFallback = await fetchBinanceFuturesKlinesDirect(symbol, interval, CHART_PAGE_LIMIT);
+          } else if (useDirectBybitClientFetch) {
+            directKlinesFallback = await fetchBybitKlinesDirect(symbol, exchangeType, interval, CHART_PAGE_LIMIT);
+          }
+          const directSummary = getKlineRangeSummary(directKlinesFallback);
           logChartTelemetry('fetchChartData.directFallbackResponse', {
             exchange,
             exchangeType,
             symbol,
             interval,
-            source: 'client_direct_futures',
+            source: useDirectFuturesClientFetch ? 'client_direct_futures' : 'client_direct_bybit',
             fallbackReason,
             ...directSummary,
           });
-          if (Array.isArray(directKlines) && directKlines.length > klines.length) {
-            klines = directKlines;
+          if (Array.isArray(directKlinesFallback) && directKlinesFallback.length > klines.length) {
+            klines = directKlinesFallback;
           }
         } catch {
           logChartTelemetry('fetchChartData.directFallbackFailed', {
@@ -880,17 +914,14 @@ export const useMarketStore = create((set, get) => ({
             exchangeType,
             symbol,
             interval,
-            source: 'client_direct_futures',
+            source: useDirectFuturesClientFetch ? 'client_direct_futures' : 'client_direct_bybit',
             fallbackReason,
           });
-          // keep backend klines
         }
       }
-
-      if (useDirectFuturesClientFetch && Array.isArray(directKlines) && directKlines.length > klines.length) {
+      if ((useDirectFuturesClientFetch || useDirectBybitClientFetch) && Array.isArray(directKlines) && directKlines.length > klines.length) {
         klines = directKlines;
       }
-
       logChartTelemetry('fetchChartData.finalSelection', {
         exchange,
         exchangeType,
@@ -909,16 +940,20 @@ export const useMarketStore = create((set, get) => ({
         source: 'backend',
         message: error?.message || 'unknown_error',
       });
-
-      if (useDirectFuturesClientFetch) {
+      if (useDirectFuturesClientFetch || useDirectBybitClientFetch) {
         try {
-          const klines = await fetchBinanceFuturesKlinesDirect(symbol, interval, CHART_PAGE_LIMIT);
+          let klines = [];
+          if (useDirectFuturesClientFetch) {
+            klines = await fetchBinanceFuturesKlinesDirect(symbol, interval, CHART_PAGE_LIMIT);
+          } else if (useDirectBybitClientFetch) {
+            klines = await fetchBybitKlinesDirect(symbol, exchangeType, interval, CHART_PAGE_LIMIT);
+          }
           logChartTelemetry('fetchChartData.directRecoverySelection', {
             exchange,
             exchangeType,
             symbol,
             interval,
-            source: 'client_direct_futures',
+            source: useDirectFuturesClientFetch ? 'client_direct_futures' : 'client_direct_bybit',
             ...getKlineRangeSummary(klines),
           });
           applyKlinesToState(klines);
@@ -929,16 +964,13 @@ export const useMarketStore = create((set, get) => ({
             exchangeType,
             symbol,
             interval,
-            source: 'client_direct_futures',
+            source: useDirectFuturesClientFetch ? 'client_direct_futures' : 'client_direct_bybit',
           });
-          // fall through to normal error handling
         }
       }
-
-      const errorMessage = error.response?.data?.error || 
-                          error.message || 
-                          'Failed to fetch chart data';
-      
+      const errorMessage = error.response?.data?.error ||
+        error.message ||
+        'Failed to fetch chart data';
       set({
         chartError: errorMessage,
         loadingChart: false,
