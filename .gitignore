@@ -37,3 +37,6 @@ pnpm-debug.log*
 # Prisma
 server/generated
 **/generated/prisma
+
+.vercel
+.env*.local
