@@ -3,9 +3,39 @@ import { marketService } from '../services/marketService';
 import api from '../services/api';
 
 const CHART_PAGE_LIMIT = 500;
+const WS_HISTORY_RECOVERY_COOLDOWN_MS = 5000;
+const wsHistoryRecoveryAttemptBySeries = {};
 
 const getChartHistoryKey = ({ exchange, exchangeType, symbol, interval }) => {
   return `${exchange}:${exchangeType}:${symbol}:${interval}`;
+};
+
+const getChartSeriesKey = ({ exchange, exchangeType, symbol, interval }) => {
+  return `${exchange}:${exchangeType}:${symbol}:${interval}`;
+};
+
+const isSuspiciousInitialHistory = (klines) => {
+  return !Array.isArray(klines) || klines.length <= 1;
+};
+
+const getKlineRangeSummary = (klines) => {
+  if (!Array.isArray(klines) || klines.length === 0) {
+    return {
+      count: 0,
+      firstTime: null,
+      lastTime: null,
+    };
+  }
+
+  return {
+    count: klines.length,
+    firstTime: Number(klines[0]?.time) || null,
+    lastTime: Number(klines[klines.length - 1]?.time) || null,
+  };
+};
+
+const logChartTelemetry = (event, payload) => {
+  console.log(`[MarketStore][ChartTelemetry] ${event}`, payload);
 };
 
 const mergeCandlesByTime = (olderCandles, currentCandles) => {
@@ -19,10 +49,10 @@ const mergeCandlesByTime = (olderCandles, currentCandles) => {
 
 const BINANCE_FUTURES_BASE_URLS = [
   'https://fapi.binance.com/fapi/v1',
-  'https://fapi1.binance.com/fapi/v1',
-  'https://fapi2.binance.com/fapi/v1',
-  'https://fapi3.binance.com/fapi/v1',
+  'https://www.binance.com/fapi/v1',
 ];
+
+const BINANCE_FUTURES_PROXY_PATH = '/api/binance-klines';
 
 const BINANCE_FUTURES_INTERVAL_MAP = {
   '1s': '1m',
@@ -81,6 +111,11 @@ const fetchJsonFromUrls = async (urls, endpoint, params = {}, validate = null) =
       if (!response.ok) {
         const text = await response.text();
         throw new Error(`HTTP ${response.status}: ${text || response.statusText}`);
+      }
+      const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+      if (!contentType.includes('application/json')) {
+        const text = await response.text();
+        throw new Error(`Non-JSON response (${contentType || 'unknown'}) from ${baseUrl}${endpoint}: ${text.slice(0, 120)}`);
       }
       const data = await response.json();
       if (typeof validate === 'function' && !validate(data)) {
@@ -174,17 +209,56 @@ const fetchBinanceFuturesKlinesDirect = async (
     ? { '1s': 50, '5s': 84, '15s': 125 }[interval]
     : limit;
 
-  const rows = await fetchJsonFromUrls(
-    BINANCE_FUTURES_BASE_URLS,
-    '/klines',
-    {
-      symbol: String(symbol || '').toUpperCase(),
-      interval: apiInterval,
-      limit: String(apiLimit),
-      ...(before ? { endTime: String(Math.floor(Number(before)) - 1) } : {}),
-    },
-    (data) => Array.isArray(data)
-  );
+  const requestParams = {
+    symbol: String(symbol || '').toUpperCase(),
+    interval: apiInterval,
+    limit: String(apiLimit),
+    ...(before ? { endTime: String(Math.floor(Number(before)) - 1) } : {}),
+  };
+  const shouldRejectShortInitialPayload = !before;
+  const isSuspiciousShortPayload = (rows) =>
+    shouldRejectShortInitialPayload && Array.isArray(rows) && rows.length <= 1;
+
+  let rows;
+  let usedProxy = false;
+
+  try {
+    const proxyQuery = new URLSearchParams(requestParams);
+    const proxyResponse = await fetch(`${BINANCE_FUTURES_PROXY_PATH}?${proxyQuery.toString()}`, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+      },
+    });
+
+    if (!proxyResponse.ok) {
+      const text = await proxyResponse.text();
+      throw new Error(`Proxy HTTP ${proxyResponse.status}: ${text || proxyResponse.statusText}`);
+    }
+
+    const proxyPayload = await proxyResponse.json();
+    if (!Array.isArray(proxyPayload?.klines)) {
+      throw new Error('Proxy returned invalid klines payload');
+    }
+
+    if (isSuspiciousShortPayload(proxyPayload.klines)) {
+      throw new Error('Proxy returned suspiciously short Binance Futures klines payload');
+    }
+
+    rows = proxyPayload.klines;
+    usedProxy = true;
+  } catch {
+    rows = await fetchJsonFromUrls(
+      BINANCE_FUTURES_BASE_URLS,
+      '/klines',
+      requestParams,
+      (data) => {
+        if (!Array.isArray(data)) return false;
+        if (isSuspiciousShortPayload(data)) return false;
+        return true;
+      }
+    );
+  }
 
   const klines = (Array.isArray(rows) ? rows : [])
     .filter((row) => Array.isArray(row) && row.length >= 6)
@@ -205,6 +279,20 @@ const fetchBinanceFuturesKlinesDirect = async (
         Number.isFinite(row.close) &&
         Number.isFinite(row.volume)
     );
+
+  if (usedProxy) {
+    logChartTelemetry('fetchBinanceFuturesKlinesDirect.proxyUsed', {
+      symbol: String(symbol || '').toUpperCase(),
+      interval,
+      apiInterval,
+      requestedLimit: limit,
+      returnedCount: klines.length,
+    });
+  }
+
+  if (isSuspiciousShortPayload(klines)) {
+    throw new Error('Binance Futures direct klines returned suspiciously short history');
+  }
 
   return isSecondInterval ? resample1mToSeconds(klines, interval) : klines;
 };
@@ -512,31 +600,62 @@ export const useMarketStore = create((set, get) => ({
     set({ loadingChart: true, chartError: null });
     const exchange = get().exchange;
     const historyKey = getChartHistoryKey({ exchange, exchangeType, symbol, interval });
+    const seriesKey = getChartSeriesKey({ exchange, exchangeType, symbol, interval });
     const useDirectFuturesClientFetch = exchange === 'binance' && exchangeType === 'futures';
+
+    const applyKlinesToState = (klines) => {
+      const earliestTime = klines.length > 0 ? Number(klines[0].time) : null;
+      set((state) => ({
+        chartData: klines,
+        chartDataMap: { ...state.chartDataMap, [seriesKey]: klines },
+        chartHistoryMap: {
+          ...state.chartHistoryMap,
+          [historyKey]: {
+            earliestTime,
+            hasMoreHistory: klines.length >= CHART_PAGE_LIMIT,
+            loadingOlder: false,
+          },
+        },
+        loadingChart: false,
+        chartError: null
+      }));
+    };
+
     try {
+      let directKlines = [];
       if (useDirectFuturesClientFetch) {
         try {
-          const directKlines = await fetchBinanceFuturesKlinesDirect(symbol, interval, CHART_PAGE_LIMIT);
-          if (Array.isArray(directKlines) && directKlines.length > 1) {
-            const earliestTime = Number(directKlines[0]?.time) || null;
-            set((state) => ({
-              chartData: directKlines,
-              chartDataMap: { ...state.chartDataMap, [symbol]: directKlines },
-              chartHistoryMap: {
-                ...state.chartHistoryMap,
-                [historyKey]: {
-                  earliestTime,
-                  hasMoreHistory: directKlines.length >= CHART_PAGE_LIMIT,
-                  loadingOlder: false,
-                },
-              },
-              loadingChart: false,
-              chartError: null,
-            }));
+          directKlines = await fetchBinanceFuturesKlinesDirect(symbol, interval, CHART_PAGE_LIMIT);
+          logChartTelemetry('fetchChartData.directPrimaryResponse', {
+            exchange,
+            exchangeType,
+            symbol,
+            interval,
+            source: 'client_direct_futures',
+            ...getKlineRangeSummary(directKlines),
+          });
+          if (Array.isArray(directKlines) && directKlines.length >= 20) {
+            logChartTelemetry('fetchChartData.finalSelection', {
+              exchange,
+              exchangeType,
+              symbol,
+              interval,
+              seriesKey,
+              source: 'client_direct_futures_primary',
+              ...getKlineRangeSummary(directKlines),
+            });
+            applyKlinesToState(directKlines);
             return;
           }
-        } catch (directError) {
-          // Fall through to backend request
+        } catch {
+          directKlines = [];
+          logChartTelemetry('fetchChartData.directPrimaryFailed', {
+            exchange,
+            exchangeType,
+            symbol,
+            interval,
+            source: 'client_direct_futures',
+          });
         }
       }
 
@@ -555,46 +674,96 @@ export const useMarketStore = create((set, get) => ({
       }
 
       let klines = response.data.klines;
-      if (useDirectFuturesClientFetch && (response.data?.upstreamUnavailable || klines.length === 0)) {
-        klines = await fetchBinanceFuturesKlinesDirect(symbol, interval, CHART_PAGE_LIMIT);
+      const backendSummary = getKlineRangeSummary(klines);
+      logChartTelemetry('fetchChartData.backendResponse', {
+        exchange,
+        exchangeType,
+        symbol,
+        interval,
+        source: 'backend',
+        upstreamUnavailable: !!response.data?.upstreamUnavailable,
+        ...backendSummary,
+      });
+
+      if (
+        useDirectFuturesClientFetch &&
+        (response.data?.upstreamUnavailable || isSuspiciousInitialHistory(klines))
+      ) {
+        const fallbackReason = response.data?.upstreamUnavailable
+          ? 'backend_upstream_unavailable'
+          : 'backend_suspicious_short_history';
+        try {
+          const directKlines = await fetchBinanceFuturesKlinesDirect(symbol, interval, CHART_PAGE_LIMIT);
+          const directSummary = getKlineRangeSummary(directKlines);
+          logChartTelemetry('fetchChartData.directFallbackResponse', {
+            exchange,
+            exchangeType,
+            symbol,
+            interval,
+            source: 'client_direct_futures',
+            fallbackReason,
+            ...directSummary,
+          });
+          if (Array.isArray(directKlines) && directKlines.length > klines.length) {
+            klines = directKlines;
+          }
+        } catch {
+          logChartTelemetry('fetchChartData.directFallbackFailed', {
+            exchange,
+            exchangeType,
+            symbol,
+            interval,
+            source: 'client_direct_futures',
+            fallbackReason,
+          });
+          // keep backend klines
+        }
       }
 
-      const earliestTime = klines.length > 0 ? Number(klines[0].time) : null;
-      set((state) => ({
-        chartData: klines,
-        chartDataMap: { ...state.chartDataMap, [symbol]: klines },
-        chartHistoryMap: {
-          ...state.chartHistoryMap,
-          [historyKey]: {
-            earliestTime,
-            hasMoreHistory: klines.length >= CHART_PAGE_LIMIT,
-            loadingOlder: false,
-          },
-        },
-        loadingChart: false,
-        chartError: null
-      }));
+      if (useDirectFuturesClientFetch && Array.isArray(directKlines) && directKlines.length > klines.length) {
+        klines = directKlines;
+      }
+
+      logChartTelemetry('fetchChartData.finalSelection', {
+        exchange,
+        exchangeType,
+        symbol,
+        interval,
+        seriesKey,
+        ...getKlineRangeSummary(klines),
+      });
+      applyKlinesToState(klines);
     } catch (error) {
+      logChartTelemetry('fetchChartData.backendError', {
+        exchange,
+        exchangeType,
+        symbol,
+        interval,
+        source: 'backend',
+        message: error?.message || 'unknown_error',
+      });
+
       if (useDirectFuturesClientFetch) {
         try {
           const klines = await fetchBinanceFuturesKlinesDirect(symbol, interval, CHART_PAGE_LIMIT);
-          const earliestTime = klines.length > 0 ? Number(klines[0].time) : null;
-          set((state) => ({
-            chartData: klines,
-            chartDataMap: { ...state.chartDataMap, [symbol]: klines },
-            chartHistoryMap: {
-              ...state.chartHistoryMap,
-              [historyKey]: {
-                earliestTime,
-                hasMoreHistory: klines.length >= CHART_PAGE_LIMIT,
-                loadingOlder: false,
-              },
-            },
-            loadingChart: false,
-            chartError: null,
-          }));
+          logChartTelemetry('fetchChartData.directRecoverySelection', {
+            exchange,
+            exchangeType,
+            symbol,
+            interval,
+            source: 'client_direct_futures',
+            ...getKlineRangeSummary(klines),
+          });
+          applyKlinesToState(klines);
           return;
         } catch {
+          logChartTelemetry('fetchChartData.directRecoveryFailed', {
+            exchange,
+            exchangeType,
+            symbol,
+            interval,
+            source: 'client_direct_futures',
+          });
           // fall through to normal error handling
         }
       }
@@ -614,6 +783,7 @@ export const useMarketStore = create((set, get) => ({
   loadOlderChartData: async (symbol, exchangeType, interval = '15m', beforeTimestampMs) => {
     const exchange = get().exchange;
     const historyKey = getChartHistoryKey({ exchange, exchangeType, symbol, interval });
+    const seriesKey = getChartSeriesKey({ exchange, exchangeType, symbol, interval });
     const useDirectFuturesClientFetch = exchange === 'binance' && exchangeType === 'futures';
     const historyMeta = get().chartHistoryMap[historyKey] || {
       earliestTime: null,
@@ -641,44 +811,6 @@ export const useMarketStore = create((set, get) => ({
     }));
 
     try {
-      if (useDirectFuturesClientFetch) {
-        try {
-          const fetchedKlines = await fetchBinanceFuturesKlinesDirect(
-            symbol,
-            interval,
-            CHART_PAGE_LIMIT,
-            beforeTimestamp
-          );
-          const beforeSeconds = Math.floor(beforeTimestamp / 1000);
-          const olderKlines = fetchedKlines.filter((kline) => Number(kline.time) < beforeSeconds);
-
-          set((state) => {
-            const currentData = state.chartDataMap[symbol] || state.chartData || [];
-            const merged = mergeCandlesByTime(olderKlines, currentData);
-            const earliestTime = merged.length > 0 ? Number(merged[0].time) : null;
-            const hasMoreHistory = olderKlines.length > 0 && fetchedKlines.length >= CHART_PAGE_LIMIT;
-            const isSelectedSymbol = state.selectedToken?.fullSymbol === symbol;
-
-            return {
-              ...(isSelectedSymbol && { chartData: merged }),
-              chartDataMap: { ...state.chartDataMap, [symbol]: merged },
-              chartHistoryMap: {
-                ...state.chartHistoryMap,
-                [historyKey]: {
-                  earliestTime,
-                  hasMoreHistory,
-                  loadingOlder: false,
-                },
-              },
-            };
-          });
-
-          return olderKlines;
-        } catch (directError) {
-          // Fall through to backend request
-        }
-      }
-
       const params = new URLSearchParams({
         symbol,
         exchangeType,
@@ -688,12 +820,68 @@ export const useMarketStore = create((set, get) => ({
       });
 
       const response = await api.get(`/market/${exchange}/klines?${params}`);
-      const fetchedKlines = Array.isArray(response.data?.klines) ? response.data.klines : [];
+      let fetchedKlines = Array.isArray(response.data?.klines) ? response.data.klines : [];
       const beforeSeconds = Math.floor(beforeTimestamp / 1000);
-      const olderKlines = fetchedKlines.filter((kline) => Number(kline.time) < beforeSeconds);
+      let olderKlines = fetchedKlines.filter((kline) => Number(kline.time) < beforeSeconds);
+
+      logChartTelemetry('loadOlderChartData.backendResponse', {
+        exchange,
+        exchangeType,
+        symbol,
+        interval,
+        beforeTimestamp,
+        source: 'backend',
+        upstreamUnavailable: !!response.data?.upstreamUnavailable,
+        fetched: getKlineRangeSummary(fetchedKlines),
+        older: getKlineRangeSummary(olderKlines),
+      });
+
+      if (
+        useDirectFuturesClientFetch &&
+        (response.data?.upstreamUnavailable || olderKlines.length === 0)
+      ) {
+        const fallbackReason = response.data?.upstreamUnavailable
+          ? 'backend_upstream_unavailable'
+          : 'backend_no_older_candles';
+        try {
+          const directFetched = await fetchBinanceFuturesKlinesDirect(
+            symbol,
+            interval,
+            CHART_PAGE_LIMIT,
+            beforeTimestamp
+          );
+          const directOlder = directFetched.filter((kline) => Number(kline.time) < beforeSeconds);
+          logChartTelemetry('loadOlderChartData.directFallbackResponse', {
+            exchange,
+            exchangeType,
+            symbol,
+            interval,
+            beforeTimestamp,
+            source: 'client_direct_futures',
+            fallbackReason,
+            fetched: getKlineRangeSummary(directFetched),
+            older: getKlineRangeSummary(directOlder),
+          });
+          if (directOlder.length > olderKlines.length) {
+            fetchedKlines = directFetched;
+            olderKlines = directOlder;
+          }
+        } catch {
+          logChartTelemetry('loadOlderChartData.directFallbackFailed', {
+            exchange,
+            exchangeType,
+            symbol,
+            interval,
+            beforeTimestamp,
+            source: 'client_direct_futures',
+            fallbackReason,
+          });
+          // keep backend older data
+        }
+      }
 
       set((state) => {
-        const currentData = state.chartDataMap[symbol] || state.chartData || [];
+        const currentData = state.chartDataMap[seriesKey] || state.chartData || [];
         const merged = mergeCandlesByTime(olderKlines, currentData);
         const earliestTime = merged.length > 0 ? Number(merged[0].time) : null;
         const hasMoreHistory = olderKlines.length > 0 && fetchedKlines.length >= CHART_PAGE_LIMIT;
@@ -701,7 +889,7 @@ export const useMarketStore = create((set, get) => ({
 
         return {
           ...(isSelectedSymbol && { chartData: merged }),
-          chartDataMap: { ...state.chartDataMap, [symbol]: merged },
+          chartDataMap: { ...state.chartDataMap, [seriesKey]: merged },
           chartHistoryMap: {
             ...state.chartHistoryMap,
             [historyKey]: {
@@ -713,8 +901,26 @@ export const useMarketStore = create((set, get) => ({
         };
       });
 
+      logChartTelemetry('loadOlderChartData.finalMerge', {
+        exchange,
+        exchangeType,
+        symbol,
+        interval,
+        beforeTimestamp,
+        seriesKey,
+        selectedOlder: getKlineRangeSummary(olderKlines),
+      });
+
       return olderKlines;
-    } catch (error) {
+    } catch {
+      logChartTelemetry('loadOlderChartData.failed', {
+        exchange,
+        exchangeType,
+        symbol,
+        interval,
+        beforeTimestamp,
+      });
+
       set((state) => ({
         chartHistoryMap: {
           ...state.chartHistoryMap,
@@ -739,8 +945,10 @@ export const useMarketStore = create((set, get) => ({
     };
   },
 
-  getChartDataForSymbol: (symbol) => {
-    return get().chartDataMap[symbol] ?? null;
+  getChartDataForSymbol: (symbol, exchangeType, interval = '15m') => {
+    const exchange = get().exchange;
+    const seriesKey = getChartSeriesKey({ exchange, exchangeType, symbol, interval });
+    return get().chartDataMap[seriesKey] ?? get().chartDataMap[symbol] ?? null;
   },
 
   // Subscribe to real-time kline updates
@@ -833,16 +1041,55 @@ export const useMarketStore = create((set, get) => ({
     }
     
     console.log('[MarketStore] ✅ Update matches subscription, applying to chartData');
+
+    const seriesKey = getChartSeriesKey({ exchange, exchangeType, symbol, interval });
+    const existingSeries = get().chartDataMap[seriesKey] || [];
+    if (existingSeries.length <= 1) {
+      const now = Date.now();
+      const lastAttempt = wsHistoryRecoveryAttemptBySeries[seriesKey] || 0;
+      if (now - lastAttempt > WS_HISTORY_RECOVERY_COOLDOWN_MS) {
+        wsHistoryRecoveryAttemptBySeries[seriesKey] = now;
+        logChartTelemetry('handleKlineUpdate.recoveryFetchRequested', {
+          exchange,
+          exchangeType,
+          symbol,
+          interval,
+          seriesKey,
+          existingCount: existingSeries.length,
+        });
+        Promise.resolve(get().fetchChartData(symbol, exchangeType, interval)).catch(() => {
+          logChartTelemetry('handleKlineUpdate.recoveryFetchFailed', {
+            exchange,
+            exchangeType,
+            symbol,
+            interval,
+            seriesKey,
+          });
+        });
+      }
+    }
     
-    // Update chartData and chartDataMap[symbol] - append or update last candle
+    // Update chartData and chartDataMap[seriesKey] - append or update last candle
     set((state) => {
       const currentData = state.chartData || [];
-      const currentMapData = state.chartDataMap[symbol] || [];
+      const currentMapData = state.chartDataMap[seriesKey] || [];
       const dataToUpdate = currentMapData.length > 0 ? currentMapData : currentData;
       const newCandle = kline;
+      const isBinanceFutures = exchange === 'binance' && exchangeType === 'futures';
       
       let nextData;
       if (dataToUpdate.length === 0) {
+        if (isBinanceFutures) {
+          logChartTelemetry('handleKlineUpdate.skipWsSeedUntilHistory', {
+            exchange,
+            exchangeType,
+            symbol,
+            interval,
+            seriesKey,
+            reason: 'prevent_one_candle_lock',
+          });
+          return state;
+        }
         console.log('[MarketStore] 📊 First candle, initializing chartData');
         nextData = [newCandle];
       } else {
@@ -857,9 +1104,21 @@ export const useMarketStore = create((set, get) => ({
       }
       
       const isActiveSymbol = state.selectedToken?.fullSymbol === symbol;
+      logChartTelemetry('handleKlineUpdate.merge', {
+        exchange,
+        exchangeType,
+        symbol,
+        interval,
+        seriesKey,
+        previousCount: dataToUpdate.length,
+        nextCount: nextData.length,
+        seededFromEmpty: dataToUpdate.length === 0,
+        updateTime: Number(newCandle?.time) || null,
+      });
+
       return {
         ...(isActiveSymbol && { chartData: nextData }),
-        chartDataMap: { ...state.chartDataMap, [symbol]: nextData }
+        chartDataMap: { ...state.chartDataMap, [seriesKey]: nextData }
       };
     });
   },
