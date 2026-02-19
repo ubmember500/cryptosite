@@ -584,77 +584,51 @@ async function fetchFuturesTokens(retries = 1) {
 
       // Get active symbols from exchangeInfo
       const activeSymbols = await fetchActiveSymbols('futures');
-      const symbolMeta = getCachedSymbolMeta('futures');
 
-      // Build ticker map for quick joins by full symbol
-      const tickerMap = new Map(
-        response.data
-          .filter((ticker) => typeof ticker?.symbol === 'string' && ticker.symbol.includes('USDT'))
-          .map((ticker) => [ticker.symbol, ticker])
-      );
+      // Spot-equivalent filtering logic for Futures:
+      // - USDT symbols only
+      // - active symbols only (if metadata is available)
+      // - valid positive quote/base volume
+      // - valid positive last price
+      const usdtTickers = response.data.filter((ticker) => {
+        if (typeof ticker?.symbol !== 'string' || !ticker.symbol.endsWith('USDT')) return false;
+        if (activeSymbols && !activeSymbols.has(ticker.symbol)) return false;
 
-      // Prefer metadata universe (includes contracts that may not have 24h stats yet).
-      const symbolUniverse = activeSymbols && activeSymbols.size > 0
-        ? Array.from(activeSymbols)
-        : Array.from(tickerMap.keys());
+        const volume = parseFloat(ticker.quoteVolume || ticker.volume);
+        const lastPrice = parseFloat(ticker.lastPrice);
+        if (volume === 0 || Number.isNaN(volume)) return false;
+        if (lastPrice === 0 || Number.isNaN(lastPrice)) return false;
 
-      // Keep ticker order first, then append symbols that are absent in /ticker/24hr.
-      const orderedFromTicker = response.data
-        .filter((ticker) => typeof ticker?.symbol === 'string' && symbolUniverse.includes(ticker.symbol))
-        .map((ticker) => ticker.symbol);
-      const orderedSet = new Set(orderedFromTicker);
-      const missingFromTicker = symbolUniverse.filter((symbol) => !orderedSet.has(symbol));
-      const futuresSymbols = [...orderedFromTicker, ...missingFromTicker];
+        return true;
+      });
 
-      const usdtCount = futuresSymbols.length;
+      const usdtCount = usdtTickers.length;
       const activeCount = activeSymbols ? activeSymbols.size : 'unknown';
       console.log(
-        `[Futures] Symbols from metadata: ${activeCount}, After merge with ticker: ${usdtCount} tokens`
+        `[Futures] Active symbols from exchangeInfo: ${activeCount}, After filtering: ${usdtCount} tokens`
       );
 
-      // Transform data - ensure all tokens are included even with invalid data
-      // Calculate NATR instantly using ticker data
-      const tokens = futuresSymbols.map((fullSymbol) => {
-        const ticker = tickerMap.get(fullSymbol) || {};
-        const meta = symbolMeta?.get(fullSymbol);
-        const isTrading = meta ? meta.status === 'TRADING' : true;
-
-        // Use null/NaN for invalid values instead of excluding tokens
+      // Transform data (same style as Spot)
+      const tokens = usdtTickers.map((ticker) => {
         const lastPrice = parseFloat(ticker.lastPrice);
-        const volume24h = parseFloat(ticker.quoteVolume || ticker.volume); // Use quoteVolume (USD), fallback to volume
+        const volume24h = parseFloat(ticker.quoteVolume || ticker.volume);
         const priceChangePercent24h = parseFloat(ticker.priceChangePercent);
         const high24h = parseFloat(ticker.highPrice);
         const low24h = parseFloat(ticker.lowPrice);
 
-        const normalizedLastPrice = isTrading && Number.isFinite(lastPrice) && lastPrice > 0
-          ? lastPrice
-          : null;
-        const normalizedVolume24h = isTrading && Number.isFinite(volume24h) && volume24h > 0
-          ? volume24h
-          : null;
-        const normalizedPriceChangePercent24h = isTrading && Number.isFinite(priceChangePercent24h)
-          ? priceChangePercent24h
-          : null;
-        const normalizedHigh24h = isTrading && Number.isFinite(high24h) && high24h > 0
-          ? high24h
-          : null;
-        const normalizedLow24h = isTrading && Number.isFinite(low24h) && low24h > 0
-          ? low24h
-          : null;
-
         const token = {
-          symbol: fullSymbol.replace('USDT', ''),
-          fullSymbol,
-          lastPrice: normalizedLastPrice,
-          volume24h: normalizedVolume24h,
-          priceChangePercent24h: normalizedPriceChangePercent24h,
-          high24h: normalizedHigh24h,
-          low24h: normalizedLow24h,
+          symbol: ticker.symbol.replace('USDT', ''),
+          fullSymbol: ticker.symbol,
+          lastPrice: Number.isNaN(lastPrice) ? null : lastPrice,
+          volume24h: Number.isNaN(volume24h) ? null : volume24h,
+          priceChangePercent24h: Number.isNaN(priceChangePercent24h)
+            ? null
+            : priceChangePercent24h,
+          high24h: Number.isNaN(high24h) ? null : high24h,
+          low24h: Number.isNaN(low24h) ? null : low24h,
         };
 
-        // Calculate instant NATR using ticker data
         token.natr = calculateInstantNATR(token);
-
         return token;
       });
 

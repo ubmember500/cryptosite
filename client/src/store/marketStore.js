@@ -553,7 +553,7 @@ export const useMarketStore = create((set, get) => ({
   fetchBinanceTokens: async (exchangeType, searchQuery = '', retryCount = 0) => {
     const exchange = get().exchange;
     set({ loadingBinance: true, binanceError: null });
-    const useDirectFuturesClientFetch = exchange === 'binance' && exchangeType === 'futures';
+    const useDirectFuturesClientFallback = exchange === 'binance' && exchangeType === 'futures';
     
     // Helper function to check if error is CORS-related
     const isCORSError = (error) => {
@@ -579,22 +579,6 @@ export const useMarketStore = create((set, get) => ({
     };
     
     try {
-      if (useDirectFuturesClientFetch) {
-        try {
-          const directTokens = await fetchBinanceFuturesTokensDirect(searchQuery);
-          set({
-            binanceTokens: directTokens,
-            loadingBinance: false,
-            binanceError: null,
-          });
-          return;
-        } catch (directError) {
-          console.warn('[MarketStore] Direct Binance Futures fetch failed, falling back to backend:', {
-            message: directError.message,
-          });
-        }
-      }
-
       const params = new URLSearchParams({
         exchangeType,
         ...(searchQuery && { search: searchQuery })
@@ -659,7 +643,7 @@ export const useMarketStore = create((set, get) => ({
         });
 
         const backendReturnedNoFutures =
-          useDirectFuturesClientFetch &&
+          useDirectFuturesClientFallback &&
           (
             response.data?.upstreamUnavailable ||
             !Array.isArray(response.data.tokens) ||
@@ -705,7 +689,7 @@ export const useMarketStore = create((set, get) => ({
           return get().fetchBinanceTokens(exchangeType, searchQuery, retryCount + 1);
         }
 
-        if (useDirectFuturesClientFetch) {
+        if (useDirectFuturesClientFallback) {
           const directTokens = await fetchBinanceFuturesTokensDirect(searchQuery);
           response = {
             data: {
