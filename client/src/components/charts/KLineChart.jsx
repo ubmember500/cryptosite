@@ -1231,14 +1231,27 @@ const KLineChart = ({
   }, [data]);
 
   // When chart initialized before first API response, trigger one initial load.
-  // Avoid resetting data on every update because it recenters view to latest candle.
+  // Also recover from race where a realtime candle arrives before history and chart gets stuck on 1 candle.
+  // Avoid resetting on normal realtime updates because it recenters view.
   useEffect(() => {
     if (!chartRef.current || !isInitialized) return;
     if (!Array.isArray(data) || data.length === 0) return;
 
     try {
       const currentData = chartRef.current.getDataList?.() || [];
+      const incomingCount = data.length;
+
       if (currentData.length === 0) {
+        chartRef.current.resetData();
+        return;
+      }
+
+      const shouldRecoverFromBootstrapRace =
+        currentData.length <= 5 &&
+        incomingCount >= 20 &&
+        incomingCount > currentData.length * 2;
+
+      if (shouldRecoverFromBootstrapRace) {
         chartRef.current.resetData();
       }
     } catch (error) {

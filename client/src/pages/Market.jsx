@@ -455,7 +455,9 @@ const Market = () => {
                 const slotToken = isMultiChart ? chartSlotTokens[i] : selectedToken;
                 const slotInterval = isMultiChart ? (chartSlotIntervals[i] || chartInterval) : chartInterval;
                 const isActiveSlot = isMultiChart && activeChartSlot === i;
-                const slotData = slotToken ? (getChartDataForSymbol(slotToken.fullSymbol) ?? []) : [];
+                const slotData = slotToken
+                  ? (getChartDataForSymbol(slotToken.fullSymbol, exchangeType, slotInterval) ?? [])
+                  : [];
                 const slotHistoryMeta = slotToken
                   ? getChartHistoryMeta(slotToken.fullSymbol, exchangeType, slotInterval)
                   : { hasMoreHistory: false };
