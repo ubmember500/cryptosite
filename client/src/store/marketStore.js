@@ -1,3 +1,32 @@
+// --- MEXC Futures Normalization ---
+const normalizeMexcFuturesTokenMetrics = (token) => {
+  if (!token || typeof token !== 'object') return token;
+  // MEXC futures API: volume24h is in base units, amount is in quote (USDT), lastPrice is string
+  const lastPrice = toNumericOrNull(token.lastPrice);
+  const high24h = toNumericOrNull(token.high24h);
+  const low24h = toNumericOrNull(token.low24h);
+  const priceChangePercent24h = toNumericOrNull(token.priceChangePercent24h);
+  // Prefer amount (quote/USDT) if available, else fallback to base*lastPrice
+  let volume24h = toNumericOrNull(token.amount);
+  if (!Number.isFinite(volume24h) || volume24h === 0) {
+    const base = toNumericOrNull(token.volume24h);
+    if (Number.isFinite(base) && Number.isFinite(lastPrice)) {
+      volume24h = base * lastPrice;
+    } else {
+      volume24h = null;
+    }
+  }
+  const normalized = {
+    ...token,
+    lastPrice,
+    high24h,
+    low24h,
+    priceChangePercent24h,
+    volume24h,
+  };
+  normalized.natr = calculateInstantNatr(normalized);
+  return normalized;
+};
 // Bybit API endpoints
 const BYBIT_BASE_URLS = [
   'https://api.bybit.com',
@@ -763,8 +792,13 @@ export const useMarketStore = create((set, get) => ({
           throw axiosError;
         }
       }
-      const normalizedTokens = Array.isArray(response.data.tokens)
-        ? response.data.tokens.map((token) => normalizeMarketTokenMetrics(token))
+      let normalizedTokens = Array.isArray(response.data.tokens)
+        ? response.data.tokens.map((token) => {
+            if (exchange === 'mexc' && exchangeType === 'futures') {
+              return normalizeMexcFuturesTokenMetrics(token);
+            }
+            return normalizeMarketTokenMetrics(token);
+          })
         : [];
       set({
         binanceTokens: normalizedTokens,
