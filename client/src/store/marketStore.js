@@ -73,6 +73,49 @@ const toNumericOrNull = (value) => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
+const resolveUsdVolume24h = ({ quoteVolume, volume, lastPrice, weightedAvgPrice, volume24h }) => {
+  const explicitUsdVolume = toNumericOrNull(volume24h);
+  if (explicitUsdVolume != null) {
+    return explicitUsdVolume;
+  }
+
+  const quote = toNumericOrNull(quoteVolume);
+  if (quote != null && quote >= 0) {
+    return quote;
+  }
+
+  const baseVolume = toNumericOrNull(volume);
+  const priceRef = toNumericOrNull(weightedAvgPrice) ?? toNumericOrNull(lastPrice);
+  if (baseVolume != null && priceRef != null) {
+    const derived = baseVolume * priceRef;
+    return Number.isFinite(derived) ? derived : null;
+  }
+
+  return null;
+};
+
+const normalizeMarketTokenMetrics = (token) => {
+  if (!token || typeof token !== 'object') return token;
+
+  const normalized = {
+    ...token,
+    lastPrice: toNumericOrNull(token.lastPrice),
+    high24h: toNumericOrNull(token.high24h),
+    low24h: toNumericOrNull(token.low24h),
+    priceChangePercent24h: toNumericOrNull(token.priceChangePercent24h),
+    volume24h: resolveUsdVolume24h({
+      quoteVolume: token.quoteVolume,
+      volume: token.volume,
+      lastPrice: token.lastPrice,
+      weightedAvgPrice: token.weightedAvgPrice,
+      volume24h: token.volume24h,
+    }),
+  };
+
+  normalized.natr = calculateInstantNatr(normalized);
+  return normalized;
+};
+
 const calculateInstantNatr = (token) => {
   if (
     token.high24h == null ||
@@ -172,17 +215,18 @@ const fetchBinanceFuturesTokensDirect = async (searchQuery = '') => {
     .filter((ticker) => typeof ticker?.symbol === 'string' && ticker.symbol.endsWith('USDT'))
     .map((ticker) => {
       const stats = statsMap.get(ticker.symbol) || {};
-      const token = {
+      return normalizeMarketTokenMetrics({
         symbol: ticker.symbol.replace('USDT', ''),
         fullSymbol: ticker.symbol,
-        lastPrice: toNumericOrNull(ticker.price ?? stats.lastPrice),
-        volume24h: toNumericOrNull(stats.quoteVolume ?? stats.volume),
-        priceChangePercent24h: toNumericOrNull(stats.priceChangePercent),
-        high24h: toNumericOrNull(stats.highPrice),
-        low24h: toNumericOrNull(stats.lowPrice),
-      };
-      token.natr = calculateInstantNatr(token);
-      return token;
+        lastPrice: ticker.price ?? stats.lastPrice,
+        volume24h: stats.volume24h,
+        quoteVolume: stats.quoteVolume,
+        volume: stats.volume,
+        weightedAvgPrice: stats.weightedAvgPrice,
+        priceChangePercent24h: stats.priceChangePercent,
+        high24h: stats.highPrice,
+        low24h: stats.lowPrice,
+      });
     })
     .filter((token) => {
       if (!searchLower) return true;
@@ -565,8 +609,12 @@ export const useMarketStore = create((set, get) => ({
         }
       }
       
+      const normalizedTokens = Array.isArray(response.data.tokens)
+        ? response.data.tokens.map((token) => normalizeMarketTokenMetrics(token))
+        : [];
+
       set({
-        binanceTokens: response.data.tokens || [],
+        binanceTokens: normalizedTokens,
         loadingBinance: false,
         binanceError: null
       });
