@@ -5,6 +5,6 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   define: {
-    __BUILD_STAMP__: JSON.stringify('2026-02-19-vercel-force-refresh'),
+    __BUILD_STAMP__: JSON.stringify('2026-02-19-vercel-force-refresh-2'),
   },
 })
