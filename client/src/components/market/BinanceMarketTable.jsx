@@ -69,7 +69,7 @@ const BinanceMarketTable = ({ onTokenSelect, highlightToken }) => {
     const isPositive = value >= 0;
     return (
       <span className={cn(isPositive ? 'text-success' : 'text-danger')}>
-        {isPositive ? '+' : ''}{value.toFixed(2)}
+        {isPositive ? '+' : ''}{value.toFixed(2)}%
       </span>
     );
   };
@@ -80,10 +80,16 @@ const BinanceMarketTable = ({ onTokenSelect, highlightToken }) => {
   };
 
   const handleSort = (key) => {
-    setSortConfig((prev) => ({
-      key,
-      direction: prev.key === key && prev.direction === 'asc' ? 'desc' : 'asc',
-    }));
+    setSortConfig((prev) => {
+      if (prev.key !== key) {
+        return { key, direction: 'desc' };
+      }
+
+      return {
+        key,
+        direction: prev.direction === 'desc' ? 'asc' : 'desc',
+      };
+    });
   };
 
   const handleContextMenu = (e, token) => {

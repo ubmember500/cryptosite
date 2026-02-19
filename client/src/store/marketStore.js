@@ -5,7 +5,14 @@ import { API_BASE_URL } from '../utils/constants';
 
 const CHART_PAGE_LIMIT = 500;
 const WS_HISTORY_RECOVERY_COOLDOWN_MS = 5000;
+const NATR14_PERIOD = 14;
+const NATR14_INTERVAL = '5m';
+const NATR14_KLINE_LIMIT = NATR14_PERIOD + 1;
+const NATR14_CACHE_TTL_MS = 5 * 60 * 1000;
+const NATR14_ENRICH_TOP_LIMIT = 60;
+const NATR14_ENRICH_CONCURRENCY = 6;
 const wsHistoryRecoveryAttemptBySeries = {};
+const natr14CacheBySymbol = new Map();
 
 const getChartHistoryKey = ({ exchange, exchangeType, symbol, interval }) => {
   return `${exchange}:${exchangeType}:${symbol}:${interval}`;
@@ -129,6 +136,111 @@ const calculateInstantNatr = (token) => {
   return Number.isFinite(natr) ? Number(natr.toFixed(2)) : null;
 };
 
+const calculateNatr14FromKlines = (klines) => {
+  if (!Array.isArray(klines) || klines.length < 2) return null;
+
+  const trs = [];
+  for (let index = 1; index < klines.length; index += 1) {
+    const previousClose = Number(klines[index - 1]?.close);
+    const high = Number(klines[index]?.high);
+    const low = Number(klines[index]?.low);
+
+    if (!Number.isFinite(previousClose) || !Number.isFinite(high) || !Number.isFinite(low)) {
+      continue;
+    }
+
+    const tr = Math.max(
+      high - low,
+      Math.abs(high - previousClose),
+      Math.abs(low - previousClose)
+    );
+    if (Number.isFinite(tr)) {
+      trs.push(tr);
+    }
+  }
+
+  if (trs.length === 0) return null;
+
+  const recentTrs = trs.slice(-NATR14_PERIOD);
+  const atr = recentTrs.reduce((sum, value) => sum + value, 0) / recentTrs.length;
+  const lastClose = Number(klines[klines.length - 1]?.close);
+  if (!Number.isFinite(atr) || !Number.isFinite(lastClose) || lastClose <= 0) {
+    return null;
+  }
+
+  const natr = (atr / lastClose) * 100;
+  return Number.isFinite(natr) ? Number(natr.toFixed(2)) : null;
+};
+
+const getCachedNatr14 = (fullSymbol) => {
+  const cacheEntry = natr14CacheBySymbol.get(fullSymbol);
+  if (!cacheEntry) return null;
+  if (Date.now() - cacheEntry.timestamp > NATR14_CACHE_TTL_MS) {
+    natr14CacheBySymbol.delete(fullSymbol);
+    return null;
+  }
+  return cacheEntry.value;
+};
+
+const setCachedNatr14 = (fullSymbol, value) => {
+  if (!Number.isFinite(value)) return;
+  natr14CacheBySymbol.set(fullSymbol, {
+    value,
+    timestamp: Date.now(),
+  });
+};
+
+const enrichTokensWithNatr14 = async (tokens) => {
+  if (!Array.isArray(tokens) || tokens.length === 0) return tokens;
+
+  const sortedByVolume = [...tokens].sort((left, right) => {
+    const leftVol = Number.isFinite(Number(left?.volume24h)) ? Number(left.volume24h) : -1;
+    const rightVol = Number.isFinite(Number(right?.volume24h)) ? Number(right.volume24h) : -1;
+    return rightVol - leftVol;
+  });
+
+  const targetSymbols = sortedByVolume
+    .slice(0, NATR14_ENRICH_TOP_LIMIT)
+    .map((token) => token.fullSymbol)
+    .filter((symbol) => typeof symbol === 'string' && symbol.length > 0);
+
+  const queue = [...new Set(targetSymbols)];
+  const workers = Array.from({ length: Math.min(NATR14_ENRICH_CONCURRENCY, queue.length) }, () => (async () => {
+    while (queue.length > 0) {
+      const fullSymbol = queue.shift();
+      if (!fullSymbol) continue;
+
+      const cachedNatr = getCachedNatr14(fullSymbol);
+      if (cachedNatr != null) {
+        const cachedToken = tokens.find((token) => token.fullSymbol === fullSymbol);
+        if (cachedToken) cachedToken.natr = cachedNatr;
+        continue;
+      }
+
+      try {
+        const klines = await fetchBinanceFuturesKlinesDirect(
+          fullSymbol,
+          NATR14_INTERVAL,
+          NATR14_KLINE_LIMIT
+        );
+        const natr14 = calculateNatr14FromKlines(klines);
+        if (natr14 != null) {
+          const tokenToUpdate = tokens.find((token) => token.fullSymbol === fullSymbol);
+          if (tokenToUpdate) {
+            tokenToUpdate.natr = natr14;
+          }
+          setCachedNatr14(fullSymbol, natr14);
+        }
+      } catch {
+        // Keep fallback NATR value when 5m enrichment is unavailable.
+      }
+    }
+  })());
+
+  await Promise.all(workers);
+  return tokens;
+};
+
 const resample1mToSeconds = (klines1m, secondInterval) => {
   const spanSeconds = { '1s': 1, '5s': 5, '15s': 15 }[secondInterval];
   const subPerMinute = 60 / spanSeconds;
@@ -241,6 +353,8 @@ const fetchBinanceFuturesTokensDirect = async (searchQuery = '') => {
     const rightVol = Number.isFinite(right.volume24h) ? right.volume24h : -1;
     return rightVol - leftVol;
   });
+
+  await enrichTokensWithNatr14(tokens);
 
   if (tokens.length === 0) {
     throw new Error('Direct Binance Futures fetch returned empty token list');
