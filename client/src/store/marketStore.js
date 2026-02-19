@@ -53,7 +53,14 @@ const BINANCE_FUTURES_BASE_URLS = [
   'https://www.binance.com/fapi/v1',
 ];
 
-const BINANCE_FUTURES_PROXY_PATH = `${API_BASE_URL.replace(/\/$/, '')}/binance-klines`;
+const getBinanceFuturesProxyPaths = () => {
+  const paths = [];
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    paths.push(`${window.location.origin}/api/binance-klines`);
+  }
+  paths.push(`${API_BASE_URL.replace(/\/$/, '')}/binance-klines`);
+  return paths;
+};
 
 const BINANCE_FUTURES_INTERVAL_MAP = {
   '1s': '1m',
@@ -225,29 +232,38 @@ const fetchBinanceFuturesKlinesDirect = async (
 
   try {
     const proxyQuery = new URLSearchParams(requestParams);
-    const proxyResponse = await fetch(`${BINANCE_FUTURES_PROXY_PATH}?${proxyQuery.toString()}`, {
-      method: 'GET',
-      headers: {
-        Accept: 'application/json',
-      },
-    });
+    const proxyPaths = getBinanceFuturesProxyPaths();
 
-    if (!proxyResponse.ok) {
-      const text = await proxyResponse.text();
-      throw new Error(`Proxy HTTP ${proxyResponse.status}: ${text || proxyResponse.statusText}`);
+    for (const proxyPath of proxyPaths) {
+      const proxyResponse = await fetch(`${proxyPath}?${proxyQuery.toString()}`, {
+        method: 'GET',
+        headers: {
+          Accept: 'application/json',
+        },
+      });
+
+      if (!proxyResponse.ok) {
+        const text = await proxyResponse.text();
+        throw new Error(`Proxy HTTP ${proxyResponse.status}: ${text || proxyResponse.statusText}`);
+      }
+
+      const proxyPayload = await proxyResponse.json();
+      if (!Array.isArray(proxyPayload?.klines)) {
+        throw new Error('Proxy returned invalid klines payload');
+      }
+
+      if (isSuspiciousShortPayload(proxyPayload.klines)) {
+        throw new Error('Proxy returned suspiciously short Binance Futures klines payload');
+      }
+
+      rows = proxyPayload.klines;
+      usedProxy = true;
+      break;
     }
 
-    const proxyPayload = await proxyResponse.json();
-    if (!Array.isArray(proxyPayload?.klines)) {
-      throw new Error('Proxy returned invalid klines payload');
+    if (!rows) {
+      throw new Error('All proxy endpoints failed');
     }
-
-    if (isSuspiciousShortPayload(proxyPayload.klines)) {
-      throw new Error('Proxy returned suspiciously short Binance Futures klines payload');
-    }
-
-    rows = proxyPayload.klines;
-    usedProxy = true;
   } catch {
     rows = await fetchJsonFromUrls(
       BINANCE_FUTURES_BASE_URLS,
