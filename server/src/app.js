@@ -3,6 +3,7 @@ const cors = require('cors');
 const errorHandler = require('./middleware/errorHandler');
 const authMiddleware = require('./middleware/auth');
 const subscriptionController = require('./controllers/subscriptionController');
+const marketController = require('./controllers/marketController');
 
 const app = express();
 
@@ -44,6 +45,7 @@ app.get('/health', (req, res) => {
 });
 
 // API routes
+app.get('/api/binance-klines', marketController.getBinanceFuturesKlinesProxy);
 app.use('/api/market', require('./routes/market'));
 app.use('/api/wall-scanner', require('./routes/wallScanner'));
 app.use('/api/watchlist', require('./routes/watchlist'));

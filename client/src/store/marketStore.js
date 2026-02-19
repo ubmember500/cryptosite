@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { marketService } from '../services/marketService';
 import api from '../services/api';
+import { API_BASE_URL } from '../utils/constants';
 
 const CHART_PAGE_LIMIT = 500;
 const WS_HISTORY_RECOVERY_COOLDOWN_MS = 5000;
@@ -52,7 +53,7 @@ const BINANCE_FUTURES_BASE_URLS = [
   'https://www.binance.com/fapi/v1',
 ];
 
-const BINANCE_FUTURES_PROXY_PATH = '/api/binance-klines';
+const BINANCE_FUTURES_PROXY_PATH = `${API_BASE_URL.replace(/\/$/, '')}/binance-klines`;
 
 const BINANCE_FUTURES_INTERVAL_MAP = {
   '1s': '1m',
