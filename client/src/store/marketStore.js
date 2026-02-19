@@ -235,30 +235,34 @@ const fetchBinanceFuturesKlinesDirect = async (
     const proxyPaths = getBinanceFuturesProxyPaths();
 
     for (const proxyPath of proxyPaths) {
-      const proxyResponse = await fetch(`${proxyPath}?${proxyQuery.toString()}`, {
-        method: 'GET',
-        headers: {
-          Accept: 'application/json',
-        },
-      });
+      try {
+        const proxyResponse = await fetch(`${proxyPath}?${proxyQuery.toString()}`, {
+          method: 'GET',
+          headers: {
+            Accept: 'application/json',
+          },
+        });
 
-      if (!proxyResponse.ok) {
-        const text = await proxyResponse.text();
-        throw new Error(`Proxy HTTP ${proxyResponse.status}: ${text || proxyResponse.statusText}`);
+        if (!proxyResponse.ok) {
+          const text = await proxyResponse.text();
+          throw new Error(`Proxy HTTP ${proxyResponse.status}: ${text || proxyResponse.statusText}`);
+        }
+
+        const proxyPayload = await proxyResponse.json();
+        if (!Array.isArray(proxyPayload?.klines)) {
+          throw new Error('Proxy returned invalid klines payload');
+        }
+
+        if (isSuspiciousShortPayload(proxyPayload.klines)) {
+          throw new Error('Proxy returned suspiciously short Binance Futures klines payload');
+        }
+
+        rows = proxyPayload.klines;
+        usedProxy = true;
+        break;
+      } catch {
+        // Try next proxy endpoint
       }
-
-      const proxyPayload = await proxyResponse.json();
-      if (!Array.isArray(proxyPayload?.klines)) {
-        throw new Error('Proxy returned invalid klines payload');
-      }
-
-      if (isSuspiciousShortPayload(proxyPayload.klines)) {
-        throw new Error('Proxy returned suspiciously short Binance Futures klines payload');
-      }
-
-      rows = proxyPayload.klines;
-      usedProxy = true;
-      break;
     }
 
     if (!rows) {
