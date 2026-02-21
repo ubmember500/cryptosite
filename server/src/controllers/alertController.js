@@ -197,16 +197,16 @@ async function createAlert(req, res, next) {
         try {
           const getPrices =
             exchange === 'bybit'
-              ? () => bybitService.getLastPricesBySymbols([normalizedSymbol], exchangeType)
+              ? () => bybitService.getLastPricesBySymbols([normalizedSymbol], exchangeType, { strict: true })
               : exchange === 'okx'
-                ? () => okxService.getLastPricesBySymbols([normalizedSymbol], exchangeType)
+                ? () => okxService.getLastPricesBySymbols([normalizedSymbol], exchangeType, { strict: true })
                 : exchange === 'gate'
-                  ? () => gateService.getLastPricesBySymbols([normalizedSymbol], exchangeType)
+                  ? () => gateService.getLastPricesBySymbols([normalizedSymbol], exchangeType, { strict: true })
                   : exchange === 'mexc'
-                    ? () => mexcService.getLastPricesBySymbols([normalizedSymbol], exchangeType)
+                    ? () => mexcService.getLastPricesBySymbols([normalizedSymbol], exchangeType, { strict: true })
                     : exchange === 'bitget'
-                      ? () => bitgetService.getLastPricesBySymbols([normalizedSymbol], exchangeType)
-                      : () => binanceService.getLastPricesBySymbols([normalizedSymbol], exchangeType);
+                      ? () => bitgetService.getLastPricesBySymbols([normalizedSymbol], exchangeType, { strict: true })
+                      : () => binanceService.getLastPricesBySymbols([normalizedSymbol], exchangeType, { strict: true });
           const prices = await getPrices();
 
           const p = prices[normalizedSymbol];
@@ -231,14 +231,35 @@ async function createAlert(req, res, next) {
         } catch (err) {
           console.error(`[createAlert] ${exchange} API error when fetching initial price:`, {
             error: err.message,
+            code: err.code,
+            status: err.statusCode || err.response?.status,
             symbol: normalizedSymbol,
             market,
           });
 
+          const isUpstreamUnavailable =
+            err?.code === 'UPSTREAM_PRICE_UNAVAILABLE' ||
+            [429, 451, 502, 503, 504].includes(err?.statusCode || err?.response?.status);
+
+          if (isUpstreamUnavailable) {
+            return res.status(503).json({
+              error: `Failed to fetch current price from ${exchange}. Exchange upstream is temporarily unavailable from server environment. Please try again later or switch exchange.`,
+              details: {
+                exchange,
+                symbol: firstSymbolRaw,
+                normalizedSymbol,
+                market,
+                error: err.message,
+              },
+            });
+          }
+
           return res.status(503).json({
             error: 'Failed to fetch current price from exchange. Please try again later.',
             details: {
+              exchange,
               symbol: firstSymbolRaw,
+              normalizedSymbol,
               market,
               error: err.message,
             },

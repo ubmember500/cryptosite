@@ -114,14 +114,23 @@ function normalizeSymbol(symbol) {
  * @param {'futures'|'spot'} exchangeType - market
  * @returns {Promise<Record<string, number>>} Map of symbol -> lastPrice; omits symbols not in response (e.g. delisted)
  */
-async function getLastPricesBySymbols(symbols, exchangeType) {
+async function getLastPricesBySymbols(symbols, exchangeType, options = {}) {
+  const { strict = false } = options;
   const cacheKey = exchangeType === 'futures' ? 'futures' : 'spot';
   const now = Date.now();
 
   const lastErrorTs = lastPricesErrorState[cacheKey].timestamp;
   if (lastErrorTs && now - lastErrorTs < LAST_PRICES_ERROR_COOLDOWN_MS) {
     const cached = lastPricesCache[cacheKey].data || {};
-    return filterPriceMapBySymbols(cached, symbols);
+    const filtered = filterPriceMapBySymbols(cached, symbols);
+    const hasRequestedSymbols = Array.isArray(symbols) && symbols.length > 0;
+    if (strict && hasRequestedSymbols && Object.keys(filtered).length === 0) {
+      const cooldownError = new Error(`Binance ${exchangeType} price feed temporarily unavailable (cooldown after upstream error)`);
+      cooldownError.statusCode = 503;
+      cooldownError.code = 'UPSTREAM_PRICE_UNAVAILABLE';
+      throw cooldownError;
+    }
+    return filtered;
   }
 
   if (
@@ -162,7 +171,15 @@ async function getLastPricesBySymbols(symbols, exchangeType) {
     lastPricesErrorState[cacheKey].timestamp = now;
     console.warn(`[getLastPricesBySymbols] ${exchangeType} failed:`, error.message);
     const cached = lastPricesCache[cacheKey].data || {};
-    return filterPriceMapBySymbols(cached, symbols);
+    const filtered = filterPriceMapBySymbols(cached, symbols);
+    const hasRequestedSymbols = Array.isArray(symbols) && symbols.length > 0;
+    if (strict && hasRequestedSymbols && Object.keys(filtered).length === 0) {
+      const upstreamError = new Error(`Binance ${exchangeType} price feed unavailable: ${error.message}`);
+      upstreamError.statusCode = error?.statusCode || error?.response?.status || 503;
+      upstreamError.code = 'UPSTREAM_PRICE_UNAVAILABLE';
+      throw upstreamError;
+    }
+    return filtered;
   }
 }
 

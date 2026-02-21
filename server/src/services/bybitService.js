@@ -45,7 +45,8 @@ function normalizeSymbol(symbol) {
  * @param {'futures'|'spot'} exchangeType - market (linear vs spot)
  * @returns {Promise<Record<string, number>>} symbol -> lastPrice
  */
-async function getLastPricesBySymbols(symbols, exchangeType) {
+async function getLastPricesBySymbols(symbols, exchangeType, options = {}) {
+  const { strict = false } = options;
   const cacheKey = exchangeType === 'futures' ? 'futures' : 'spot';
   const now = Date.now();
   if (
@@ -97,6 +98,12 @@ async function getLastPricesBySymbols(symbols, exchangeType) {
     return out;
   } catch (error) {
     console.warn(`[Bybit getLastPricesBySymbols] ${exchangeType} failed:`, error.message);
+    if (strict && Array.isArray(symbols) && symbols.length > 0) {
+      const upstreamError = new Error(`Bybit ${exchangeType} price feed unavailable: ${error.message}`);
+      upstreamError.statusCode = error?.statusCode || error?.response?.status || 503;
+      upstreamError.code = 'UPSTREAM_PRICE_UNAVAILABLE';
+      throw upstreamError;
+    }
     return {};
   }
 }
