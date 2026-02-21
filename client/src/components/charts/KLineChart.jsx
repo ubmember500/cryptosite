@@ -94,6 +94,12 @@ const KLineChart = ({
   const chartIdRef = useRef(`kline-chart-${symbol}-${instanceId}-${Date.now()}`);
   const [isInitialized, setIsInitialized] = useState(false);
   const dataRef = useRef(data || []); // Keep data in ref for data loader access
+  const lastAppliedDataRef = useRef({
+    count: 0,
+    lastTime: null,
+    lastClose: null,
+  });
+  const pendingResetRafRef = useRef(null);
   const onLoadMoreHistoryRef = useRef(onLoadMoreHistory);
   const hasMoreHistoryRef = useRef(hasMoreHistory);
   const canLoadMoreHistoryRef = useRef(true);
@@ -1227,6 +1233,53 @@ const KLineChart = ({
   useEffect(() => {
     dataRef.current = data || [];
   }, [data]);
+
+  // Apply realtime updates: when the incoming data list changes (new candle or
+  // updated last candle), resetData() so the chart pulls fresh bars from loader.
+  // klinecharts v10 does not expose a public incremental update API in our setup.
+  useEffect(() => {
+    if (!chartRef.current || !isInitialized) return;
+    if (!Array.isArray(data) || data.length === 0) return;
+
+    const lastCandle = data[data.length - 1];
+    const lastTime = Number(lastCandle?.time);
+    const lastClose = Number(lastCandle?.close);
+    const signature = {
+      count: data.length,
+      lastTime: Number.isFinite(lastTime) ? lastTime : null,
+      lastClose: Number.isFinite(lastClose) ? lastClose : null,
+    };
+
+    const prev = lastAppliedDataRef.current;
+    const unchanged =
+      prev.count === signature.count &&
+      prev.lastTime === signature.lastTime &&
+      prev.lastClose === signature.lastClose;
+
+    if (unchanged) return;
+    lastAppliedDataRef.current = signature;
+
+    if (pendingResetRafRef.current) {
+      cancelAnimationFrame(pendingResetRafRef.current);
+    }
+
+    pendingResetRafRef.current = requestAnimationFrame(() => {
+      pendingResetRafRef.current = null;
+      if (!chartRef.current) return;
+      try {
+        chartRef.current.resetData();
+      } catch (error) {
+        console.error('[KLineChart] Error applying realtime update:', error);
+      }
+    });
+
+    return () => {
+      if (pendingResetRafRef.current) {
+        cancelAnimationFrame(pendingResetRafRef.current);
+        pendingResetRafRef.current = null;
+      }
+    };
+  }, [data, isInitialized]);
 
   // When chart initialized before first API response, trigger one initial load.
   // Also recover from race where a realtime candle arrives before history and chart gets stuck on 1 candle.
