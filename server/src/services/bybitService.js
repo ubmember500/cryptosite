@@ -149,6 +149,15 @@ async function fetchBybitSymbolPrices(symbols, exchangeType) {
   return out;
 }
 
+async function fetchCurrentPriceBySymbol(symbol, exchangeType) {
+  const normalized = normalizeSymbol(symbol);
+  if (!normalized) return null;
+
+  const result = await fetchBybitSymbolPrices([normalized], exchangeType === 'spot' ? 'spot' : 'futures');
+  const price = Number(result?.[normalized]);
+  return Number.isFinite(price) && price > 0 ? price : null;
+}
+
 /**
  * Get last price per symbol from Bybit tickers (for alert engine).
  * Same interface as binanceService.getLastPricesBySymbols.
@@ -514,5 +523,6 @@ module.exports = {
   calculateInstantNATR,
   normalizeSymbol,
   getLastPricesBySymbols,
+  fetchCurrentPriceBySymbol,
   fetchActiveSymbols,
 };

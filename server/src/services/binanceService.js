@@ -185,6 +185,15 @@ async function fetchBinanceSymbolPrices(symbols, exchangeType) {
   return out;
 }
 
+async function fetchCurrentPriceBySymbol(symbol, exchangeType) {
+  const normalized = normalizeSymbol(symbol);
+  if (!normalized) return null;
+
+  const result = await fetchBinanceSymbolPrices([normalized], exchangeType === 'spot' ? 'spot' : 'futures');
+  const price = Number(result?.[normalized]);
+  return Number.isFinite(price) && price > 0 ? price : null;
+}
+
 /**
  * Normalize symbol to Binance format:
  * - trim spaces
@@ -1457,5 +1466,6 @@ module.exports = {
   fetchTokenWithNATR,
   fetchKlines,
   getLastPricesBySymbols,
+  fetchCurrentPriceBySymbol,
   normalizeSymbol,
 };

@@ -23,6 +23,25 @@ async function fetchExchangeTokenSnapshotPrice({ exchange, symbol, market }) {
   const exchangeType = market === 'spot' ? 'spot' : 'futures';
   const key = String(exchange || '').toLowerCase();
 
+  if (key === 'binance' || key === 'bybit') {
+    try {
+      const price =
+        key === 'binance'
+          ? await binanceService.fetchCurrentPriceBySymbol(symbol, exchangeType)
+          : await bybitService.fetchCurrentPriceBySymbol(symbol, exchangeType);
+      if (price != null && Number.isFinite(price) && price > 0) {
+        return { price, source: `${key}_symbol_ticker` };
+      }
+    } catch (error) {
+      console.warn('[createAlert] Exchange symbol ticker fallback failed:', {
+        exchange: key,
+        symbol,
+        market,
+        error: error.message,
+      });
+    }
+  }
+
   const fetchToken =
     key === 'bybit'
       ? () => bybitService.fetchTokenWithNATR(symbol, exchangeType)
