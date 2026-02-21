@@ -102,6 +102,12 @@ Create **server/.env** and set your secrets (see `server/.env.example`). Include
 - `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`
 - `TELEGRAM_BOT_TOKEN` for the Telegram notification bot (see below).
 
+For production deployments (Vercel frontend + Render API), ensure:
+- `client/.env.production`: `VITE_API_BASE_URL=https://<your-render-domain>/api`
+- `client/.env.production`: `VITE_SOCKET_URL=https://<your-render-domain>`
+- `server/.env`: `FRONTEND_URL=https://<primary-frontend-domain>` (used in email reset links)
+- `server/.env`: `FRONTEND_URLS=https://<frontend-1>,https://<frontend-2>` (API + Socket.IO CORS allowlist)
+
 Start the server from repo root with **`npm run dev`** or from **server/** with **`npm run dev`** so that the working directory is server/ and server/.env is loaded. If you run from project root (e.g. `node server/src/index.js`), .env is still loaded from **server/.env**.
 
 On startup, the server logs **"Telegram bot: configured"** or **"Telegram bot: not configured"**, and if configured, **"Telegram updates: webhook"** or **"Telegram updates: polling"** plus the bot username when getMe succeeds.
@@ -121,6 +127,7 @@ The Telegram notification bot is **not** created by the app; it is created once 
 
 - **Agent Tasks**: `AGENT_TASKS.md` - Step-by-step instructions for each agent
 - **Architecture**: `ARCHITECTURE_OVERVIEW.md` - System design and API reference
+- **Chart Deploy Troubleshooting**: `docs/CHART-DEPLOYMENT-TROUBLESHOOTING.md` - Smoke checks and fixes when charts fail after deploy
 
 ## 📅 Futures Listings Feed
 

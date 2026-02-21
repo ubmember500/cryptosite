@@ -5,7 +5,7 @@ const klineManager = require('./klineManager');
 
 let io = null;
 
-const configuredFrontendOrigins = String(process.env.FRONTEND_URL || '')
+const configuredFrontendOrigins = String(process.env.FRONTEND_URLS || process.env.FRONTEND_URL || '')
   .split(',')
   .map((origin) => origin.trim())
   .filter(Boolean);
