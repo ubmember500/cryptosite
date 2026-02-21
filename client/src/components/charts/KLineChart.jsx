@@ -13,6 +13,7 @@ import RealtimeIndicator from '../market/RealtimeIndicator';
 import OverlayContextMenu from './OverlayContextMenu';
 import IndicatorsButton from './IndicatorsButton';
 import { useToastStore } from '../../store/toastStore';
+import { getThemePalette } from '../../utils/themePalette';
 
 // Drawing tool constants
 export const DRAWING_TOOLS = {
@@ -919,6 +920,7 @@ const KLineChart = ({
     }
 
     try {
+      const themeColors = getThemePalette();
       registerCustomShapeOverlays();
       // Initialize chart with minimal configuration
       // Layout must be an array of pane configurations
@@ -940,48 +942,36 @@ const KLineChart = ({
         // Styles: Polished dark theme (candles, crosshair, grid, tooltip, axes)
         styles: {
           grid: {
-            show: true,
-            horizontal: {
-              show: true,
-              size: 1,
-              color: '#2a2d3a',
-              style: 'dashed',
-              dashedValue: [4, 4],
-            },
-            vertical: {
-              show: true,
-              size: 1,
-              color: '#2a2d3a',
-              style: 'dashed',
-              dashedValue: [4, 4],
-            },
+            show: false,
+            horizontal: { show: false },
+            vertical: { show: false },
           },
           candle: {
             type: 'candle_solid',
             bar: {
               compareRule: 'current_open',
-              upColor: '#00c853',
-              downColor: '#ff1744',
-              noChangeColor: '#8b949e',
-              upBorderColor: '#00c853',
-              downBorderColor: '#ff1744',
-              noChangeBorderColor: '#8b949e',
-              upWickColor: '#00c853',
-              downWickColor: '#ff1744',
-              noChangeWickColor: '#8b949e',
+              upColor: themeColors.success,
+              downColor: themeColors.danger,
+              noChangeColor: themeColors.textSecondary,
+              upBorderColor: themeColors.success,
+              downBorderColor: themeColors.danger,
+              noChangeBorderColor: themeColors.textSecondary,
+              upWickColor: themeColors.success,
+              downWickColor: themeColors.danger,
+              noChangeWickColor: themeColors.textSecondary,
             },
             priceMark: {
               show: true,
               high: {
                 show: true,
-                color: '#94a3b8',
+                color: themeColors.textSecondary,
                 textMargin: 4,
                 textSize: 11,
                 textFamily: 'Inter, system-ui, sans-serif',
               },
               low: {
                 show: true,
-                color: '#94a3b8',
+                color: themeColors.textSecondary,
                 textMargin: 4,
                 textSize: 11,
                 textFamily: 'Inter, system-ui, sans-serif',
@@ -989,13 +979,12 @@ const KLineChart = ({
               last: {
                 show: true,
                 compareRule: 'current_open',
-                upColor: '#00c853',
-                downColor: '#ff1744',
-                noChangeColor: '#8b949e',
+                upColor: themeColors.success,
+                downColor: themeColors.danger,
+                noChangeColor: themeColors.textSecondary,
                 line: {
                   show: true,
-                  style: 'dashed',
-                  dashedValue: [6, 4],
+                  style: 'solid',
                   size: 1,
                 },
                 text: {
@@ -1008,9 +997,9 @@ const KLineChart = ({
                   paddingBottom: 4,
                   borderStyle: 'solid',
                   borderSize: 1,
-                  borderColor: '#2a2d3a',
+                  borderColor: themeColors.border,
                   borderRadius: 4,
-                  color: '#f1f5f9',
+                  color: themeColors.textPrimary,
                   family: 'Inter, system-ui, sans-serif',
                   weight: '500',
                 },
@@ -1029,19 +1018,19 @@ const KLineChart = ({
             show: true,
             axisLine: {
               show: true,
-              color: '#2a2d3a',
+              color: themeColors.border,
               size: 1,
               style: 'solid',
             },
             tickLine: {
               show: true,
-              color: '#2a2d3a',
+              color: themeColors.border,
               size: 1,
               length: 4,
             },
             tickText: {
               show: true,
-              color: '#8b949e',
+              color: themeColors.textSecondary,
               size: 11,
               family: 'Inter, system-ui, sans-serif',
               marginStart: 4,
@@ -1052,19 +1041,19 @@ const KLineChart = ({
             show: true,
             axisLine: {
               show: true,
-              color: '#2a2d3a',
+              color: themeColors.border,
               size: 1,
               style: 'solid',
             },
             tickLine: {
               show: true,
-              color: '#2a2d3a',
+              color: themeColors.border,
               size: 1,
               length: 4,
             },
             tickText: {
               show: true,
-              color: '#8b949e',
+              color: themeColors.textSecondary,
               size: 11,
               family: 'Inter, system-ui, sans-serif',
               marginStart: 4,
@@ -1073,7 +1062,7 @@ const KLineChart = ({
           },
           separator: {
             size: 1,
-            color: '#2a2d3a',
+            color: themeColors.border,
             fill: true,
           },
           crosshair: {
@@ -1082,60 +1071,58 @@ const KLineChart = ({
               show: true,
               line: {
                 show: true,
-                style: 'dashed',
-                dashedValue: [4, 4],
+                style: 'solid',
                 size: 1,
-                color: '#2a2d3a',
+                color: themeColors.border,
               },
               text: {
                 show: true,
                 style: 'fill',
-                color: '#e1e4e8',
+                color: themeColors.textPrimary,
                 size: 11,
                 family: 'Inter, system-ui, sans-serif',
                 borderStyle: 'solid',
                 borderSize: 1,
-                borderColor: '#2a2d3a',
+                borderColor: themeColors.border,
                 borderRadius: 4,
                 paddingLeft: 6,
                 paddingRight: 6,
                 paddingTop: 4,
                 paddingBottom: 4,
-                backgroundColor: '#1a1d29',
+                backgroundColor: themeColors.surface,
               },
             },
             vertical: {
               show: true,
               line: {
                 show: true,
-                style: 'dashed',
-                dashedValue: [4, 4],
+                style: 'solid',
                 size: 1,
-                color: '#2a2d3a',
+                color: themeColors.border,
               },
               text: {
                 show: true,
                 style: 'fill',
-                color: '#e1e4e8',
+                color: themeColors.textPrimary,
                 size: 11,
                 family: 'Inter, system-ui, sans-serif',
                 borderStyle: 'solid',
                 borderSize: 1,
-                borderColor: '#2a2d3a',
+                borderColor: themeColors.border,
                 borderRadius: 4,
                 paddingLeft: 6,
                 paddingRight: 6,
                 paddingTop: 4,
                 paddingBottom: 4,
-                backgroundColor: '#1a1d29',
+                backgroundColor: themeColors.surface,
               },
             },
           },
           background: {
             type: 'solid',
-            color: '#1a1d29',
+            color: themeColors.surface,
           },
-          textColor: '#e1e4e8',
+          textColor: themeColors.textPrimary,
         },
       });
 

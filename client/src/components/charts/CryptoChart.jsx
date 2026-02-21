@@ -7,6 +7,7 @@ import { RefreshCw, AlertCircle, Maximize, Minimize, Crosshair } from 'lucide-re
 import ChartToolbar from './ChartToolbar';
 import IndicatorsButton from '../chart-ui/IndicatorsButton';
 import IndicatorsModal from '../chart-ui/IndicatorsModal';
+import { getThemePalette } from '../../utils/themePalette';
 
 const CryptoChart = ({ 
   data, 
@@ -771,52 +772,48 @@ const CryptoChart = ({
       height: containerHeight,
       timestamp: new Date().toISOString(),
     });
+    const themeColors = getThemePalette();
     
     // Wrap chart creation in try-catch for error handling
-    let chart;
-    try {
-      console.log('[CryptoChart] 🔨 CALLING createChart() NOW...');
-      
-      // Create main chart with professional styling
       chart = createChart(container, {
       width: containerWidth,
       height: containerHeight,
       layout: {
-        background: { color: '#0d1117' }, // Dark background
-        textColor: '#e0e0e0', // Light gray text
+        background: { color: themeColors.surface },
+        textColor: themeColors.textPrimary,
         fontSize: 12,
         fontFamily: 'Inter, system-ui, sans-serif',
       },
       grid: {
-        vertLines: { 
-          color: '#2a2d3a', // Subtle gray grid lines
-          style: 1, // Solid
+        vertLines: {
+          color: themeColors.border,
+          visible: false,
         },
-        horzLines: { 
-          color: '#2a2d3a', // Subtle gray grid lines
-          style: 1, // Solid
+        horzLines: {
+          color: themeColors.border,
+          visible: false,
         },
       },
       crosshair: {
-        mode: 1, // Normal crosshair mode
+        mode: 1,
         vertLine: {
-          color: '#536985', // Professional crosshair color
+          color: themeColors.border,
           width: 1,
-          style: 0, // Solid line
-          labelBackgroundColor: '#1a1a1a',
+          style: 0,
+          labelBackgroundColor: themeColors.surface,
         },
         horzLine: {
-          color: '#536985', // Professional crosshair color
+          color: themeColors.border,
           width: 1,
-          style: 0, // Solid line
-          labelBackgroundColor: '#1a1a1a',
+          style: 0,
+          labelBackgroundColor: themeColors.surface,
         },
       },
       rightPriceScale: {
-        borderColor: '#2a2d3a', // Subtle border
+        borderColor: themeColors.border,
         scaleMargins: {
           top: 0.1,
-          bottom: 0.4, // Reserve space for volume at bottom
+          bottom: 0.4,
         },
         entireTextOnly: true,
         ticksVisible: true,
@@ -824,7 +821,7 @@ const CryptoChart = ({
         autoScale: true,
       },
       timeScale: {
-        borderColor: '#2a2d3a', // Subtle border
+        borderColor: themeColors.border,
         timeVisible: true,
         secondsVisible: false,
         rightOffset: 5,
@@ -840,13 +837,18 @@ const CryptoChart = ({
         pressedMouseMove: true,
         horzTouchDrag: true,
         vertTouchDrag: true,
-        pinch: true, // Enable pinch zoom for touch devices
+        pinch: true,
       },
       handleScale: {
         axisPressedMouseMove: {
-          time: true, // Enable panning on time axis
-          price: true, // Enable panning on price axis
+          time: true,
+          price: true,
         },
+        axisDoubleClickReset: true,
+        mouseWheel: true,
+        pinch: true,
+      },
+    });
         axisDoubleClickReset: true, // Double-click to reset zoom
         mouseWheel: true, // Mouse wheel zoom
         pinch: true, // Pinch zoom for touch devices
@@ -892,15 +894,15 @@ const CryptoChart = ({
     try {
       console.log('[CryptoChart] About to call chart.addCandlestickSeries()...');
       candlestickSeries = chart.addCandlestickSeries({
-      upColor: '#00c853', // Green for up candles
-      downColor: '#ff1744', // Red for down candles
+      upColor: themeColors.success,
+      downColor: themeColors.danger,
       borderVisible: false,
-      wickUpColor: '#00c853', // Green wicks for up candles
-      wickDownColor: '#ff1744', // Red wicks for down candles
+      wickUpColor: themeColors.success,
+      wickDownColor: themeColors.danger,
       priceScaleId: 'right',
       priceFormat: {
         type: 'price',
-        precision: 8, // Show up to 8 decimals for detailed price view
+        precision: 8,
         minMove: 0.00000001,
       },
     });
