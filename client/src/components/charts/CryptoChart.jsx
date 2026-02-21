@@ -775,6 +775,7 @@ const CryptoChart = ({
     const themeColors = getThemePalette();
     
     // Wrap chart creation in try-catch for error handling
+    try {
       chart = createChart(container, {
       width: containerWidth,
       height: containerHeight,
@@ -847,11 +848,6 @@ const CryptoChart = ({
         axisDoubleClickReset: true,
         mouseWheel: true,
         pinch: true,
-      },
-    });
-        axisDoubleClickReset: true, // Double-click to reset zoom
-        mouseWheel: true, // Mouse wheel zoom
-        pinch: true, // Pinch zoom for touch devices
       },
     });
       
