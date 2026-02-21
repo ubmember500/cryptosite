@@ -19,6 +19,71 @@ function deriveLegacyFromFirstSymbol(symbols) {
   return { coinSymbol: base, coinId: base.toLowerCase() };
 }
 
+async function fetchCrossExchangeFallbackPrice({ sourceExchange, symbol, market }) {
+  const exchangeType = market === 'spot' ? 'spot' : 'futures';
+  const source = String(sourceExchange || '').toLowerCase();
+
+  const providers = [
+    {
+      id: 'okx',
+      normalize: okxService.normalizeSymbol,
+      fetch: (normalized) => okxService.getLastPricesBySymbols([normalized], exchangeType),
+    },
+    {
+      id: 'gate',
+      normalize: gateService.normalizeSymbol,
+      fetch: (normalized) => gateService.getLastPricesBySymbols([normalized], exchangeType),
+    },
+    {
+      id: 'mexc',
+      normalize: mexcService.normalizeSymbol,
+      fetch: (normalized) => mexcService.getLastPricesBySymbols([normalized], exchangeType),
+    },
+    {
+      id: 'bitget',
+      normalize: bitgetService.normalizeSymbol,
+      fetch: (normalized) => bitgetService.getLastPricesBySymbols([normalized], exchangeType),
+    },
+    {
+      id: 'bybit',
+      normalize: bybitService.normalizeSymbol,
+      fetch: (normalized) => bybitService.getLastPricesBySymbols([normalized], exchangeType, { strict: false }),
+    },
+    {
+      id: 'binance',
+      normalize: binanceService.normalizeSymbol,
+      fetch: (normalized) => binanceService.getLastPricesBySymbols([normalized], exchangeType, { strict: false }),
+    },
+  ].filter((provider) => provider.id !== source);
+
+  for (const provider of providers) {
+    try {
+      const normalizedSymbol = provider.normalize(symbol);
+      if (!normalizedSymbol) continue;
+
+      const prices = await provider.fetch(normalizedSymbol);
+      const price = prices?.[normalizedSymbol] ?? prices?.[symbol];
+      if (price != null && Number.isFinite(price) && price > 0) {
+        return {
+          price,
+          provider: provider.id,
+          normalizedSymbol,
+        };
+      }
+    } catch (error) {
+      console.warn('[createAlert] Cross-exchange fallback provider failed:', {
+        sourceExchange: source,
+        provider: provider.id,
+        symbol,
+        market,
+        error: error.message,
+      });
+    }
+  }
+
+  return null;
+}
+
 /**
  * Get user's alerts
  * Query params: status (active|triggered|all), exchange, market, type (alertType)
@@ -240,6 +305,7 @@ async function createAlert(req, res, next) {
 
           const isUpstreamUnavailable =
             err?.code === 'UPSTREAM_PRICE_UNAVAILABLE' ||
+            ['ECONNRESET', 'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'ETIMEDOUT', 'ECONNABORTED'].includes(String(err?.code || '').toUpperCase()) ||
             [403, 429, 451, 502, 503, 504].includes(err?.statusCode || err?.response?.status);
 
           if (isUpstreamUnavailable) {
@@ -266,6 +332,26 @@ async function createAlert(req, res, next) {
                   symbol: normalizedSymbol,
                   market,
                   error: fallbackErr.message,
+                });
+              }
+            }
+
+            if (initialPrice == null || !Number.isFinite(initialPrice) || initialPrice <= 0) {
+              const crossExchangeFallback = await fetchCrossExchangeFallbackPrice({
+                sourceExchange: exchange,
+                symbol: normalizedSymbol,
+                market,
+              });
+
+              if (crossExchangeFallback?.price != null && Number.isFinite(crossExchangeFallback.price) && crossExchangeFallback.price > 0) {
+                initialPrice = crossExchangeFallback.price;
+                console.log('[createAlert] Initial price resolved via cross-exchange fallback:', {
+                  requestedExchange: exchange,
+                  providerExchange: crossExchangeFallback.provider,
+                  symbol: normalizedSymbol,
+                  providerSymbol: crossExchangeFallback.normalizedSymbol,
+                  market,
+                  initialPrice,
                 });
               }
             }
