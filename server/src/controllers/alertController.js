@@ -165,6 +165,12 @@ async function createAlert(req, res, next) {
     } else {
       body.targetValue = undefined;
     }
+    if (body.currentPrice !== undefined && body.currentPrice !== null && body.currentPrice !== '') {
+      const n = typeof body.currentPrice === 'number' ? body.currentPrice : parseFloat(body.currentPrice, 10);
+      body.currentPrice = Number.isFinite(n) ? n : undefined;
+    } else {
+      body.currentPrice = undefined;
+    }
 
     console.log('[createAlert] Normalized body after coercion:', JSON.stringify(body, null, 2));
     
@@ -225,6 +231,7 @@ async function createAlert(req, res, next) {
     // B1: For price alerts with symbols, fetch exchange price at creation and store as initialPrice
     // CRITICAL: initialPrice is REQUIRED for price alerts to determine condition and verify cross
     let initialPrice = null;
+    const clientProvidedInitialPrice = Number(validatedData.currentPrice);
     const exchange = (validatedData.exchange || 'binance').toLowerCase();
     if (validatedData.alertType === 'price' && validatedData.symbols != null) {
       const syms = Array.isArray(validatedData.symbols) ? validatedData.symbols : [validatedData.symbols];
@@ -310,12 +317,25 @@ async function createAlert(req, res, next) {
 
           if (isUpstreamUnavailable) {
             if (exchange === 'binance' || exchange === 'bybit') {
-              try {
-                const fallbackPrice = await exchangeFallbackPriceService.fetchPriceViaCcxt({
+              if (Number.isFinite(clientProvidedInitialPrice) && clientProvidedInitialPrice > 0) {
+                initialPrice = clientProvidedInitialPrice;
+                console.log('[createAlert] Initial price resolved via client snapshot fallback:', {
                   exchange,
                   symbol: normalizedSymbol,
                   market,
+                  initialPrice,
                 });
+              }
+
+              try {
+                const fallbackPrice =
+                  initialPrice != null && Number.isFinite(initialPrice) && initialPrice > 0
+                    ? null
+                    : await exchangeFallbackPriceService.fetchPriceViaCcxt({
+                        exchange,
+                        symbol: normalizedSymbol,
+                        market,
+                      });
 
                 if (fallbackPrice != null && Number.isFinite(fallbackPrice) && fallbackPrice > 0) {
                   initialPrice = fallbackPrice;

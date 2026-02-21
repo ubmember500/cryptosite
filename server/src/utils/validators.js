@@ -45,6 +45,7 @@ const createAlertSchema = z.object({
   ]).optional(),
   condition: z.enum(['above', 'below']).optional(), // Optional for price alerts - backend auto-determines based on initialPrice vs targetValue
   targetValue: z.number().optional(),
+  currentPrice: z.number().optional(),
   description: z.string().optional(),
 });
 

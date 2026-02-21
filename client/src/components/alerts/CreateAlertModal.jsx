@@ -224,6 +224,22 @@ const CreateAlertModal = ({ isOpen, onClose, onSuccess, editingAlertId, editingA
     }
     
     try {
+      const selectedSymbolRaw = formData.symbols?.[0];
+      const selectedSymbol = typeof selectedSymbolRaw === 'string' ? selectedSymbolRaw.toUpperCase() : '';
+      const selectedToken = binanceTokens.find((token) => {
+        const full = String(token?.fullSymbol || '').toUpperCase();
+        const base = String(token?.symbol || '').toUpperCase();
+        return full === selectedSymbol || `${base}USDT` === selectedSymbol || base === selectedSymbol;
+      });
+
+      const initialDataPrice = Number(initialData?.currentPrice);
+      const selectedTokenPrice = Number(selectedToken?.lastPrice);
+      const clientCurrentPrice = Number.isFinite(initialDataPrice) && initialDataPrice > 0
+        ? initialDataPrice
+        : Number.isFinite(selectedTokenPrice) && selectedTokenPrice > 0
+          ? selectedTokenPrice
+          : null;
+
       const payload = {
         type: formData.alertType, // Backend normalizes type → alertType
         name: formData.name || generateAlertDescription(formData),
@@ -243,6 +259,9 @@ const CreateAlertModal = ({ isOpen, onClose, onSuccess, editingAlertId, editingA
         // Condition is auto-determined by backend based on initialPrice vs targetValue
         // Don't send condition field - backend will determine it
         payload.targetValue = parseFloat(formData.targetValue);
+        if (clientCurrentPrice != null) {
+          payload.currentPrice = clientCurrentPrice;
+        }
       } else if (formData.alertType === 'complex') {
         const cond = formData.conditions?.[0] || { type: 'pct_change', value: '', timeframe: '1m' };
         payload.conditions = [{
