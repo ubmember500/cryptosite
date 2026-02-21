@@ -74,6 +74,8 @@ const lastPricesErrorState = {
   futures: { timestamp: 0 },
   spot: { timestamp: 0 },
 };
+const coingeckoSymbolCache = new Map();
+const COINGECKO_CACHE_TTL_MS = 60000;
 
 function filterPriceMapBySymbols(fullMap, symbols) {
   if (!symbols || symbols.length === 0) return fullMap;
@@ -91,6 +93,57 @@ function filterPriceMapBySymbols(fullMap, symbols) {
     if (price != null) out[sym] = price;
   }
   return out;
+}
+
+function extractBaseAsset(symbol) {
+  if (typeof symbol !== 'string') return '';
+  const upper = symbol.trim().toUpperCase();
+  if (!upper) return '';
+  const base = upper.replace(/USDT$|USD$/i, '');
+  return base || upper;
+}
+
+async function fetchCoinGeckoPriceByBase(baseAsset) {
+  const base = String(baseAsset || '').trim().toLowerCase();
+  if (!base) return null;
+
+  const cached = coingeckoSymbolCache.get(base);
+  const now = Date.now();
+  if (cached && now - cached.timestamp < COINGECKO_CACHE_TTL_MS) {
+    return cached.price;
+  }
+
+  try {
+    const searchResp = await axios.get('https://api.coingecko.com/api/v3/search', {
+      params: { query: base },
+      timeout: 8000,
+    });
+    const coins = Array.isArray(searchResp?.data?.coins) ? searchResp.data.coins : [];
+    const exact = coins
+      .filter((coin) => String(coin?.symbol || '').toLowerCase() === base)
+      .sort((left, right) => {
+        const leftRank = Number.isFinite(left?.market_cap_rank) ? left.market_cap_rank : Number.MAX_SAFE_INTEGER;
+        const rightRank = Number.isFinite(right?.market_cap_rank) ? right.market_cap_rank : Number.MAX_SAFE_INTEGER;
+        return leftRank - rightRank;
+      })[0] || coins[0];
+
+    const coinId = exact?.id;
+    if (!coinId) return null;
+
+    const priceResp = await axios.get('https://api.coingecko.com/api/v3/simple/price', {
+      params: { ids: coinId, vs_currencies: 'usd' },
+      timeout: 8000,
+    });
+
+    const usd = Number(priceResp?.data?.[coinId]?.usd);
+    if (!Number.isFinite(usd) || usd <= 0) return null;
+
+    coingeckoSymbolCache.set(base, { price: usd, timestamp: now });
+    return usd;
+  } catch (error) {
+    console.warn(`[getLastPricesBySymbols] CoinGecko fallback failed for ${baseAsset}:`, error.message);
+    return null;
+  }
 }
 
 async function fetchBinanceSymbolPrices(symbols, exchangeType) {
@@ -121,6 +174,12 @@ async function fetchBinanceSymbolPrices(symbols, exchangeType) {
       }
     } catch (error) {
       console.warn(`[getLastPricesBySymbols] ${exchangeType} symbol fallback failed for ${symbol}:`, error.message);
+
+      const baseAsset = extractBaseAsset(symbol);
+      const cgPrice = await fetchCoinGeckoPriceByBase(baseAsset);
+      if (Number.isFinite(cgPrice) && cgPrice > 0) {
+        out[sym] = cgPrice;
+      }
     }
   }
   return out;
