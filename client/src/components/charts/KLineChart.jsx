@@ -198,7 +198,6 @@ const KLineChart = ({
       exchange: alertExchange,
       market: alertMarket,
       targetValue: latestClose,
-      currentPrice: latestClose,
     }),
     [symbol, alertExchange, alertMarket, latestClose]
   );

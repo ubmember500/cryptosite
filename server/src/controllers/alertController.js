@@ -19,69 +19,37 @@ function deriveLegacyFromFirstSymbol(symbols) {
   return { coinSymbol: base, coinId: base.toLowerCase() };
 }
 
-async function fetchCrossExchangeFallbackPrice({ sourceExchange, symbol, market }) {
+async function fetchExchangeTokenSnapshotPrice({ exchange, symbol, market }) {
   const exchangeType = market === 'spot' ? 'spot' : 'futures';
-  const source = String(sourceExchange || '').toLowerCase();
+  const key = String(exchange || '').toLowerCase();
 
-  const providers = [
-    {
-      id: 'okx',
-      normalize: okxService.normalizeSymbol,
-      fetch: (normalized) => okxService.getLastPricesBySymbols([normalized], exchangeType),
-    },
-    {
-      id: 'gate',
-      normalize: gateService.normalizeSymbol,
-      fetch: (normalized) => gateService.getLastPricesBySymbols([normalized], exchangeType),
-    },
-    {
-      id: 'mexc',
-      normalize: mexcService.normalizeSymbol,
-      fetch: (normalized) => mexcService.getLastPricesBySymbols([normalized], exchangeType),
-    },
-    {
-      id: 'bitget',
-      normalize: bitgetService.normalizeSymbol,
-      fetch: (normalized) => bitgetService.getLastPricesBySymbols([normalized], exchangeType),
-    },
-    {
-      id: 'bybit',
-      normalize: bybitService.normalizeSymbol,
-      fetch: (normalized) => bybitService.getLastPricesBySymbols([normalized], exchangeType, { strict: false }),
-    },
-    {
-      id: 'binance',
-      normalize: binanceService.normalizeSymbol,
-      fetch: (normalized) => binanceService.getLastPricesBySymbols([normalized], exchangeType, { strict: false }),
-    },
-  ].filter((provider) => provider.id !== source);
+  const fetchToken =
+    key === 'bybit'
+      ? () => bybitService.fetchTokenWithNATR(symbol, exchangeType)
+      : key === 'okx'
+        ? () => okxService.fetchTokenWithNATR(symbol, exchangeType)
+        : key === 'gate'
+          ? () => gateService.fetchTokenWithNATR(symbol, exchangeType)
+          : key === 'mexc'
+            ? () => mexcService.fetchTokenWithNATR(symbol, exchangeType)
+            : key === 'bitget'
+              ? () => bitgetService.fetchTokenWithNATR(symbol, exchangeType)
+              : () => binanceService.fetchTokenWithNATR(symbol, exchangeType);
 
-  for (const provider of providers) {
-    try {
-      const normalizedSymbol = provider.normalize(symbol);
-      if (!normalizedSymbol) continue;
-
-      const prices = await provider.fetch(normalizedSymbol);
-      const price = prices?.[normalizedSymbol] ?? prices?.[symbol];
-      if (price != null && Number.isFinite(price) && price > 0) {
-        return {
-          price,
-          provider: provider.id,
-          normalizedSymbol,
-        };
-      }
-    } catch (error) {
-      console.warn('[createAlert] Cross-exchange fallback provider failed:', {
-        sourceExchange: source,
-        provider: provider.id,
-        symbol,
-        market,
-        error: error.message,
-      });
-    }
+  try {
+    const token = await fetchToken();
+    const price = Number(token?.lastPrice);
+    if (!Number.isFinite(price) || price <= 0) return null;
+    return { price, source: `${key}_token_snapshot` };
+  } catch (error) {
+    console.warn('[createAlert] Exchange token snapshot fallback failed:', {
+      exchange: key,
+      symbol,
+      market,
+      error: error.message,
+    });
+    return null;
   }
-
-  return null;
 }
 
 /**
@@ -190,9 +158,9 @@ async function createAlert(req, res, next) {
     const userId = req.user.id;
     console.log('[createAlert] User ID:', userId);
 
-    const symbolsStr =
+    let symbolsForStorage =
       validatedData.symbols != null
-        ? JSON.stringify(Array.isArray(validatedData.symbols) ? validatedData.symbols : [validatedData.symbols])
+        ? (Array.isArray(validatedData.symbols) ? validatedData.symbols : [validatedData.symbols])
         : null;
     const conditionsStr =
       validatedData.conditions != null && validatedData.conditions !== ''
@@ -260,6 +228,10 @@ async function createAlert(req, res, next) {
           market,
         });
 
+        if (Array.isArray(symbolsForStorage) && symbolsForStorage.length > 0) {
+          symbolsForStorage = [normalizedSymbol, ...symbolsForStorage.slice(1)];
+        }
+
         if (!normalizedSymbol) {
           return res.status(400).json({
             error: 'Invalid symbol format. Cannot fetch current price.',
@@ -317,7 +289,23 @@ async function createAlert(req, res, next) {
 
           if (isUpstreamUnavailable) {
             if (exchange === 'binance' || exchange === 'bybit') {
-              if (Number.isFinite(clientProvidedInitialPrice) && clientProvidedInitialPrice > 0) {
+              const snapshotFallback = await fetchExchangeTokenSnapshotPrice({
+                exchange,
+                symbol: normalizedSymbol,
+                market,
+              });
+
+              if (snapshotFallback?.price != null && Number.isFinite(snapshotFallback.price) && snapshotFallback.price > 0) {
+                initialPrice = snapshotFallback.price;
+                console.log('[createAlert] Initial price resolved via exchange token snapshot fallback:', {
+                  exchange,
+                  symbol: normalizedSymbol,
+                  market,
+                  initialPrice,
+                });
+              }
+
+              if ((initialPrice == null || !Number.isFinite(initialPrice) || initialPrice <= 0) && Number.isFinite(clientProvidedInitialPrice) && clientProvidedInitialPrice > 0) {
                 initialPrice = clientProvidedInitialPrice;
                 console.log('[createAlert] Initial price resolved via client snapshot fallback:', {
                   exchange,
@@ -352,26 +340,6 @@ async function createAlert(req, res, next) {
                   symbol: normalizedSymbol,
                   market,
                   error: fallbackErr.message,
-                });
-              }
-            }
-
-            if (initialPrice == null || !Number.isFinite(initialPrice) || initialPrice <= 0) {
-              const crossExchangeFallback = await fetchCrossExchangeFallbackPrice({
-                sourceExchange: exchange,
-                symbol: normalizedSymbol,
-                market,
-              });
-
-              if (crossExchangeFallback?.price != null && Number.isFinite(crossExchangeFallback.price) && crossExchangeFallback.price > 0) {
-                initialPrice = crossExchangeFallback.price;
-                console.log('[createAlert] Initial price resolved via cross-exchange fallback:', {
-                  requestedExchange: exchange,
-                  providerExchange: crossExchangeFallback.provider,
-                  symbol: normalizedSymbol,
-                  providerSymbol: crossExchangeFallback.normalizedSymbol,
-                  market,
-                  initialPrice,
                 });
               }
             }
@@ -465,7 +433,7 @@ async function createAlert(req, res, next) {
       market: validatedData.market ?? 'futures',
       alertType: validatedData.alertType,
       description: validatedData.description ?? null,
-      symbols: symbolsStr,
+      symbols: symbolsForStorage != null ? JSON.stringify(symbolsForStorage) : null,
       conditions: conditionsStr,
       notificationOptions: notificationOptionsStr,
       coinId,
