@@ -283,6 +283,12 @@ const KLineChart = ({
 
   useEffect(() => {
     hasMoreHistoryRef.current = !!hasMoreHistory;
+    // When the store says there IS more history, re-enable scrolling in case it
+    // was previously blocked by an empty response (e.g. a transient network error
+    // or the first cross-exchange fallback page having no results).
+    if (hasMoreHistory) {
+      canLoadMoreHistoryRef.current = true;
+    }
   }, [hasMoreHistory]);
 
   useEffect(() => {
@@ -308,8 +314,11 @@ const KLineChart = ({
         });
         const transformedOlder = transformDataForKLineChart(olderCandles || []);
         if (transformedOlder.length === 0) {
-          canLoadMoreHistoryRef.current = false;
-          callback([], { forward: false, backward: false });
+          // No older data returned. Disable further scrolling UNLESS the store
+          // still says there is more history (the store updates after each fetch).
+          // We check hasMoreHistoryRef which is kept in sync with the prop.
+          canLoadMoreHistoryRef.current = hasMoreHistoryRef.current;
+          callback([], { forward: hasMoreHistoryRef.current, backward: false });
           return;
         }
         callback(transformedOlder, {
@@ -318,8 +327,10 @@ const KLineChart = ({
         });
       } catch (error) {
         console.error('[KLineChart] Failed to load older history:', error);
-        canLoadMoreHistoryRef.current = false;
-        callback([], { forward: false, backward: false });
+        // On error, don't permanently disable – allow retry on next scroll.
+        // The store will have set loadingOlder=false so the next scroll can proceed.
+        canLoadMoreHistoryRef.current = hasMoreHistoryRef.current;
+        callback([], { forward: hasMoreHistoryRef.current, backward: false });
       }
       return;
     }

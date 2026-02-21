@@ -189,9 +189,10 @@ const getRequestErrorSummary = (error) => {
   };
 };
 
-const canUseCrossExchangeChartFallback = (exchange) => {
-  return exchange === 'binance' || exchange === 'bybit';
-};
+// Allow ANY exchange to use cross-exchange chart fallback.
+// This covers geo-blocked exchanges (Binance 451, Bybit 403 from Render) AND exchanges
+// that simply lack historical data for a given symbol (e.g. new listings).
+const canUseCrossExchangeChartFallback = (_exchange) => true;
 
 const fetchKlinesFromCrossExchangeFallback = async ({
   primaryExchange,
@@ -972,7 +973,7 @@ export const useMarketStore = create((set, get) => ({
           ...state.chartHistoryMap,
           [historyKey]: {
             earliestTime,
-            hasMoreHistory: klines.length >= CHART_PAGE_LIMIT,
+            hasMoreHistory: klines.length > 0, // true as long as we have any data; chart stops when next page returns empty
             loadingOlder: false,
           },
         },
@@ -1323,7 +1324,9 @@ export const useMarketStore = create((set, get) => ({
         }
       }
 
-      if (canUseCrossExchangeChartFallback(exchange) && olderKlines.length === 0) {
+      // Cross-exchange fallback for ALL exchanges: whenever primary returned no older candles,
+      // try OKX → Gate → Bitget → MEXC (skipping the primary exchange itself).
+      if (olderKlines.length === 0) {
         const crossFallback = await fetchKlinesFromCrossExchangeFallback({
           primaryExchange: exchange,
           symbol,
@@ -1360,7 +1363,10 @@ export const useMarketStore = create((set, get) => ({
         const currentData = state.chartDataMap[seriesKey] || state.chartData || [];
         const merged = mergeCandlesByTime(olderKlines, currentData);
         const earliestTime = merged.length > 0 ? Number(merged[0].time) : null;
-        const hasMoreHistory = olderKlines.length > 0 && fetchedKlines.length >= CHART_PAGE_LIMIT;
+        // hasMoreHistory: true as long as we received any older candles.
+        // Avoid relying on fetchedKlines.length >= CHART_PAGE_LIMIT because some exchanges
+        // (e.g. OKX) cap responses at 300 even when CHART_PAGE_LIMIT=500.
+        const hasMoreHistory = olderKlines.length > 0;
         const isSelectedSymbol = state.selectedToken?.fullSymbol === symbol;
 
         return {
@@ -1444,7 +1450,7 @@ export const useMarketStore = create((set, get) => ({
               const currentData = state.chartDataMap[seriesKey] || state.chartData || [];
               const merged = mergeCandlesByTime(directOlder, currentData);
               const earliestTime = merged.length > 0 ? Number(merged[0].time) : null;
-              const hasMoreHistory = directOlder.length > 0 && directFetched.length >= CHART_PAGE_LIMIT;
+              const hasMoreHistory = directOlder.length > 0;
               const isSelectedSymbol = state.selectedToken?.fullSymbol === symbol;
 
               return {
@@ -1506,10 +1512,7 @@ export const useMarketStore = create((set, get) => ({
             const currentData = state.chartDataMap[seriesKey] || state.chartData || [];
             const merged = mergeCandlesByTime(crossFallback.olderKlines, currentData);
             const earliestTime = merged.length > 0 ? Number(merged[0].time) : null;
-            const hasMoreHistory =
-              crossFallback.olderKlines.length > 0 &&
-              Array.isArray(crossFallback.klines) &&
-              crossFallback.klines.length >= CHART_PAGE_LIMIT;
+            const hasMoreHistory = crossFallback.olderKlines.length > 0;
             const isSelectedSymbol = state.selectedToken?.fullSymbol === symbol;
 
             return {
