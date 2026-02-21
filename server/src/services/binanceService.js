@@ -150,6 +150,22 @@ async function getLastPricesBySymbols(symbols, exchangeType, options = {}) {
     const filtered = filterPriceMapBySymbols(cached, symbols);
     const hasRequestedSymbols = Array.isArray(symbols) && symbols.length > 0;
     if (strict && hasRequestedSymbols && Object.keys(filtered).length === 0) {
+      const fallbackBySymbol = await fetchBinanceSymbolPrices(symbols, exchangeType);
+      if (Object.keys(fallbackBySymbol).length > 0) {
+        lastPricesCache[cacheKey].data = {
+          ...cached,
+          ...Object.fromEntries(
+            Object.entries(fallbackBySymbol)
+              .filter(([, p]) => Number.isFinite(p) && p > 0)
+              .map(([sym, p]) => [sym.toUpperCase(), p])
+          ),
+        };
+        lastPricesCache[cacheKey].timestamp = now;
+        lastPricesErrorState[cacheKey].timestamp = 0;
+        return fallbackBySymbol;
+      }
+    }
+    if (strict && hasRequestedSymbols && Object.keys(filtered).length === 0) {
       const cooldownError = new Error(`Binance ${exchangeType} price feed temporarily unavailable (cooldown after upstream error)`);
       cooldownError.statusCode = 503;
       cooldownError.code = 'UPSTREAM_PRICE_UNAVAILABLE';
