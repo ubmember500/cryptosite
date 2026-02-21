@@ -165,10 +165,7 @@ async function fetchBinanceSymbolPrices(symbols, exchangeType) {
   for (const sym of wanted) {
     const symbol = sym.toUpperCase();
     try {
-      let price = await fetchSingle(exchangeType, symbol);
-      if (price == null && exchangeType === 'futures') {
-        price = await fetchSingle('spot', symbol);
-      }
+      const price = await fetchSingle(exchangeType, symbol);
       if (price != null) {
         out[sym] = price;
       }

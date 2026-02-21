@@ -111,7 +111,6 @@ function filterPriceMapBySymbols(fullMap, symbols) {
 async function fetchBybitSymbolPrices(symbols, exchangeType) {
   const out = {};
   const category = exchangeType === 'futures' ? 'linear' : 'spot';
-  const alternateCategory = category === 'linear' ? 'spot' : 'linear';
   const fetchSingle = async (targetCategory, symbol) => {
     const response = await axios.get(`${BYBIT_BASE_URL}/v5/market/tickers`, {
       params: { category: targetCategory, symbol },
@@ -129,10 +128,7 @@ async function fetchBybitSymbolPrices(symbols, exchangeType) {
   for (const sym of wanted) {
     const symbol = sym.toUpperCase();
     try {
-      let price = await fetchSingle(category, symbol);
-      if (price == null) {
-        price = await fetchSingle(alternateCategory, symbol);
-      }
+      const price = await fetchSingle(category, symbol);
       if (price != null) {
         out[sym] = price;
       }
