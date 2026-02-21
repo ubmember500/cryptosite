@@ -96,19 +96,27 @@ function filterPriceMapBySymbols(fullMap, symbols) {
 async function fetchBinanceSymbolPrices(symbols, exchangeType) {
   const out = {};
   const wanted = Array.isArray(symbols) ? symbols.filter((s) => typeof s === 'string' && s.trim()) : [];
+  const fetchSingle = async (marketType, symbol) => {
+    const response = await requestBinanceWithFallback(
+      marketType,
+      '/ticker/price',
+      {
+        params: { symbol },
+      },
+      (data) => typeof data?.symbol === 'string' && data?.price != null
+    );
+    const price = parseFloat(response?.data?.price);
+    return Number.isFinite(price) && price > 0 ? price : null;
+  };
+
   for (const sym of wanted) {
     const symbol = sym.toUpperCase();
     try {
-      const response = await requestBinanceWithFallback(
-        exchangeType,
-        '/ticker/price',
-        {
-          params: { symbol },
-        },
-        (data) => typeof data?.symbol === 'string' && data?.price != null
-      );
-      const price = parseFloat(response?.data?.price);
-      if (Number.isFinite(price) && price > 0) {
+      let price = await fetchSingle(exchangeType, symbol);
+      if (price == null && exchangeType === 'futures') {
+        price = await fetchSingle('spot', symbol);
+      }
+      if (price != null) {
         out[sym] = price;
       }
     } catch (error) {
@@ -143,12 +151,12 @@ async function getLastPricesBySymbols(symbols, exchangeType, options = {}) {
   const { strict = false } = options;
   const cacheKey = exchangeType === 'futures' ? 'futures' : 'spot';
   const now = Date.now();
+  const hasRequestedSymbols = Array.isArray(symbols) && symbols.length > 0;
 
   const lastErrorTs = lastPricesErrorState[cacheKey].timestamp;
   if (lastErrorTs && now - lastErrorTs < LAST_PRICES_ERROR_COOLDOWN_MS) {
     const cached = lastPricesCache[cacheKey].data || {};
     const filtered = filterPriceMapBySymbols(cached, symbols);
-    const hasRequestedSymbols = Array.isArray(symbols) && symbols.length > 0;
     if (strict && hasRequestedSymbols && Object.keys(filtered).length === 0) {
       const fallbackBySymbol = await fetchBinanceSymbolPrices(symbols, exchangeType);
       if (Object.keys(fallbackBySymbol).length > 0) {
@@ -180,7 +188,28 @@ async function getLastPricesBySymbols(symbols, exchangeType, options = {}) {
     now - lastPricesCache[cacheKey].timestamp < LAST_PRICES_CACHE_TTL
   ) {
     const cached = lastPricesCache[cacheKey].data;
-    return filterPriceMapBySymbols(cached, symbols);
+    const filtered = filterPriceMapBySymbols(cached, symbols);
+    if (!strict || !hasRequestedSymbols || Object.keys(filtered).length > 0) {
+      return filtered;
+    }
+  }
+
+  if (hasRequestedSymbols) {
+    const cached = lastPricesCache[cacheKey].data || {};
+    const fallbackBySymbol = await fetchBinanceSymbolPrices(symbols, exchangeType);
+    if (Object.keys(fallbackBySymbol).length > 0) {
+      lastPricesCache[cacheKey].data = {
+        ...cached,
+        ...Object.fromEntries(
+          Object.entries(fallbackBySymbol)
+            .filter(([, p]) => Number.isFinite(p) && p > 0)
+            .map(([sym, p]) => [sym.toUpperCase(), p])
+        ),
+      };
+      lastPricesCache[cacheKey].timestamp = now;
+      lastPricesErrorState[cacheKey].timestamp = 0;
+      return fallbackBySymbol;
+    }
   }
 
   try {
@@ -227,7 +256,6 @@ async function getLastPricesBySymbols(symbols, exchangeType, options = {}) {
       return fallbackBySymbol;
     }
     const filtered = filterPriceMapBySymbols(cached, symbols);
-    const hasRequestedSymbols = Array.isArray(symbols) && symbols.length > 0;
     if (strict && hasRequestedSymbols && Object.keys(filtered).length === 0) {
       const upstreamError = new Error(`Binance ${exchangeType} price feed unavailable: ${error.message}`);
       upstreamError.statusCode = error?.statusCode || error?.response?.status || 503;

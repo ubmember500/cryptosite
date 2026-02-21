@@ -58,20 +58,29 @@ function filterPriceMapBySymbols(fullMap, symbols) {
 async function fetchBybitSymbolPrices(symbols, exchangeType) {
   const out = {};
   const category = exchangeType === 'futures' ? 'linear' : 'spot';
+  const alternateCategory = category === 'linear' ? 'spot' : 'linear';
+  const fetchSingle = async (targetCategory, symbol) => {
+    const response = await axios.get(`${BYBIT_BASE_URL}/v5/market/tickers`, {
+      params: { category: targetCategory, symbol },
+      timeout: 8000,
+    });
+    if (response.data?.retCode !== 0) {
+      throw new Error(response.data?.retMsg || 'Bybit API error');
+    }
+    const ticker = response.data?.result?.list?.[0];
+    const price = parseFloat(ticker?.lastPrice);
+    return Number.isFinite(price) && price > 0 ? price : null;
+  };
+
   const wanted = Array.isArray(symbols) ? symbols.filter((s) => typeof s === 'string' && s.trim()) : [];
   for (const sym of wanted) {
     const symbol = sym.toUpperCase();
     try {
-      const response = await axios.get(`${BYBIT_BASE_URL}/v5/market/tickers`, {
-        params: { category, symbol },
-        timeout: 10000,
-      });
-      if (response.data?.retCode !== 0) {
-        throw new Error(response.data?.retMsg || 'Bybit API error');
+      let price = await fetchSingle(category, symbol);
+      if (price == null) {
+        price = await fetchSingle(alternateCategory, symbol);
       }
-      const ticker = response.data?.result?.list?.[0];
-      const price = parseFloat(ticker?.lastPrice);
-      if (Number.isFinite(price) && price > 0) {
+      if (price != null) {
         out[sym] = price;
       }
     } catch (error) {
@@ -92,13 +101,34 @@ async function getLastPricesBySymbols(symbols, exchangeType, options = {}) {
   const { strict = false } = options;
   const cacheKey = exchangeType === 'futures' ? 'futures' : 'spot';
   const now = Date.now();
+  const hasRequestedSymbols = Array.isArray(symbols) && symbols.length > 0;
   if (
     lastPricesCache[cacheKey].data &&
     lastPricesCache[cacheKey].timestamp &&
     now - lastPricesCache[cacheKey].timestamp < LAST_PRICES_CACHE_TTL
   ) {
     const cached = lastPricesCache[cacheKey].data;
-    return filterPriceMapBySymbols(cached, symbols);
+    const filtered = filterPriceMapBySymbols(cached, symbols);
+    if (!strict || !hasRequestedSymbols || Object.keys(filtered).length > 0) {
+      return filtered;
+    }
+  }
+
+  if (hasRequestedSymbols) {
+    const cached = lastPricesCache[cacheKey].data || {};
+    const fallbackBySymbol = await fetchBybitSymbolPrices(symbols, exchangeType);
+    if (Object.keys(fallbackBySymbol).length > 0) {
+      lastPricesCache[cacheKey].data = {
+        ...cached,
+        ...Object.fromEntries(
+          Object.entries(fallbackBySymbol)
+            .filter(([, p]) => Number.isFinite(p) && p > 0)
+            .map(([sym, p]) => [sym.toUpperCase(), p])
+        ),
+      };
+      lastPricesCache[cacheKey].timestamp = now;
+      return fallbackBySymbol;
+    }
   }
 
   try {
