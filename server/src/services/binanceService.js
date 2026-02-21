@@ -93,6 +93,31 @@ function filterPriceMapBySymbols(fullMap, symbols) {
   return out;
 }
 
+async function fetchBinanceSymbolPrices(symbols, exchangeType) {
+  const out = {};
+  const wanted = Array.isArray(symbols) ? symbols.filter((s) => typeof s === 'string' && s.trim()) : [];
+  for (const sym of wanted) {
+    const symbol = sym.toUpperCase();
+    try {
+      const response = await requestBinanceWithFallback(
+        exchangeType,
+        '/ticker/price',
+        {
+          params: { symbol },
+        },
+        (data) => typeof data?.symbol === 'string' && data?.price != null
+      );
+      const price = parseFloat(response?.data?.price);
+      if (Number.isFinite(price) && price > 0) {
+        out[sym] = price;
+      }
+    } catch (error) {
+      console.warn(`[getLastPricesBySymbols] ${exchangeType} symbol fallback failed for ${symbol}:`, error.message);
+    }
+  }
+  return out;
+}
+
 /**
  * Normalize symbol to Binance format:
  * - trim spaces
@@ -171,6 +196,20 @@ async function getLastPricesBySymbols(symbols, exchangeType, options = {}) {
     lastPricesErrorState[cacheKey].timestamp = now;
     console.warn(`[getLastPricesBySymbols] ${exchangeType} failed:`, error.message);
     const cached = lastPricesCache[cacheKey].data || {};
+    const fallbackBySymbol = await fetchBinanceSymbolPrices(symbols, exchangeType);
+    if (Object.keys(fallbackBySymbol).length > 0) {
+      lastPricesCache[cacheKey].data = {
+        ...cached,
+        ...Object.fromEntries(
+          Object.entries(fallbackBySymbol)
+            .filter(([, p]) => Number.isFinite(p) && p > 0)
+            .map(([sym, p]) => [sym.toUpperCase(), p])
+        ),
+      };
+      lastPricesCache[cacheKey].timestamp = now;
+      lastPricesErrorState[cacheKey].timestamp = 0;
+      return fallbackBySymbol;
+    }
     const filtered = filterPriceMapBySymbols(cached, symbols);
     const hasRequestedSymbols = Array.isArray(symbols) && symbols.length > 0;
     if (strict && hasRequestedSymbols && Object.keys(filtered).length === 0) {

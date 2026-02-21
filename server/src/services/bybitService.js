@@ -38,6 +38,49 @@ function normalizeSymbol(symbol) {
   return symbol.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
 }
 
+function filterPriceMapBySymbols(fullMap, symbols) {
+  if (!symbols || symbols.length === 0) return fullMap;
+  const out = {};
+  const wanted = new Set(symbols);
+  for (const sym of wanted) {
+    if (typeof sym !== 'string') continue;
+    const exact = sym;
+    let price = fullMap[exact];
+    if (price == null) {
+      const upper = exact.toUpperCase();
+      if (upper !== exact) price = fullMap[upper];
+    }
+    if (price != null) out[sym] = price;
+  }
+  return out;
+}
+
+async function fetchBybitSymbolPrices(symbols, exchangeType) {
+  const out = {};
+  const category = exchangeType === 'futures' ? 'linear' : 'spot';
+  const wanted = Array.isArray(symbols) ? symbols.filter((s) => typeof s === 'string' && s.trim()) : [];
+  for (const sym of wanted) {
+    const symbol = sym.toUpperCase();
+    try {
+      const response = await axios.get(`${BYBIT_BASE_URL}/v5/market/tickers`, {
+        params: { category, symbol },
+        timeout: 10000,
+      });
+      if (response.data?.retCode !== 0) {
+        throw new Error(response.data?.retMsg || 'Bybit API error');
+      }
+      const ticker = response.data?.result?.list?.[0];
+      const price = parseFloat(ticker?.lastPrice);
+      if (Number.isFinite(price) && price > 0) {
+        out[sym] = price;
+      }
+    } catch (error) {
+      console.warn(`[Bybit getLastPricesBySymbols] symbol fallback failed for ${symbol}:`, error.message);
+    }
+  }
+  return out;
+}
+
 /**
  * Get last price per symbol from Bybit tickers (for alert engine).
  * Same interface as binanceService.getLastPricesBySymbols.
@@ -55,20 +98,7 @@ async function getLastPricesBySymbols(symbols, exchangeType, options = {}) {
     now - lastPricesCache[cacheKey].timestamp < LAST_PRICES_CACHE_TTL
   ) {
     const cached = lastPricesCache[cacheKey].data;
-    if (!symbols || symbols.length === 0) return cached;
-    const out = {};
-    const wanted = new Set(symbols);
-    for (const sym of wanted) {
-      if (typeof sym !== 'string') continue;
-      const exact = sym;
-      let price = cached[exact];
-      if (price == null) {
-        const upper = exact.toUpperCase();
-        if (upper !== exact) price = cached[upper];
-      }
-      if (price != null) out[sym] = price;
-    }
-    return out;
+    return filterPriceMapBySymbols(cached, symbols);
   }
 
   try {
@@ -82,29 +112,30 @@ async function getLastPricesBySymbols(symbols, exchangeType, options = {}) {
     lastPricesCache[cacheKey].data = fullMap;
     lastPricesCache[cacheKey].timestamp = now;
 
-    if (!symbols || symbols.length === 0) return fullMap;
-    const wanted = new Set(symbols);
-    const out = {};
-    for (const sym of wanted) {
-      if (typeof sym !== 'string') continue;
-      const exact = sym;
-      let price = fullMap[exact];
-      if (price == null) {
-        const upper = exact.toUpperCase();
-        if (upper !== exact) price = fullMap[upper];
-      }
-      if (price != null) out[sym] = price;
-    }
-    return out;
+    return filterPriceMapBySymbols(fullMap, symbols);
   } catch (error) {
     console.warn(`[Bybit getLastPricesBySymbols] ${exchangeType} failed:`, error.message);
+    const cached = lastPricesCache[cacheKey].data || {};
+    const fallbackBySymbol = await fetchBybitSymbolPrices(symbols, exchangeType);
+    if (Object.keys(fallbackBySymbol).length > 0) {
+      lastPricesCache[cacheKey].data = {
+        ...cached,
+        ...Object.fromEntries(
+          Object.entries(fallbackBySymbol)
+            .filter(([, p]) => Number.isFinite(p) && p > 0)
+            .map(([sym, p]) => [sym.toUpperCase(), p])
+        ),
+      };
+      lastPricesCache[cacheKey].timestamp = now;
+      return fallbackBySymbol;
+    }
     if (strict && Array.isArray(symbols) && symbols.length > 0) {
       const upstreamError = new Error(`Bybit ${exchangeType} price feed unavailable: ${error.message}`);
       upstreamError.statusCode = error?.statusCode || error?.response?.status || 503;
       upstreamError.code = 'UPSTREAM_PRICE_UNAVAILABLE';
       throw upstreamError;
     }
-    return {};
+    return filterPriceMapBySymbols(cached, symbols);
   }
 }
 
