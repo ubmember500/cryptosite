@@ -7,6 +7,7 @@ const okxService = require('../services/okxService');
 const gateService = require('../services/gateService');
 const mexcService = require('../services/mexcService');
 const bitgetService = require('../services/bitgetService');
+const exchangeFallbackPriceService = require('../services/exchangeFallbackPriceService');
 const { setInitialPrice, clearInitialPrice } = require('../services/alertEngine');
 
 /** Derive coinSymbol and coinId from first symbol (e.g. BTCUSDT -> BTC, btc) */
@@ -242,6 +243,36 @@ async function createAlert(req, res, next) {
             [429, 451, 502, 503, 504].includes(err?.statusCode || err?.response?.status);
 
           if (isUpstreamUnavailable) {
+            if (exchange === 'binance' || exchange === 'bybit') {
+              try {
+                const fallbackPrice = await exchangeFallbackPriceService.fetchPriceViaCcxt({
+                  exchange,
+                  symbol: normalizedSymbol,
+                  market,
+                });
+
+                if (fallbackPrice != null && Number.isFinite(fallbackPrice) && fallbackPrice > 0) {
+                  initialPrice = fallbackPrice;
+                  console.log('[createAlert] Initial price resolved via fallback provider:', {
+                    exchange,
+                    symbol: normalizedSymbol,
+                    market,
+                    initialPrice,
+                  });
+                }
+              } catch (fallbackErr) {
+                console.error('[createAlert] Fallback provider failed:', {
+                  exchange,
+                  symbol: normalizedSymbol,
+                  market,
+                  error: fallbackErr.message,
+                });
+              }
+            }
+
+            if (initialPrice != null && Number.isFinite(initialPrice) && initialPrice > 0) {
+              // Continue create flow using fallback snapshot price.
+            } else {
             return res.status(503).json({
               error: `Failed to fetch current price from ${exchange}. Exchange upstream is temporarily unavailable from server environment. Please try again later or switch exchange.`,
               details: {
@@ -252,6 +283,7 @@ async function createAlert(req, res, next) {
                 error: err.message,
               },
             });
+            }
           }
 
           return res.status(503).json({
