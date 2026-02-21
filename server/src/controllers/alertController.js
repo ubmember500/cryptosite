@@ -240,7 +240,7 @@ async function createAlert(req, res, next) {
 
           const isUpstreamUnavailable =
             err?.code === 'UPSTREAM_PRICE_UNAVAILABLE' ||
-            [429, 451, 502, 503, 504].includes(err?.statusCode || err?.response?.status);
+            [403, 429, 451, 502, 503, 504].includes(err?.statusCode || err?.response?.status);
 
           if (isUpstreamUnavailable) {
             if (exchange === 'binance' || exchange === 'bybit') {
@@ -273,8 +273,20 @@ async function createAlert(req, res, next) {
             if (initialPrice != null && Number.isFinite(initialPrice) && initialPrice > 0) {
               // Continue create flow using fallback snapshot price.
             } else {
+              return res.status(503).json({
+                error: `Failed to fetch current price from ${exchange}. Exchange upstream is temporarily unavailable from server environment. Please try again later or switch exchange.`,
+                details: {
+                  exchange,
+                  symbol: firstSymbolRaw,
+                  normalizedSymbol,
+                  market,
+                  error: err.message,
+                },
+              });
+            }
+          } else {
             return res.status(503).json({
-              error: `Failed to fetch current price from ${exchange}. Exchange upstream is temporarily unavailable from server environment. Please try again later or switch exchange.`,
+              error: 'Failed to fetch current price from exchange. Please try again later.',
               details: {
                 exchange,
                 symbol: firstSymbolRaw,
@@ -283,19 +295,7 @@ async function createAlert(req, res, next) {
                 error: err.message,
               },
             });
-            }
           }
-
-          return res.status(503).json({
-            error: 'Failed to fetch current price from exchange. Please try again later.',
-            details: {
-              exchange,
-              symbol: firstSymbolRaw,
-              normalizedSymbol,
-              market,
-              error: err.message,
-            },
-          });
         }
       } else {
         return res.status(400).json({
