@@ -1120,7 +1120,7 @@ const KLineChart = ({
           },
           background: {
             type: 'solid',
-            color: themeColors.surface,
+            color: '#1b1b1f',
           },
           textColor: themeColors.textPrimary,
         },
