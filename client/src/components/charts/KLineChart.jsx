@@ -1491,7 +1491,7 @@ const KLineChart = ({
             style={{
               minHeight: 0,
               minWidth: 0,
-              backgroundColor: '#1a1d29',
+              backgroundColor: '#151517',
               width: '100%',
               height: '100%',
               boxSizing: 'border-box',
