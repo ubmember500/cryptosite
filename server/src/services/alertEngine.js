@@ -285,30 +285,26 @@ function normalizeSymbolForExchange(exchange, symbol) {
 
 async function fetchCurrentPriceByExchangeSymbol(exchange, symbol, exchangeType) {
   const key = String(exchange || '').toLowerCase();
-  if (!symbol) return null;
+  const normalizedSymbol = normalizeSymbolForExchange(key, symbol);
+  if (!normalizedSymbol) return null;
+
+  const getPrices =
+    key === 'bybit'
+      ? () => bybitService.getLastPricesBySymbols([normalizedSymbol], exchangeType, { strict: true, exchangeOnly: true })
+      : key === 'okx'
+        ? () => okxService.getLastPricesBySymbols([normalizedSymbol], exchangeType)
+        : key === 'gate'
+          ? () => gateService.getLastPricesBySymbols([normalizedSymbol], exchangeType)
+          : key === 'mexc'
+            ? () => mexcService.getLastPricesBySymbols([normalizedSymbol], exchangeType)
+            : key === 'bitget'
+              ? () => bitgetService.getLastPricesBySymbols([normalizedSymbol], exchangeType)
+              : () => binanceService.getLastPricesBySymbols([normalizedSymbol], exchangeType, { strict: true, exchangeOnly: true });
 
   try {
-    if (key === 'bybit') {
-      return await bybitService.fetchCurrentPriceBySymbol(symbol, exchangeType);
-    }
-    if (key === 'binance') {
-      return await binanceService.fetchCurrentPriceBySymbol(symbol, exchangeType);
-    }
-
-    const fetchToken =
-      key === 'okx'
-        ? okxService.fetchTokenWithNATR
-        : key === 'gate'
-          ? gateService.fetchTokenWithNATR
-          : key === 'mexc'
-            ? mexcService.fetchTokenWithNATR
-            : key === 'bitget'
-              ? bitgetService.fetchTokenWithNATR
-              : null;
-
-    if (!fetchToken) return null;
-    const token = await fetchToken(symbol, exchangeType);
-    const price = Number(token?.lastPrice);
+    const priceMap = await getPrices();
+    const raw = resolvePriceForPriceAlert(priceMap || {}, normalizedSymbol, exchangeType);
+    const price = Number(raw);
     return Number.isFinite(price) && price > 0 ? price : null;
   } catch {
     return null;
@@ -438,7 +434,7 @@ async function checkAlerts() {
         const exchangeType = market === 'spot' ? 'spot' : 'futures';
         const getPrices =
           exchange === 'bybit'
-            ? () => bybitService.getLastPricesBySymbols(symbols, exchangeType)
+            ? () => bybitService.getLastPricesBySymbols(symbols, exchangeType, { strict: true, exchangeOnly: true })
             : exchange === 'okx'
               ? () => okxService.getLastPricesBySymbols(symbols, exchangeType)
               : exchange === 'gate'
@@ -447,7 +443,7 @@ async function checkAlerts() {
                   ? () => mexcService.getLastPricesBySymbols(symbols, exchangeType)
                   : exchange === 'bitget'
                     ? () => bitgetService.getLastPricesBySymbols(symbols, exchangeType)
-                    : () => binanceService.getLastPricesBySymbols(symbols, exchangeType);
+                    : () => binanceService.getLastPricesBySymbols(symbols, exchangeType, { strict: true, exchangeOnly: true });
         try {
           const [bulkPriceMap, freshPriceMap] = await Promise.all([
             getPrices(),

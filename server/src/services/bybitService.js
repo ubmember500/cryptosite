@@ -162,7 +162,7 @@ async function fetchCurrentPriceBySymbol(symbol, exchangeType) {
  * @returns {Promise<Record<string, number>>} symbol -> lastPrice
  */
 async function getLastPricesBySymbols(symbols, exchangeType, options = {}) {
-  const { strict = false } = options;
+  const { strict = false, exchangeOnly = false } = options;
   const cacheKey = exchangeType === 'futures' ? 'futures' : 'spot';
   const now = Date.now();
   const hasRequestedSymbols = Array.isArray(symbols) && symbols.length > 0;
@@ -178,7 +178,7 @@ async function getLastPricesBySymbols(symbols, exchangeType, options = {}) {
     }
   }
 
-  if (hasRequestedSymbols) {
+  if (!exchangeOnly && hasRequestedSymbols) {
     const cached = lastPricesCache[cacheKey].data || {};
     const fallbackBySymbol = await fetchBybitSymbolPrices(symbols, exchangeType);
     if (Object.keys(fallbackBySymbol).length > 0) {
@@ -210,18 +210,20 @@ async function getLastPricesBySymbols(symbols, exchangeType, options = {}) {
   } catch (error) {
     console.warn(`[Bybit getLastPricesBySymbols] ${exchangeType} failed:`, error.message);
     const cached = lastPricesCache[cacheKey].data || {};
-    const fallbackBySymbol = await fetchBybitSymbolPrices(symbols, exchangeType);
-    if (Object.keys(fallbackBySymbol).length > 0) {
-      lastPricesCache[cacheKey].data = {
-        ...cached,
-        ...Object.fromEntries(
-          Object.entries(fallbackBySymbol)
-            .filter(([, p]) => Number.isFinite(p) && p > 0)
-            .map(([sym, p]) => [sym.toUpperCase(), p])
-        ),
-      };
-      lastPricesCache[cacheKey].timestamp = now;
-      return fallbackBySymbol;
+    if (!exchangeOnly) {
+      const fallbackBySymbol = await fetchBybitSymbolPrices(symbols, exchangeType);
+      if (Object.keys(fallbackBySymbol).length > 0) {
+        lastPricesCache[cacheKey].data = {
+          ...cached,
+          ...Object.fromEntries(
+            Object.entries(fallbackBySymbol)
+              .filter(([, p]) => Number.isFinite(p) && p > 0)
+              .map(([sym, p]) => [sym.toUpperCase(), p])
+          ),
+        };
+        lastPricesCache[cacheKey].timestamp = now;
+        return fallbackBySymbol;
+      }
     }
     if (strict && Array.isArray(symbols) && symbols.length > 0) {
       const upstreamError = new Error(`Bybit ${exchangeType} price feed unavailable: ${error.message}`);

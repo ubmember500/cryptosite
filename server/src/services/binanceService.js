@@ -213,7 +213,7 @@ function normalizeSymbol(symbol) {
  * @returns {Promise<Record<string, number>>} Map of symbol -> lastPrice; omits symbols not in response (e.g. delisted)
  */
 async function getLastPricesBySymbols(symbols, exchangeType, options = {}) {
-  const { strict = false } = options;
+  const { strict = false, exchangeOnly = false } = options;
   const cacheKey = exchangeType === 'futures' ? 'futures' : 'spot';
   const now = Date.now();
   const hasRequestedSymbols = Array.isArray(symbols) && symbols.length > 0;
@@ -222,7 +222,7 @@ async function getLastPricesBySymbols(symbols, exchangeType, options = {}) {
   if (lastErrorTs && now - lastErrorTs < LAST_PRICES_ERROR_COOLDOWN_MS) {
     const cached = lastPricesCache[cacheKey].data || {};
     const filtered = filterPriceMapBySymbols(cached, symbols);
-    if (strict && hasRequestedSymbols && Object.keys(filtered).length === 0) {
+    if (!exchangeOnly && strict && hasRequestedSymbols && Object.keys(filtered).length === 0) {
       const fallbackBySymbol = await fetchBinanceSymbolPrices(symbols, exchangeType);
       if (Object.keys(fallbackBySymbol).length > 0) {
         lastPricesCache[cacheKey].data = {
@@ -259,7 +259,7 @@ async function getLastPricesBySymbols(symbols, exchangeType, options = {}) {
     }
   }
 
-  if (hasRequestedSymbols) {
+  if (!exchangeOnly && hasRequestedSymbols) {
     const cached = lastPricesCache[cacheKey].data || {};
     const fallbackBySymbol = await fetchBinanceSymbolPrices(symbols, exchangeType);
     if (Object.keys(fallbackBySymbol).length > 0) {
@@ -306,19 +306,21 @@ async function getLastPricesBySymbols(symbols, exchangeType, options = {}) {
     lastPricesErrorState[cacheKey].timestamp = now;
     console.warn(`[getLastPricesBySymbols] ${exchangeType} failed:`, error.message);
     const cached = lastPricesCache[cacheKey].data || {};
-    const fallbackBySymbol = await fetchBinanceSymbolPrices(symbols, exchangeType);
-    if (Object.keys(fallbackBySymbol).length > 0) {
-      lastPricesCache[cacheKey].data = {
-        ...cached,
-        ...Object.fromEntries(
-          Object.entries(fallbackBySymbol)
-            .filter(([, p]) => Number.isFinite(p) && p > 0)
-            .map(([sym, p]) => [sym.toUpperCase(), p])
-        ),
-      };
-      lastPricesCache[cacheKey].timestamp = now;
-      lastPricesErrorState[cacheKey].timestamp = 0;
-      return fallbackBySymbol;
+    if (!exchangeOnly) {
+      const fallbackBySymbol = await fetchBinanceSymbolPrices(symbols, exchangeType);
+      if (Object.keys(fallbackBySymbol).length > 0) {
+        lastPricesCache[cacheKey].data = {
+          ...cached,
+          ...Object.fromEntries(
+            Object.entries(fallbackBySymbol)
+              .filter(([, p]) => Number.isFinite(p) && p > 0)
+              .map(([sym, p]) => [sym.toUpperCase(), p])
+          ),
+        };
+        lastPricesCache[cacheKey].timestamp = now;
+        lastPricesErrorState[cacheKey].timestamp = 0;
+        return fallbackBySymbol;
+      }
     }
     const filtered = filterPriceMapBySymbols(cached, symbols);
     if (strict && hasRequestedSymbols && Object.keys(filtered).length === 0) {
