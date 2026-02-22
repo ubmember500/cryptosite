@@ -487,40 +487,50 @@ async function checkAlerts() {
 
         let shouldTrigger = false;
 
-        // Hard source-of-truth: direction is derived from creation snapshot (initialPrice vs targetValue),
-        // not from the stored condition string.
         const initialPrice = alert.initialPrice != null ? Number(alert.initialPrice) : null;
-        if (!Number.isFinite(initialPrice) || initialPrice <= 0) {
+        const hasValidInitialPrice = Number.isFinite(initialPrice) && initialPrice > 0;
+
+        if (!hasValidInitialPrice) {
           if (!warnedMissingInitialPrice.has(alert.id)) {
-            console.warn(`Alert ${alert.id} has invalid initialPrice - skipping to prevent false trigger`);
+            console.warn(
+              `Alert ${alert.id} has invalid initialPrice - using condition fallback for trigger direction`
+            );
             warnedMissingInitialPrice.add(alert.id);
           }
-          continue;
+        } else {
+          warnedMissingInitialPrice.delete(alert.id);
         }
-        warnedMissingInitialPrice.delete(alert.id);
-        if (!Number.isFinite(initialPrice) || !Number.isFinite(currentPrice) || !Number.isFinite(targetValue)) {
+
+        if (!Number.isFinite(currentPrice) || !Number.isFinite(targetValue)) {
           continue;
         }
 
-        const direction = initialPrice > targetValue ? 'down_to_target' : 'up_to_target';
+        const direction = hasValidInitialPrice
+          ? (initialPrice > targetValue ? 'down_to_target' : 'up_to_target')
+          : (String(alert.condition || '').toLowerCase() === 'below' ? 'down_to_target' : 'up_to_target');
+
         if (direction === 'down_to_target') {
           // Created above target -> trigger when price reaches target zone from above side.
-          const isOnExpectedSide = currentPrice <= initialPrice;
+          const isOnExpectedSide = !hasValidInitialPrice || currentPrice <= initialPrice;
           const hitTarget = hasReachedTargetWithTolerance(currentPrice, targetValue, direction);
           shouldTrigger = isOnExpectedSide && hitTarget;
           if (shouldTrigger) {
             console.log(
-              `[Alert ${alert.id}] Price crossed DOWN: ${initialPrice} -> ${currentPrice} (target: ${targetValue})`
+              hasValidInitialPrice
+                ? `[Alert ${alert.id}] Price crossed DOWN: ${initialPrice} -> ${currentPrice} (target: ${targetValue})`
+                : `[Alert ${alert.id}] Price reached DOWN target via condition fallback: ${currentPrice} (target: ${targetValue})`
             );
           }
         } else {
           // Created below target -> trigger when price reaches target zone from below side.
-          const isOnExpectedSide = currentPrice >= initialPrice;
+          const isOnExpectedSide = !hasValidInitialPrice || currentPrice >= initialPrice;
           const hitTarget = hasReachedTargetWithTolerance(currentPrice, targetValue, direction);
           shouldTrigger = isOnExpectedSide && hitTarget;
           if (shouldTrigger) {
             console.log(
-              `[Alert ${alert.id}] Price crossed UP: ${initialPrice} -> ${currentPrice} (target: ${targetValue})`
+              hasValidInitialPrice
+                ? `[Alert ${alert.id}] Price crossed UP: ${initialPrice} -> ${currentPrice} (target: ${targetValue})`
+                : `[Alert ${alert.id}] Price reached UP target via condition fallback: ${currentPrice} (target: ${targetValue})`
             );
           }
         }
