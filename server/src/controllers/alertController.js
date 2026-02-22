@@ -7,7 +7,6 @@ const okxService = require('../services/okxService');
 const gateService = require('../services/gateService');
 const mexcService = require('../services/mexcService');
 const bitgetService = require('../services/bitgetService');
-const exchangeFallbackPriceService = require('../services/exchangeFallbackPriceService');
 const { setInitialPrice, clearInitialPrice } = require('../services/alertEngine');
 
 /** Derive coinSymbol and coinId from first symbol (e.g. BTCUSDT -> BTC, btc) */
@@ -334,33 +333,6 @@ async function createAlert(req, res, next) {
                 });
               }
 
-              try {
-                const fallbackPrice =
-                  initialPrice != null && Number.isFinite(initialPrice) && initialPrice > 0
-                    ? null
-                    : await exchangeFallbackPriceService.fetchPriceViaCcxt({
-                        exchange,
-                        symbol: normalizedSymbol,
-                        market,
-                      });
-
-                if (fallbackPrice != null && Number.isFinite(fallbackPrice) && fallbackPrice > 0) {
-                  initialPrice = fallbackPrice;
-                  console.log('[createAlert] Initial price resolved via fallback provider:', {
-                    exchange,
-                    symbol: normalizedSymbol,
-                    market,
-                    initialPrice,
-                  });
-                }
-              } catch (fallbackErr) {
-                console.error('[createAlert] Fallback provider failed:', {
-                  exchange,
-                  symbol: normalizedSymbol,
-                  market,
-                  error: fallbackErr.message,
-                });
-              }
             }
 
             if (initialPrice != null && Number.isFinite(initialPrice) && initialPrice > 0) {
@@ -534,6 +506,20 @@ async function updateAlert(req, res, next) {
     }
 
     const validatedData = updateAlertSchema.parse(req.body);
+
+    if (existingAlert.alertType === 'price') {
+      const touchesBaselineFields =
+        validatedData.exchange !== undefined ||
+        validatedData.market !== undefined ||
+        validatedData.symbols !== undefined ||
+        validatedData.targetValue !== undefined;
+
+      if (touchesBaselineFields) {
+        return res.status(400).json({
+          error: 'Price alert exchange/market/symbol/target cannot be edited. Please recreate the alert.',
+        });
+      }
+    }
 
     const data = {};
     if (validatedData.name !== undefined) data.name = validatedData.name;
