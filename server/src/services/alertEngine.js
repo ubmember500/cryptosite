@@ -8,6 +8,11 @@ const mexcService = require('./mexcService');
 const bitgetService = require('./bitgetService');
 const socketService = require('./socketService');
 const telegramService = require('./telegramService');
+const {
+  getPriceTolerance,
+  hasTouchedTargetWithTolerance,
+  hasCrossedTargetWithTolerance,
+} = require('./priceAlertTrigger');
 
 let alertEngineRunning = false;
 
@@ -33,7 +38,15 @@ const complexPriceHistory = {
   bitget: { futures: new Map(), spot: new Map() },
 };
 const complexLastTrigger = new Map(); // alertId -> Map(symbol -> ts)
-const warnedMissingInitialPrice = new Set(); // alertId values already warned about missing initialPrice
+const priceAlertLastObserved = new Map(); // alertId -> last observed currentPrice
+
+function prunePriceAlertRuntimeState(activePriceAlertIds) {
+  for (const alertId of Array.from(priceAlertLastObserved.keys())) {
+    if (!activePriceAlertIds.has(alertId)) {
+      priceAlertLastObserved.delete(alertId);
+    }
+  }
+}
 
 function getExchangeKey(exchange) {
   const ex = (exchange || 'binance').toLowerCase();
@@ -370,18 +383,6 @@ function resolvePriceForPriceAlert(priceMap, symbol, market) {
   return null;
 }
 
-function hasReachedTargetWithTolerance(currentPrice, targetValue, direction) {
-  const current = Number(currentPrice);
-  const target = Number(targetValue);
-  if (!Number.isFinite(current) || !Number.isFinite(target)) return false;
-
-  const tolerance = Math.max(Math.abs(target) * 1e-4, 1e-8);
-  if (direction === 'down_to_target') {
-    return current <= target + tolerance;
-  }
-  return current >= target - tolerance;
-}
-
 /**
  * Check and trigger alerts. Uses Binance for price and complex alerts.
  * Price: alertType === 'price', first symbol vs targetValue.
@@ -408,6 +409,9 @@ async function checkAlerts() {
       const syms = parseSymbols(a.symbols);
       return syms.length > 0;
     });
+
+    const activePriceAlertIds = new Set(priceAlerts.map((a) => a.id));
+    prunePriceAlertRuntimeState(activePriceAlertIds);
 
     if (priceAlerts.length > 0) {
       // Group by (exchange, market) so we fetch from the correct exchange
@@ -485,58 +489,57 @@ async function checkAlerts() {
         const targetValue = Number(alert.targetValue);
         if (!Number.isFinite(targetValue)) continue;
 
-        let shouldTrigger = false;
-
-        const initialPrice = alert.initialPrice != null ? Number(alert.initialPrice) : null;
-        const hasValidInitialPrice = Number.isFinite(initialPrice) && initialPrice > 0;
-
-        if (!hasValidInitialPrice) {
-          if (!warnedMissingInitialPrice.has(alert.id)) {
-            console.warn(
-              `Alert ${alert.id} has invalid initialPrice - using condition fallback for trigger direction`
-            );
-            warnedMissingInitialPrice.add(alert.id);
-          }
-        } else {
-          warnedMissingInitialPrice.delete(alert.id);
-        }
-
         if (!Number.isFinite(currentPrice) || !Number.isFinite(targetValue)) {
           continue;
         }
 
-        const direction = hasValidInitialPrice
-          ? (initialPrice > targetValue ? 'down_to_target' : 'up_to_target')
-          : (String(alert.condition || '').toLowerCase() === 'below' ? 'down_to_target' : 'up_to_target');
+        const initialPrice = alert.initialPrice != null ? Number(alert.initialPrice) : null;
+        const hasValidInitialPrice = Number.isFinite(initialPrice) && initialPrice > 0;
+        const previousObserved = priceAlertLastObserved.get(alert.id);
+        const previousPrice = Number.isFinite(previousObserved)
+          ? Number(previousObserved)
+          : (hasValidInitialPrice ? initialPrice : null);
 
-        if (direction === 'down_to_target') {
-          // Created above target -> trigger when price reaches target zone from above side.
-          const isOnExpectedSide = !hasValidInitialPrice || currentPrice <= initialPrice;
-          const hitTarget = hasReachedTargetWithTolerance(currentPrice, targetValue, direction);
-          shouldTrigger = isOnExpectedSide && hitTarget;
-          if (shouldTrigger) {
+        const touchedTarget = hasTouchedTargetWithTolerance(currentPrice, targetValue);
+        const crossedTarget = hasCrossedTargetWithTolerance(previousPrice, currentPrice, targetValue);
+        const fallbackCondition = String(alert.condition || '').toLowerCase();
+        const legacyDirectionHit =
+          !Number.isFinite(previousPrice) &&
+          !hasValidInitialPrice &&
+          (fallbackCondition === 'below'
+            ? currentPrice <= targetValue + getPriceTolerance(targetValue)
+            : fallbackCondition === 'above'
+              ? currentPrice >= targetValue - getPriceTolerance(targetValue)
+              : false);
+        const shouldTrigger = touchedTarget || crossedTarget || legacyDirectionHit;
+
+        if (shouldTrigger) {
+          if (crossedTarget && Number.isFinite(previousPrice)) {
             console.log(
-              hasValidInitialPrice
-                ? `[Alert ${alert.id}] Price crossed DOWN: ${initialPrice} -> ${currentPrice} (target: ${targetValue})`
-                : `[Alert ${alert.id}] Price reached DOWN target via condition fallback: ${currentPrice} (target: ${targetValue})`
+              `[Alert ${alert.id}] Price crossed target: ${previousPrice} -> ${currentPrice} (target: ${targetValue})`
             );
-          }
-        } else {
-          // Created below target -> trigger when price reaches target zone from below side.
-          const isOnExpectedSide = !hasValidInitialPrice || currentPrice >= initialPrice;
-          const hitTarget = hasReachedTargetWithTolerance(currentPrice, targetValue, direction);
-          shouldTrigger = isOnExpectedSide && hitTarget;
-          if (shouldTrigger) {
+          } else if (legacyDirectionHit) {
             console.log(
-              hasValidInitialPrice
-                ? `[Alert ${alert.id}] Price crossed UP: ${initialPrice} -> ${currentPrice} (target: ${targetValue})`
-                : `[Alert ${alert.id}] Price reached UP target via condition fallback: ${currentPrice} (target: ${targetValue})`
+              `[Alert ${alert.id}] Price reached target via legacy condition fallback: ${currentPrice} (target: ${targetValue})`
+            );
+          } else {
+            console.log(
+              `[Alert ${alert.id}] Price touched target: ${currentPrice} (target: ${targetValue})`
             );
           }
         }
         // pct_change could be added later using initialPrices or klines
 
-        if (!shouldTrigger) continue;
+        if (!shouldTrigger) {
+          priceAlertLastObserved.set(alert.id, currentPrice);
+          continue;
+        }
+
+        priceAlertLastObserved.delete(alert.id);
+
+        const resolvedCondition = hasValidInitialPrice
+          ? (initialPrice > targetValue ? 'below' : 'above')
+          : (String(alert.condition || '').toLowerCase() === 'below' ? 'below' : 'above');
 
         // For price alerts: DELETE from database when triggered (self-delete)
         // Store alert data before deletion for socket payload
@@ -548,7 +551,7 @@ async function checkAlerts() {
           triggeredAt: new Date(),
           currentPrice,
           targetValue: alert.targetValue,
-          condition: direction === 'down_to_target' ? 'below' : 'above',
+          condition: resolvedCondition,
           coinSymbol: alert.coinSymbol ?? firstSymbol.replace(/USDT$/i, ''),
           symbol: firstSymbol,
           alertType: 'price',

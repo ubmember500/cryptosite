@@ -748,6 +748,7 @@ export const useMarketStore = create((set, get) => ({
   searchQuery: '',
   loadingBinance: false,
   binanceError: null,
+  activeTokensRequestId: null,
   selectedToken: null, // for token selection
   
   // Chart data state (single symbol for backward compat; multi-symbol in map)
@@ -811,9 +812,20 @@ export const useMarketStore = create((set, get) => ({
 
   setSelectedToken: (token) => set({ selectedToken: token }),
 
-  fetchBinanceTokens: async (exchangeType, searchQuery = '', retryCount = 0) => {
+  fetchBinanceTokens: async (exchangeType, searchQuery = '', retryCount = 0, requestId = null) => {
     const exchange = get().exchange;
-    set({ loadingBinance: true, binanceError: null });
+    const activeRequestId = requestId || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    if (retryCount === 0) {
+      set({ loadingBinance: true, binanceError: null, activeTokensRequestId: activeRequestId });
+    }
+
+    const isLatestRequest = () => get().activeTokensRequestId === activeRequestId;
+    const applyIfLatest = (patch) => {
+      if (isLatestRequest()) {
+        set(patch);
+      }
+    };
+
     const useDirectFuturesClientFallback = exchange === 'binance' && exchangeType === 'futures';
     const useDirectBybitClientFallback = exchange === 'bybit';
 
@@ -856,15 +868,15 @@ export const useMarketStore = create((set, get) => ({
           const normalizedTokens = Array.isArray(response.data.tokens)
             ? response.data.tokens.map((token) => normalizeMarketTokenMetrics(token))
             : [];
-          set({
+          applyIfLatest({
             binanceTokens: normalizedTokens,
             loadingBinance: false,
             binanceError: null
           });
           return;
-        } catch (err) {
+        } catch {
           const directTokens = await fetchBybitTokensDirect(exchangeType, searchQuery);
-          set({
+          applyIfLatest({
             binanceTokens: directTokens,
             loadingBinance: false,
             binanceError: null
@@ -906,7 +918,7 @@ export const useMarketStore = create((set, get) => ({
         }
         if (isRetryableError(axiosError) && retryCount === 0) {
           await new Promise(resolve => setTimeout(resolve, 1000));
-          return get().fetchBinanceTokens(exchangeType, searchQuery, retryCount + 1);
+          return get().fetchBinanceTokens(exchangeType, searchQuery, retryCount + 1, activeRequestId);
         }
         if (useDirectFuturesClientFallback) {
           const directTokens = await fetchBinanceFuturesTokensDirect(searchQuery);
@@ -931,7 +943,7 @@ export const useMarketStore = create((set, get) => ({
             return normalizeMarketTokenMetrics(token);
           })
         : [];
-      set({
+      applyIfLatest({
         binanceTokens: normalizedTokens,
         loadingBinance: false,
         binanceError: null
@@ -949,7 +961,7 @@ export const useMarketStore = create((set, get) => ({
       } else if (error.message) {
         errorMessage = error.message;
       }
-      set({
+      applyIfLatest({
         binanceError: errorMessage,
         loadingBinance: false,
         binanceTokens: []

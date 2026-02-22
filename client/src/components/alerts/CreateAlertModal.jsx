@@ -234,10 +234,10 @@ const CreateAlertModal = ({ isOpen, onClose, onSuccess, editingAlertId, editingA
 
       const initialDataPrice = Number(initialData?.currentPrice);
       const selectedTokenPrice = Number(selectedToken?.lastPrice);
-      const clientCurrentPrice = Number.isFinite(selectedTokenPrice) && selectedTokenPrice > 0
-        ? selectedTokenPrice
-        : Number.isFinite(initialDataPrice) && initialDataPrice > 0
-          ? initialDataPrice
+      const clientCurrentPrice = Number.isFinite(initialDataPrice) && initialDataPrice > 0
+        ? initialDataPrice
+        : Number.isFinite(selectedTokenPrice) && selectedTokenPrice > 0
+          ? selectedTokenPrice
           : null;
 
       const payload = {

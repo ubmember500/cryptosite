@@ -197,6 +197,7 @@ const KLineChart = ({
       symbol,
       exchange: alertExchange,
       market: alertMarket,
+      currentPrice: latestClose,
       targetValue: latestClose,
     }),
     [symbol, alertExchange, alertMarket, latestClose]
