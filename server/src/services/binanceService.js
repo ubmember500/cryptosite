@@ -68,7 +68,7 @@ const lastPricesCache = {
   futures: { data: null, timestamp: null },
   spot: { data: null, timestamp: null },
 };
-const LAST_PRICES_CACHE_TTL = 10000; // 10 seconds to reduce Binance pressure
+const LAST_PRICES_CACHE_TTL = 2000; // 2 seconds (align with other exchanges for alert responsiveness)
 const LAST_PRICES_ERROR_COOLDOWN_MS = 15000; // short cooldown after upstream failures
 const lastPricesErrorState = {
   futures: { timestamp: 0 },

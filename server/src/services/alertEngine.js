@@ -283,26 +283,54 @@ function normalizeSymbolForExchange(exchange, symbol) {
   }
 }
 
+async function fetchCurrentPriceByExchangeSymbol(exchange, symbol, exchangeType) {
+  const key = String(exchange || '').toLowerCase();
+  if (!symbol) return null;
+
+  try {
+    if (key === 'bybit') {
+      return await bybitService.fetchCurrentPriceBySymbol(symbol, exchangeType);
+    }
+    if (key === 'binance') {
+      return await binanceService.fetchCurrentPriceBySymbol(symbol, exchangeType);
+    }
+
+    const fetchToken =
+      key === 'okx'
+        ? okxService.fetchTokenWithNATR
+        : key === 'gate'
+          ? gateService.fetchTokenWithNATR
+          : key === 'mexc'
+            ? mexcService.fetchTokenWithNATR
+            : key === 'bitget'
+              ? bitgetService.fetchTokenWithNATR
+              : null;
+
+    if (!fetchToken) return null;
+    const token = await fetchToken(symbol, exchangeType);
+    const price = Number(token?.lastPrice);
+    return Number.isFinite(price) && price > 0 ? price : null;
+  } catch {
+    return null;
+  }
+}
+
 async function fetchFreshPricesForKey(exchange, exchangeType, symbols) {
   const key = String(exchange || '').toLowerCase();
-  if ((key !== 'binance' && key !== 'bybit') || !Array.isArray(symbols) || symbols.length === 0) {
+  if (!Array.isArray(symbols) || symbols.length === 0) {
     return {};
   }
 
-  if (symbols.length > 40) {
+  if (symbols.length > 30) {
     console.warn(`[alertEngine] Skipping fresh per-symbol prices for ${key}/${exchangeType}: too many symbols (${symbols.length})`);
     return {};
   }
-
-  const fetchCurrent = key === 'bybit'
-    ? bybitService.fetchCurrentPriceBySymbol
-    : binanceService.fetchCurrentPriceBySymbol;
 
   const freshMap = {};
   await Promise.all(
     symbols.map(async (symbol) => {
       try {
-        const price = await fetchCurrent(symbol, exchangeType);
+        const price = await fetchCurrentPriceByExchangeSymbol(key, symbol, exchangeType);
         if (!Number.isFinite(price) || price <= 0) return;
         freshMap[symbol] = price;
         freshMap[String(symbol).toUpperCase()] = price;
@@ -344,6 +372,18 @@ function resolvePriceForPriceAlert(priceMap, symbol, market) {
   }
 
   return null;
+}
+
+function hasReachedTargetWithTolerance(currentPrice, targetValue, direction) {
+  const current = Number(currentPrice);
+  const target = Number(targetValue);
+  if (!Number.isFinite(current) || !Number.isFinite(target)) return false;
+
+  const tolerance = Math.max(Math.abs(target) * 1e-4, 1e-8);
+  if (direction === 'down_to_target') {
+    return current <= target + tolerance;
+  }
+  return current >= target - tolerance;
 }
 
 /**
@@ -468,20 +508,20 @@ async function checkAlerts() {
 
         const direction = initialPrice > targetValue ? 'down_to_target' : 'up_to_target';
         if (direction === 'down_to_target') {
-          // Created above target -> trigger only after a true downward move reaches target.
-          const priceHasDropped = currentPrice < initialPrice;
-          const hitOrBelowTarget = currentPrice <= targetValue;
-          shouldTrigger = priceHasDropped && hitOrBelowTarget;
+          // Created above target -> trigger when price reaches target zone from above side.
+          const isOnExpectedSide = currentPrice <= initialPrice;
+          const hitTarget = hasReachedTargetWithTolerance(currentPrice, targetValue, direction);
+          shouldTrigger = isOnExpectedSide && hitTarget;
           if (shouldTrigger) {
             console.log(
               `[Alert ${alert.id}] Price crossed DOWN: ${initialPrice} -> ${currentPrice} (target: ${targetValue})`
             );
           }
         } else {
-          // Created below target -> trigger only after a true upward move reaches target.
-          const priceHasRisen = currentPrice > initialPrice;
-          const hitOrAboveTarget = currentPrice >= targetValue;
-          shouldTrigger = priceHasRisen && hitOrAboveTarget;
+          // Created below target -> trigger when price reaches target zone from below side.
+          const isOnExpectedSide = currentPrice >= initialPrice;
+          const hitTarget = hasReachedTargetWithTolerance(currentPrice, targetValue, direction);
+          shouldTrigger = isOnExpectedSide && hitTarget;
           if (shouldTrigger) {
             console.log(
               `[Alert ${alert.id}] Price crossed UP: ${initialPrice} -> ${currentPrice} (target: ${targetValue})`
