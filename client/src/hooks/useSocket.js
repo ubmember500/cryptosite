@@ -11,8 +11,23 @@ import { SOCKET_URL } from '../utils/constants';
  */
 export const useSocket = (options = {}) => {
   const socketRef = useRef(null);
+  const callbacksRef = useRef({
+    onConnect: null,
+    onDisconnect: null,
+    onAlertTriggered: null,
+    onKlineUpdate: null,
+  });
   const accessToken = useAuthStore((state) => state.accessToken);
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+
+  useEffect(() => {
+    callbacksRef.current = {
+      onConnect: options.onConnect || null,
+      onDisconnect: options.onDisconnect || null,
+      onAlertTriggered: options.onAlertTriggered || null,
+      onKlineUpdate: options.onKlineUpdate || null,
+    };
+  }, [options.onConnect, options.onDisconnect, options.onAlertTriggered, options.onKlineUpdate]);
 
   useEffect(() => {
     // Only connect if authenticated and have token
@@ -33,16 +48,16 @@ export const useSocket = (options = {}) => {
     // Connection event
     socket.on('connect', () => {
       console.log('[Socket] ✅ Connected, socket ID:', socket.id);
-      if (options.onConnect) {
-        options.onConnect();
+      if (callbacksRef.current.onConnect) {
+        callbacksRef.current.onConnect();
       }
     });
 
     // Disconnection event
     socket.on('disconnect', () => {
       console.log('Socket disconnected');
-      if (options.onDisconnect) {
-        options.onDisconnect();
+      if (callbacksRef.current.onDisconnect) {
+        callbacksRef.current.onDisconnect();
       }
     });
 
@@ -52,27 +67,26 @@ export const useSocket = (options = {}) => {
     });
 
     // Listen for alert triggered events
-    if (options.onAlertTriggered) {
-      socket.on('alert-triggered', (alertData) => {
-        options.onAlertTriggered(alertData);
-      });
-    }
+    socket.on('alert-triggered', (alertData) => {
+      if (callbacksRef.current.onAlertTriggered) {
+        callbacksRef.current.onAlertTriggered(alertData);
+      }
+    });
 
     // Listen for kline updates
-    if (options.onKlineUpdate) {
-      socket.on('kline-update', (klineData) => {
-        console.log('[Socket] 📊 kline-update event received:', {
-          exchange: klineData.exchange,
-          symbol: klineData.symbol,
-          interval: klineData.interval,
-          exchangeType: klineData.exchangeType,
-          close: klineData.kline?.close,
-          time: klineData.kline?.time,
-          isClosed: klineData.kline?.isClosed,
-        });
-        options.onKlineUpdate(klineData);
+    socket.on('kline-update', (klineData) => {
+      if (!callbacksRef.current.onKlineUpdate) return;
+      console.log('[Socket] 📊 kline-update event received:', {
+        exchange: klineData.exchange,
+        symbol: klineData.symbol,
+        interval: klineData.interval,
+        exchangeType: klineData.exchangeType,
+        close: klineData.kline?.close,
+        time: klineData.kline?.time,
+        isClosed: klineData.kline?.isClosed,
       });
-    }
+      callbacksRef.current.onKlineUpdate(klineData);
+    });
 
     // Listen for kline errors
     socket.on('kline-error', (errorData) => {
@@ -114,7 +128,7 @@ export const useSocket = (options = {}) => {
         socket.disconnect();
       }
     };
-  }, [isAuthenticated, accessToken, options.onAlertTriggered, options.onKlineUpdate]);
+  }, [isAuthenticated, accessToken]);
 
   return socketRef.current;
 };

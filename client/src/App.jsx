@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuthStore } from './store/authStore';
 import { useAlertStore } from './store/alertStore';
 import { useThemeStore } from './store/themeStore';
+import { useToastStore } from './store/toastStore';
 import { useSocket } from './hooks/useSocket';
 import { playAlertSound } from './utils/alertSound';
 import Layout from './components/layout/Layout';
@@ -39,6 +40,7 @@ function App() {
   const initialize = useAuthStore((state) => state.initialize);
   const removeAlert = useAlertStore((state) => state.removeAlert);
   const addOrUpdateAlert = useAlertStore((state) => state.addOrUpdateAlert);
+  const addToast = useToastStore((state) => state.addToast);
   const [triggeredAlert, setTriggeredAlert] = useState(null);
 
   // Initialize auth check on mount
@@ -49,7 +51,15 @@ function App() {
   // Handle real-time alert triggers via Socket.IO
   useSocket({
     onAlertTriggered: (alertData) => {
-      playAlertSound(); // Play loud alert sound immediately when alert triggers
+      playAlertSound().catch(() => {}); // Play loud alert sound immediately when alert triggers
+
+      const symbol = alertData?.symbol || alertData?.coinSymbol || 'token';
+      const target = Number(alertData?.targetValue);
+      const hasTarget = Number.isFinite(target);
+      const toastMessage = alertData?.alertType === 'price'
+        ? `Price alert hit: ${symbol}${hasTarget ? ` @ ${target}` : ''}`
+        : `Complex alert triggered: ${symbol}`;
+      addToast(toastMessage, 'warning', 8000);
       
       // Show the alert modal with full details
       setTriggeredAlert(alertData);

@@ -438,7 +438,7 @@ async function checkAlerts() {
         const exchangeType = market === 'spot' ? 'spot' : 'futures';
         const getPrices =
           exchange === 'bybit'
-            ? () => bybitService.getLastPricesBySymbols(symbols, exchangeType, { strict: true, exchangeOnly: true })
+            ? () => bybitService.getLastPricesBySymbols(symbols, exchangeType, { strict: false, exchangeOnly: true })
             : exchange === 'okx'
               ? () => okxService.getLastPricesBySymbols(symbols, exchangeType)
               : exchange === 'gate'
@@ -447,12 +447,23 @@ async function checkAlerts() {
                   ? () => mexcService.getLastPricesBySymbols(symbols, exchangeType)
                   : exchange === 'bitget'
                     ? () => bitgetService.getLastPricesBySymbols(symbols, exchangeType)
-                    : () => binanceService.getLastPricesBySymbols(symbols, exchangeType, { strict: true, exchangeOnly: true });
+                    : () => binanceService.getLastPricesBySymbols(symbols, exchangeType, { strict: false, exchangeOnly: true });
         try {
-          const [bulkPriceMap, freshPriceMap] = await Promise.all([
+          const [bulkResult, freshResult] = await Promise.allSettled([
             getPrices(),
             fetchFreshPricesForKey(exchange, exchangeType, symbols),
           ]);
+
+          const bulkPriceMap = bulkResult.status === 'fulfilled' ? (bulkResult.value || {}) : {};
+          const freshPriceMap = freshResult.status === 'fulfilled' ? (freshResult.value || {}) : {};
+
+          if (bulkResult.status === 'rejected') {
+            console.warn(`[alertEngine] Bulk price fetch failed for ${key}:`, bulkResult.reason?.message || bulkResult.reason);
+          }
+          if (freshResult.status === 'rejected') {
+            console.warn(`[alertEngine] Fresh price fetch failed for ${key}:`, freshResult.reason?.message || freshResult.reason);
+          }
+
           priceMapByKey[key] = {
             ...(bulkPriceMap || {}),
             ...(freshPriceMap || {}),
