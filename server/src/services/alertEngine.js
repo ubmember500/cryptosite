@@ -257,6 +257,95 @@ function parseTimeframeSeconds(timeframe) {
   return TIMEFRAME_TO_SECONDS[timeframe] ?? 60;
 }
 
+function normalizeSymbolForExchange(exchange, symbol) {
+  const raw = String(symbol || '').trim();
+  if (!raw) return '';
+
+  const key = String(exchange || '').toLowerCase();
+  const normalize =
+    key === 'bybit'
+      ? bybitService.normalizeSymbol
+      : key === 'okx'
+        ? okxService.normalizeSymbol
+        : key === 'gate'
+          ? gateService.normalizeSymbol
+          : key === 'mexc'
+            ? mexcService.normalizeSymbol
+            : key === 'bitget'
+              ? bitgetService.normalizeSymbol
+              : binanceService.normalizeSymbol;
+
+  try {
+    const normalized = normalize(raw);
+    return typeof normalized === 'string' ? normalized : '';
+  } catch {
+    return raw.toUpperCase().replace(/[^A-Z0-9.]/g, '');
+  }
+}
+
+async function fetchFreshPricesForKey(exchange, exchangeType, symbols) {
+  const key = String(exchange || '').toLowerCase();
+  if ((key !== 'binance' && key !== 'bybit') || !Array.isArray(symbols) || symbols.length === 0) {
+    return {};
+  }
+
+  if (symbols.length > 40) {
+    console.warn(`[alertEngine] Skipping fresh per-symbol prices for ${key}/${exchangeType}: too many symbols (${symbols.length})`);
+    return {};
+  }
+
+  const fetchCurrent = key === 'bybit'
+    ? bybitService.fetchCurrentPriceBySymbol
+    : binanceService.fetchCurrentPriceBySymbol;
+
+  const freshMap = {};
+  await Promise.all(
+    symbols.map(async (symbol) => {
+      try {
+        const price = await fetchCurrent(symbol, exchangeType);
+        if (!Number.isFinite(price) || price <= 0) return;
+        freshMap[symbol] = price;
+        freshMap[String(symbol).toUpperCase()] = price;
+      } catch (error) {
+        console.warn(`[alertEngine] Fresh price fetch failed for ${key} ${symbol}:`, error.message);
+      }
+    })
+  );
+
+  return freshMap;
+}
+
+function resolvePriceForPriceAlert(priceMap, symbol, market) {
+  if (!priceMap || typeof priceMap !== 'object') return null;
+  const raw = String(symbol || '').trim();
+  if (!raw) return null;
+
+  const candidates = new Set();
+  candidates.add(raw);
+  candidates.add(raw.toUpperCase());
+
+  const compact = raw.toUpperCase().replace(/[^A-Z0-9.]/g, '');
+  if (compact) candidates.add(compact);
+
+  if (market === 'futures') {
+    for (const c of Array.from(candidates)) {
+      if (c.endsWith('USDT') && !c.endsWith('.P')) candidates.add(`${c}.P`);
+      if (c.endsWith('.P')) candidates.add(c.slice(0, -2));
+    }
+  }
+
+  const entries = Object.entries(priceMap);
+  const byUpper = new Map(entries.map(([k, v]) => [String(k).toUpperCase(), v]));
+
+  for (const c of candidates) {
+    if (Object.prototype.hasOwnProperty.call(priceMap, c)) return priceMap[c];
+    const upperHit = byUpper.get(String(c).toUpperCase());
+    if (upperHit != null) return upperHit;
+  }
+
+  return null;
+}
+
 /**
  * Check and trigger alerts. Uses Binance for price and complex alerts.
  * Price: alertType === 'price', first symbol vs targetValue.
@@ -298,7 +387,14 @@ async function checkAlerts() {
       const priceMapByKey = {};
       for (const [key, alerts] of byExchangeMarket) {
         const [exchange, market] = key.split('|');
-        const symbols = [...new Set(alerts.flatMap((a) => parseSymbols(a.symbols)))];
+        const symbols = [
+          ...new Set(
+            alerts
+              .flatMap((a) => parseSymbols(a.symbols))
+              .map((s) => normalizeSymbolForExchange(exchange, s))
+              .filter(Boolean)
+          ),
+        ];
         const exchangeType = market === 'spot' ? 'spot' : 'futures';
         const getPrices =
           exchange === 'bybit'
@@ -313,7 +409,14 @@ async function checkAlerts() {
                     ? () => bitgetService.getLastPricesBySymbols(symbols, exchangeType)
                     : () => binanceService.getLastPricesBySymbols(symbols, exchangeType);
         try {
-          priceMapByKey[key] = await getPrices();
+          const [bulkPriceMap, freshPriceMap] = await Promise.all([
+            getPrices(),
+            fetchFreshPricesForKey(exchange, exchangeType, symbols),
+          ]);
+          priceMapByKey[key] = {
+            ...(bulkPriceMap || {}),
+            ...(freshPriceMap || {}),
+          };
         } catch (err) {
           console.warn(`[alertEngine] Failed to fetch prices for ${key}:`, err.message);
           priceMapByKey[key] = {};
@@ -324,13 +427,18 @@ async function checkAlerts() {
 
       for (const alert of priceAlerts) {
         const syms = parseSymbols(alert.symbols);
-        const firstSymbol = syms[0];
         const ex = (alert.exchange || 'binance').toLowerCase();
         const market = (alert.market || 'futures').toLowerCase();
+        const firstSymbol = normalizeSymbolForExchange(ex, syms[0]);
+        if (!firstSymbol) {
+          console.warn(`[alertEngine] Alert ${alert.id} has invalid symbol, skipping`);
+          continue;
+        }
         const key = `${ex}|${market}`;
         const priceMap = priceMapByKey[key] || {};
-        const currentPrice = priceMap[firstSymbol];
-        if (currentPrice == null) {
+        const currentPriceRaw = resolvePriceForPriceAlert(priceMap, firstSymbol, market);
+        const currentPrice = Number(currentPriceRaw);
+        if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
           if (!skippedMissing.has(alert.id)) {
             console.warn(`Price not available for ${firstSymbol}, skipping alert ${alert.id}`);
             skippedMissing.add(alert.id);
@@ -345,12 +453,10 @@ async function checkAlerts() {
 
         // Hard source-of-truth: direction is derived from creation snapshot (initialPrice vs targetValue),
         // not from the stored condition string.
-        const initialPrice = alert.initialPrice != null && Number.isFinite(alert.initialPrice)
-          ? Number(alert.initialPrice)
-          : null;
-        if (initialPrice == null) {
+        const initialPrice = alert.initialPrice != null ? Number(alert.initialPrice) : null;
+        if (!Number.isFinite(initialPrice) || initialPrice <= 0) {
           if (!warnedMissingInitialPrice.has(alert.id)) {
-            console.warn(`Alert ${alert.id} has no initialPrice - skipping to prevent false trigger`);
+            console.warn(`Alert ${alert.id} has invalid initialPrice - skipping to prevent false trigger`);
             warnedMissingInitialPrice.add(alert.id);
           }
           continue;
