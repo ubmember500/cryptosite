@@ -9,9 +9,8 @@ const bitgetService = require('./bitgetService');
 const socketService = require('./socketService');
 const telegramService = require('./telegramService');
 const {
-  getPriceTolerance,
-  hasTouchedTargetWithTolerance,
   hasCrossedTargetWithTolerance,
+  hasReachedTargetFromPrevious,
 } = require('./priceAlertTrigger');
 
 let alertEngineRunning = false;
@@ -213,9 +212,11 @@ function parseSymbols(symbols) {
   if (typeof symbols !== 'string' || !symbols) return [];
   try {
     const p = JSON.parse(symbols);
-    return Array.isArray(p) ? p : [p];
+    if (Array.isArray(p)) return p;
+    if (typeof p === 'string' && p.trim()) return [p.trim()];
+    return p ? [p] : [];
   } catch {
-    return [];
+    return [symbols.trim()].filter(Boolean);
   }
 }
 
@@ -511,27 +512,21 @@ async function checkAlerts() {
           ? Number(previousObserved)
           : (hasValidInitialPrice ? initialPrice : null);
 
-        const touchedTarget = hasTouchedTargetWithTolerance(currentPrice, targetValue);
+        if (!Number.isFinite(previousPrice)) {
+          // No reliable baseline yet (legacy alert without initialPrice): seed now and wait
+          // for the next observed movement.
+          priceAlertLastObserved.set(alert.id, currentPrice);
+          continue;
+        }
+
         const crossedTarget = hasCrossedTargetWithTolerance(previousPrice, currentPrice, targetValue);
-        const fallbackCondition = String(alert.condition || '').toLowerCase();
-        const legacyDirectionHit =
-          !Number.isFinite(previousPrice) &&
-          !hasValidInitialPrice &&
-          (fallbackCondition === 'below'
-            ? currentPrice <= targetValue + getPriceTolerance(targetValue)
-            : fallbackCondition === 'above'
-              ? currentPrice >= targetValue - getPriceTolerance(targetValue)
-              : false);
-        const shouldTrigger = touchedTarget || crossedTarget || legacyDirectionHit;
+        const reachedFromPrevious = hasReachedTargetFromPrevious(previousPrice, currentPrice, targetValue);
+        const shouldTrigger = reachedFromPrevious;
 
         if (shouldTrigger) {
           if (crossedTarget && Number.isFinite(previousPrice)) {
             console.log(
               `[Alert ${alert.id}] Price crossed target: ${previousPrice} -> ${currentPrice} (target: ${targetValue})`
-            );
-          } else if (legacyDirectionHit) {
-            console.log(
-              `[Alert ${alert.id}] Price reached target via legacy condition fallback: ${currentPrice} (target: ${targetValue})`
             );
           } else {
             console.log(
