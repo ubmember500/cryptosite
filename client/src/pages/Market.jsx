@@ -511,6 +511,7 @@ const Market = () => {
                       ) : null}
                       alertExchange={exchange}
                       alertMarket={exchangeType}
+                      alertCurrentPrice={slotToken?.lastPrice ?? null}
                       loading={slotLoading}
                       error={slotError}
                       isRealtimeConnected={isRealtimeConnected}

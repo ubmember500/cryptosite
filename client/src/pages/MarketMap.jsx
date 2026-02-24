@@ -263,6 +263,8 @@ const MarketMap = () => {
                       data={symbolData}
                       symbol={row.symbol}
                       interval="5m"
+                      alertExchange={selectedExchange}
+                      alertMarket="futures"
                       loading={Boolean(cardLoadingBySymbol[row.symbol]) && !hasData}
                       error={cardError}
                       className="h-full"

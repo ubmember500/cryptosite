@@ -3,6 +3,65 @@ const { alertSchema, createAlertSchema, updateAlertSchema } = require('../utils/
 const priceService = require('../services/priceService');
 const { setInitialPrice, clearInitialPrice } = require('../services/alertEngine');
 const { fetchExchangePriceSnapshot } = require('../services/priceSourceResolver');
+const { processPriceAlerts } = require('../services/priceAlertEngine');
+const socketService = require('../services/socketService');
+const telegramService = require('../services/telegramService');
+
+async function sendAlertToTelegram(userId, payload) {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { telegramChatId: true },
+    });
+    if (!user?.telegramChatId) return;
+
+    const symbol = payload?.coinSymbol || payload?.symbol || 'symbol';
+    const target = Number(payload?.targetValue);
+    const current = Number(payload?.currentPrice);
+    const targetStr = Number.isFinite(target) ? target.toLocaleString(undefined, { maximumFractionDigits: 8 }) : '—';
+    const currentStr = Number.isFinite(current) ? current.toLocaleString(undefined, { maximumFractionDigits: 8 }) : '—';
+    const condition = payload?.condition === 'below' ? 'below' : 'above';
+
+    const message = `${payload?.name || 'Price alert'}\n${symbol}\nPrice hit ${condition} ${targetStr} (current: ${currentStr})`;
+    await telegramService.sendMessage(user.telegramChatId, message);
+  } catch (error) {
+    console.warn('[alertController] sendAlertToTelegram failed:', error?.message);
+  }
+}
+
+async function sweepUserPriceAlerts(userId) {
+  if (!userId) return;
+
+  try {
+    const priceAlerts = await prisma.alert.findMany({
+      where: {
+        userId,
+        isActive: true,
+        triggered: false,
+        alertType: 'price',
+      },
+    });
+
+    if (!Array.isArray(priceAlerts) || priceAlerts.length === 0) {
+      return;
+    }
+
+    await processPriceAlerts(priceAlerts, {
+      logger: console,
+      onDeleted: async (alert) => {
+        if (alert.condition === 'pct_change') {
+          clearInitialPrice(alert.id);
+        }
+      },
+      onTriggered: async (alert, payload) => {
+        socketService.emitAlertTriggered(alert.userId, payload);
+        await sendAlertToTelegram(alert.userId, payload);
+      },
+    });
+  } catch (error) {
+    console.warn('[alertController] sweepUserPriceAlerts failed:', error?.message);
+  }
+}
 
 /** Derive coinSymbol and coinId from first symbol (e.g. BTCUSDT -> BTC, btc) */
 function deriveLegacyFromFirstSymbol(symbols) {
@@ -22,6 +81,10 @@ async function getAlerts(req, res, next) {
   try {
     const { status, exchange, market, type } = req.query;
     const userId = req.user.id;
+
+    if (status !== 'triggered') {
+      await sweepUserPriceAlerts(userId);
+    }
 
     const where = { userId };
 

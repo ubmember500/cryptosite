@@ -85,6 +85,7 @@ const KLineChart = ({
   timeframePosition = 'right',
   alertExchange = 'binance',
   alertMarket = 'futures',
+  alertCurrentPrice = null,
   headerRightActions = null,
   hasMoreHistory = false,
   onLoadMoreHistory,
@@ -186,21 +187,26 @@ const KLineChart = ({
   // Available timeframes for the selector (must match mapIntervalToPeriod keys)
   const TIMEFRAMES = ['1s', '5s', '15s', '1m', '5m', '15m', '30m', '1h', '4h', '1d'];
   const isTimeframeLeft = timeframePosition === 'left';
+  const explicitAlertPrice = useMemo(() => {
+    const value = Number(alertCurrentPrice);
+    return Number.isFinite(value) && value > 0 ? String(value) : '';
+  }, [alertCurrentPrice]);
   const latestClose = useMemo(() => {
     if (!Array.isArray(data) || data.length === 0) return '';
     const lastCandle = data[data.length - 1];
     const candidate = Number(lastCandle?.close);
     return Number.isFinite(candidate) ? String(candidate) : '';
   }, [data]);
+  const effectiveAlertPrice = explicitAlertPrice || latestClose;
   const alertInitialData = useMemo(
     () => ({
       symbol,
       exchange: alertExchange,
       market: alertMarket,
-      currentPrice: latestClose,
-      targetValue: latestClose,
+      currentPrice: effectiveAlertPrice,
+      targetValue: effectiveAlertPrice,
     }),
-    [symbol, alertExchange, alertMarket, latestClose]
+    [symbol, alertExchange, alertMarket, effectiveAlertPrice]
   );
 
   // Transform backend data to KLineChart format
