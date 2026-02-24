@@ -1,5 +1,5 @@
 const prisma = require('../utils/prisma');
-const { alertSchema, createAlertSchema, updateAlertSchema } = require('../utils/validators');
+const { createAlertSchema, updateAlertSchema } = require('../utils/validators');
 const priceService = require('../services/priceService');
 const { setInitialPrice, clearInitialPrice } = require('../services/alertEngine');
 const { fetchExchangePriceSnapshot } = require('../services/priceSourceResolver');
@@ -72,6 +72,109 @@ function deriveLegacyFromFirstSymbol(symbols) {
   return { coinSymbol: base, coinId: base.toLowerCase() };
 }
 
+function parseSymbolsInput(value) {
+  if (value == null) return [];
+  if (Array.isArray(value)) return value.map((entry) => String(entry || '').trim()).filter(Boolean);
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return [];
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) return parsed.map((entry) => String(entry || '').trim()).filter(Boolean);
+      if (typeof parsed === 'string' && parsed.trim()) return [parsed.trim()];
+    } catch {
+      return [trimmed];
+    }
+    return [trimmed];
+  }
+  return [];
+}
+
+function buildCanonicalCreateBody(input) {
+  const body = { ...input };
+  if (body.type != null && body.alertType == null) body.alertType = body.type;
+  if (body.priceCondition != null && body.condition == null) body.condition = body.priceCondition;
+
+  if (Array.isArray(body.exchanges) && body.exchanges.length > 0) {
+    const firstExchange = String(body.exchanges[0] || '').trim().toLowerCase();
+    if (!firstExchange) {
+      body.exchanges = [];
+    } else {
+      body.exchanges = [firstExchange];
+      if (body.exchange == null) body.exchange = firstExchange;
+    }
+  }
+
+  if (body.exchange != null) body.exchange = String(body.exchange).trim().toLowerCase();
+  if (body.market != null) body.market = String(body.market).trim().toLowerCase();
+  if (body.alertType == null) body.alertType = 'price';
+
+  const parsedSymbols = parseSymbolsInput(body.symbols);
+  const symbolFromField = body.symbol != null ? String(body.symbol).trim().toUpperCase() : '';
+  const symbolFromArray = parsedSymbols.length > 0 ? String(parsedSymbols[0]).trim().toUpperCase() : '';
+
+  if (String(body.alertType).toLowerCase() === 'price') {
+    body.symbol = symbolFromField || symbolFromArray || undefined;
+    if (body.symbol) {
+      body.symbols = [body.symbol];
+    } else {
+      body.symbols = [];
+    }
+  } else {
+    body.symbol = symbolFromField || undefined;
+    body.symbols = parsedSymbols;
+  }
+
+  if (body.conditions != null && body.conditions !== '') {
+    body.conditions = typeof body.conditions === 'string' ? body.conditions : JSON.stringify(body.conditions);
+  }
+
+  if (body.notificationOptions != null) {
+    body.notificationOptions = typeof body.notificationOptions === 'string' ? body.notificationOptions : JSON.stringify(body.notificationOptions);
+  }
+
+  if (body.targetValue !== undefined && body.targetValue !== null && body.targetValue !== '') {
+    const n = typeof body.targetValue === 'number' ? body.targetValue : parseFloat(body.targetValue);
+    body.targetValue = Number.isFinite(n) ? n : undefined;
+  } else {
+    body.targetValue = undefined;
+  }
+
+  if (body.currentPrice !== undefined && body.currentPrice !== null && body.currentPrice !== '') {
+    const n = typeof body.currentPrice === 'number' ? body.currentPrice : parseFloat(body.currentPrice);
+    body.currentPrice = Number.isFinite(n) ? n : undefined;
+  } else {
+    body.currentPrice = undefined;
+  }
+
+  return { body, symbolFromField, symbolFromArray };
+}
+
+function buildImmediateTriggerPayload(alert, currentPrice) {
+  const triggeredAt = new Date();
+  const symbol = Array.isArray(alert.symbols) && alert.symbols.length > 0
+    ? alert.symbols[0]
+    : (typeof alert.symbols === 'string' ? alert.symbols : alert.coinSymbol || '');
+
+  return {
+    id: alert.id,
+    alertId: alert.id,
+    name: alert.name,
+    description: alert.description ?? null,
+    triggered: true,
+    triggeredAt,
+    currentPrice,
+    targetValue: alert.targetValue,
+    condition: alert.condition,
+    coinSymbol: alert.coinSymbol,
+    symbol,
+    exchange: alert.exchange,
+    market: alert.market,
+    alertType: 'price',
+    initialPrice: alert.initialPrice,
+  };
+}
+
 /**
  * Get user's alerts
  * Query params: status (active|triggered|all), exchange, market, type (alertType)
@@ -135,33 +238,21 @@ async function createAlert(req, res, next) {
   console.log('[createAlert] Request headers:', JSON.stringify(req.headers, null, 2));
   
   try {
-    // Normalize payload: frontend may send type → alertType, priceCondition → condition, exchanges → exchange
-    const body = { ...req.body };
-    if (body.type != null && body.alertType == null) body.alertType = body.type;
-    if (body.priceCondition != null && body.condition == null) body.condition = body.priceCondition;
-    if (Array.isArray(body.exchanges) && body.exchanges.length > 0 && body.exchange == null) body.exchange = body.exchanges[0];
+    const { body, symbolFromField, symbolFromArray } = buildCanonicalCreateBody(req.body);
 
-    // Coerce to shapes expected by simplified createAlertSchema (avoids Zod v4 union/transform _zod errors)
-    if (body.symbols != null) {
-      body.symbols = Array.isArray(body.symbols) ? body.symbols : (typeof body.symbols === 'string' ? (() => { try { const p = JSON.parse(body.symbols); return Array.isArray(p) ? p : [body.symbols]; } catch { return [body.symbols]; } })() : []);
+    if (symbolFromField && symbolFromArray && symbolFromField !== symbolFromArray) {
+      return res.status(400).json({
+        error: 'Ambiguous symbol payload. Provide only one symbol for price alerts.',
+      });
     }
-    if (body.conditions != null && body.conditions !== '') {
-      body.conditions = typeof body.conditions === 'string' ? body.conditions : JSON.stringify(body.conditions);
-    }
-    if (body.notificationOptions != null) {
-      body.notificationOptions = typeof body.notificationOptions === 'string' ? body.notificationOptions : JSON.stringify(body.notificationOptions);
-    }
-    if (body.targetValue !== undefined && body.targetValue !== null && body.targetValue !== '') {
-      const n = typeof body.targetValue === 'number' ? body.targetValue : parseFloat(body.targetValue, 10);
-      body.targetValue = Number.isFinite(n) ? n : undefined;
-    } else {
-      body.targetValue = undefined;
-    }
-    if (body.currentPrice !== undefined && body.currentPrice !== null && body.currentPrice !== '') {
-      const n = typeof body.currentPrice === 'number' ? body.currentPrice : parseFloat(body.currentPrice, 10);
-      body.currentPrice = Number.isFinite(n) ? n : undefined;
-    } else {
-      body.currentPrice = undefined;
+
+    if (body.exchange && Array.isArray(req.body?.exchanges) && req.body.exchanges.length > 0) {
+      const firstIncomingExchange = String(req.body.exchanges[0] || '').trim().toLowerCase();
+      if (firstIncomingExchange && String(body.exchange).toLowerCase() !== firstIncomingExchange) {
+        return res.status(400).json({
+          error: 'Ambiguous exchange payload. Provide only one exchange for price alerts.',
+        });
+      }
     }
 
     console.log('[createAlert] Normalized body after coercion:', JSON.stringify(body, null, 2));
@@ -325,15 +416,6 @@ async function createAlert(req, res, next) {
 
       const PRICE_TOLERANCE = 1e-8;
       const delta = initialPrice - targetValue;
-      if (Math.abs(delta) <= PRICE_TOLERANCE) {
-        return res.status(400).json({
-          error: 'Target price equals current price. Alert cannot be created.',
-          details: {
-            currentPrice: initialPrice,
-            targetPrice: targetValue,
-          },
-        });
-      }
 
       condition = delta > 0 ? 'below' : 'above';
       console.log('[createAlert] Direction resolved from snapshot:', {
@@ -342,6 +424,45 @@ async function createAlert(req, res, next) {
         condition,
         initialPriceSource,
       });
+
+      const shouldTriggerImmediately = Math.abs(delta) <= PRICE_TOLERANCE;
+      if (shouldTriggerImmediately) {
+        const immediateAlert = await prisma.alert.create({
+          data: {
+            userId,
+            name: validatedData.name,
+            exchange: validatedData.exchange ?? 'binance',
+            market: validatedData.market ?? 'futures',
+            alertType: validatedData.alertType,
+            description: validatedData.description ?? null,
+            symbols: symbolsForStorage != null ? JSON.stringify(symbolsForStorage) : null,
+            conditions: conditionsStr,
+            notificationOptions: notificationOptionsStr,
+            coinId,
+            coinSymbol,
+            condition,
+            targetValue,
+            isActive: false,
+            triggered: true,
+            triggeredAt: new Date(),
+            ...(initialPrice != null && Number.isFinite(initialPrice) ? { initialPrice } : {}),
+          },
+        });
+
+        const immediatePayload = buildImmediateTriggerPayload(immediateAlert, initialPrice);
+        socketService.emitAlertTriggered(userId, immediatePayload);
+        await sendAlertToTelegram(userId, immediatePayload);
+
+        return res.status(201).json({
+          alert: immediateAlert,
+          immediateTrigger: true,
+          transition: {
+            from: 'create',
+            to: 'triggered',
+            reason: 'equal_at_create',
+          },
+        });
+      }
     }
 
     const createData = {
@@ -387,7 +508,14 @@ async function createAlert(req, res, next) {
     }
 
     console.log('[createAlert] ===== SUCCESS =====');
-    res.status(201).json({ alert });
+    res.status(201).json({
+      alert,
+      immediateTrigger: false,
+      transition: {
+        from: 'create',
+        to: 'active',
+      },
+    });
   } catch (error) {
     console.error('[createAlert] ===== ERROR CAUGHT =====');
     console.error('[createAlert] Error name:', error?.name);

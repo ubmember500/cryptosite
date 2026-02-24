@@ -27,6 +27,7 @@ const createAlertSchema = z.object({
   exchange: z.string().optional(),
   exchanges: z.array(z.string()).optional(),
   market: z.enum(['futures', 'spot']).default('futures'),
+  symbol: z.string().optional(),
   symbols: z.union([
     z.array(z.string()),
     z.string(), // JSON string
@@ -47,6 +48,34 @@ const createAlertSchema = z.object({
   targetValue: z.number().optional(),
   currentPrice: z.number().optional(),
   description: z.string().optional(),
+}).superRefine((data, ctx) => {
+  if (data.alertType !== 'price') return;
+
+  const hasExchange = typeof data.exchange === 'string' && data.exchange.trim() !== '';
+  const hasMarket = typeof data.market === 'string' && data.market.trim() !== '';
+  const hasTargetValue = Number.isFinite(Number(data.targetValue)) && Number(data.targetValue) > 0;
+
+  const symbolFromField = typeof data.symbol === 'string' ? data.symbol.trim() : '';
+  let symbolFromSymbols = '';
+  if (Array.isArray(data.symbols) && data.symbols.length > 0) {
+    symbolFromSymbols = String(data.symbols[0] || '').trim();
+  } else if (typeof data.symbols === 'string') {
+    symbolFromSymbols = data.symbols.trim();
+  }
+  const hasSymbol = Boolean(symbolFromField || symbolFromSymbols);
+
+  if (!hasExchange) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['exchange'], message: 'Exchange is required for price alerts.' });
+  }
+  if (!hasMarket) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['market'], message: 'Market is required for price alerts.' });
+  }
+  if (!hasSymbol) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['symbol'], message: 'Symbol is required for price alerts.' });
+  }
+  if (!hasTargetValue) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['targetValue'], message: 'Target price must be greater than 0.' });
+  }
 });
 
 /**

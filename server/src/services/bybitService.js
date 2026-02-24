@@ -37,7 +37,30 @@ function wait(ms) {
  */
 function normalizeSymbol(symbol) {
   if (typeof symbol !== 'string') return '';
-  return symbol.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const raw = symbol.trim().toUpperCase();
+  if (!raw) return '';
+
+  let normalized = raw
+    .replace(/\.P$/i, '')
+    .replace(/-PERP(ETUAL)?$/i, '')
+    .replace(/PERP$/i, '')
+    .replace(/-SWAP$/i, '')
+    .replace(/_PERP(ETUAL)?$/i, '')
+    .replace(/USDTM$/i, 'USDT');
+
+  if (normalized.includes('-') || normalized.includes('_') || normalized.includes('/')) {
+    const parts = normalized
+      .replace(/[_/]/g, '-')
+      .split('-')
+      .filter(Boolean);
+    if (parts.length >= 2 && (parts[1] === 'USDT' || parts[1] === 'USD')) {
+      normalized = `${parts[0]}${parts[1]}`;
+    } else {
+      normalized = parts.join('');
+    }
+  }
+
+  return normalized.replace(/[^A-Z0-9]/g, '');
 }
 
 function extractBaseAsset(symbol) {
@@ -108,7 +131,8 @@ function filterPriceMapBySymbols(fullMap, symbols) {
   return out;
 }
 
-async function fetchBybitSymbolPrices(symbols, exchangeType) {
+async function fetchBybitSymbolPrices(symbols, exchangeType, options = {}) {
+  const { exchangeOnly = false } = options;
   const out = {};
   const category = exchangeType === 'futures' ? 'linear' : 'spot';
   const fetchSingle = async (targetCategory, symbol) => {
@@ -135,6 +159,10 @@ async function fetchBybitSymbolPrices(symbols, exchangeType) {
     } catch (error) {
       console.warn(`[Bybit getLastPricesBySymbols] symbol fallback failed for ${symbol}:`, error.message);
 
+      if (exchangeOnly) {
+        continue;
+      }
+
       const baseAsset = extractBaseAsset(symbol);
       const cgPrice = await fetchCoinGeckoPriceByBase(baseAsset);
       if (Number.isFinite(cgPrice) && cgPrice > 0) {
@@ -145,11 +173,15 @@ async function fetchBybitSymbolPrices(symbols, exchangeType) {
   return out;
 }
 
-async function fetchCurrentPriceBySymbol(symbol, exchangeType) {
+async function fetchCurrentPriceBySymbol(symbol, exchangeType, options = {}) {
   const normalized = normalizeSymbol(symbol);
   if (!normalized) return null;
 
-  const result = await fetchBybitSymbolPrices([normalized], exchangeType === 'spot' ? 'spot' : 'futures');
+  const result = await fetchBybitSymbolPrices(
+    [normalized],
+    exchangeType === 'spot' ? 'spot' : 'futures',
+    options
+  );
   const price = Number(result?.[normalized]);
   return Number.isFinite(price) && price > 0 ? price : null;
 }
@@ -180,7 +212,7 @@ async function getLastPricesBySymbols(symbols, exchangeType, options = {}) {
 
   if (!exchangeOnly && hasRequestedSymbols) {
     const cached = lastPricesCache[cacheKey].data || {};
-    const fallbackBySymbol = await fetchBybitSymbolPrices(symbols, exchangeType);
+    const fallbackBySymbol = await fetchBybitSymbolPrices(symbols, exchangeType, { exchangeOnly });
     if (Object.keys(fallbackBySymbol).length > 0) {
       lastPricesCache[cacheKey].data = {
         ...cached,
@@ -211,7 +243,7 @@ async function getLastPricesBySymbols(symbols, exchangeType, options = {}) {
     console.warn(`[Bybit getLastPricesBySymbols] ${exchangeType} failed:`, error.message);
     const cached = lastPricesCache[cacheKey].data || {};
     if (!exchangeOnly) {
-      const fallbackBySymbol = await fetchBybitSymbolPrices(symbols, exchangeType);
+      const fallbackBySymbol = await fetchBybitSymbolPrices(symbols, exchangeType, { exchangeOnly });
       if (Object.keys(fallbackBySymbol).length > 0) {
         lastPricesCache[cacheKey].data = {
           ...cached,

@@ -25,7 +25,12 @@ export const alertService = {
    */
   async createAlert(payload) {
     const response = await api.post('/alerts', payload);
-    return response.data?.alert ?? response.data;
+    const alert = response.data?.alert ?? response.data;
+    return {
+      alert,
+      immediateTrigger: Boolean(response.data?.immediateTrigger),
+      transition: response.data?.transition ?? null,
+    };
   },
 
   /**
@@ -51,6 +56,9 @@ export const alertService = {
 
   async getHistory() {
     const response = await api.get('/alerts/history');
-    return response.data;
+    const data = response.data;
+    if (Array.isArray(data?.alerts)) return data.alerts;
+    if (Array.isArray(data)) return data;
+    return [];
   },
 };

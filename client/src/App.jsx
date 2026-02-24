@@ -38,8 +38,7 @@ import MarketMap from './pages/MarketMap';
 function App() {
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
   const initialize = useAuthStore((state) => state.initialize);
-  const removeAlert = useAlertStore((state) => state.removeAlert);
-  const addOrUpdateAlert = useAlertStore((state) => state.addOrUpdateAlert);
+  const applyTriggeredEvent = useAlertStore((state) => state.applyTriggeredEvent);
   const addToast = useToastStore((state) => state.addToast);
   const [triggeredAlert, setTriggeredAlert] = useState(null);
 
@@ -51,6 +50,9 @@ function App() {
   // Handle real-time alert triggers via Socket.IO
   useSocket({
     onAlertTriggered: (alertData) => {
+      const applied = applyTriggeredEvent(alertData);
+      if (!applied) return;
+
       playAlertSound().catch(() => {}); // Play loud alert sound immediately when alert triggers
 
       const symbol = alertData?.symbol || alertData?.coinSymbol || 'token';
@@ -63,19 +65,6 @@ function App() {
       
       // Show the alert modal with full details
       setTriggeredAlert(alertData);
-      
-      // Price alerts: remove from store (they are deleted from DB)
-      // Complex alerts: update triggered status but keep in store (isActive: true)
-      if (alertData.alertType === 'price') {
-        removeAlert(alertData.id);
-      } else {
-        // Complex alerts: update with triggered status but keep isActive: true
-        addOrUpdateAlert({
-          ...alertData,
-          triggeringSymbol: alertData.symbol ?? alertData.triggeringSymbol ?? null,
-          isActive: true, // Complex alerts continue working after trigger
-        });
-      }
     },
   });
 

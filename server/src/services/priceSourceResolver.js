@@ -5,29 +5,36 @@ const gateService = require('./gateService');
 const mexcService = require('./mexcService');
 const bitgetService = require('./bitgetService');
 
-function getExchangeService(exchange) {
-  const key = String(exchange || 'binance').toLowerCase();
+function getExchangeService(exchange, { allowDefault = true } = {}) {
+  const key = String(exchange || '').toLowerCase();
+  if (!key) return allowDefault ? binanceService : null;
   if (key === 'bybit') return bybitService;
   if (key === 'okx') return okxService;
   if (key === 'gate') return gateService;
   if (key === 'mexc') return mexcService;
   if (key === 'bitget') return bitgetService;
-  return binanceService;
+  if (key === 'binance') return binanceService;
+  return allowDefault ? binanceService : null;
 }
 
 function normalizeRawSymbol(rawSymbol) {
   if (typeof rawSymbol !== 'string') return '';
-  return rawSymbol.trim().toUpperCase().replace(/[^A-Z0-9.]/g, '');
+  return rawSymbol.trim().toUpperCase().replace(/\s+/g, '');
 }
 
 function normalizeBaseForExchange(exchange, symbol) {
-  const service = getExchangeService(exchange);
-  const noPerp = normalizeRawSymbol(symbol).replace(/\.P$/i, '');
-  if (!noPerp) return '';
+  const service = getExchangeService(exchange, { allowDefault: false });
+  const cleanedRaw = normalizeRawSymbol(symbol)
+    .replace(/\.P$/i, '')
+    .replace(/-PERP(ETUAL)?$/i, '')
+    .replace(/PERP$/i, '')
+    .replace(/-SWAP$/i, '')
+    .replace(/_PERP(ETUAL)?$/i, '');
+  if (!cleanedRaw) return '';
 
   if (typeof service.normalizeSymbol === 'function') {
     try {
-      const normalized = service.normalizeSymbol(noPerp);
+      const normalized = service.normalizeSymbol(cleanedRaw);
       if (typeof normalized === 'string' && normalized) {
         return normalized.toUpperCase();
       }
@@ -36,7 +43,7 @@ function normalizeBaseForExchange(exchange, symbol) {
     }
   }
 
-  return noPerp;
+  return cleanedRaw.replace(/[^A-Z0-9]/g, '');
 }
 
 function buildCandidates(exchange, rawSymbol, market) {
@@ -53,12 +60,6 @@ function buildCandidates(exchange, rawSymbol, market) {
   } else {
     const withoutQuote = normalizedBase.replace(/USDT$|USD$/i, '');
     if (withoutQuote) set.add(withoutQuote);
-  }
-
-  if (market === 'futures') {
-    for (const candidate of Array.from(set)) {
-      set.add(`${candidate}.P`);
-    }
   }
 
   return Array.from(set).filter(Boolean);
@@ -88,14 +89,31 @@ function resolvePriceFromMap(priceMap, candidates) {
 }
 
 async function fetchExchangePriceSnapshot({ exchange, market, symbol, strict = true, logger = console }) {
-  const service = getExchangeService(exchange);
+  const exchangeKey = String(exchange || '').toLowerCase();
+  const service = getExchangeService(exchangeKey, { allowDefault: false });
   const normalizedMarket = String(market || 'futures').toLowerCase() === 'spot' ? 'spot' : 'futures';
   const exchangeType = normalizedMarket === 'spot' ? 'spot' : 'futures';
+
+  if (!service) {
+    return {
+      ok: false,
+      status: 'unresolved',
+      reasonCode: 'UNSUPPORTED_EXCHANGE',
+      price: null,
+      symbol: '',
+      source: 'unsupported_exchange',
+      candidates: [],
+      error: `Unsupported exchange: ${exchange}`,
+    };
+  }
+
   const candidates = buildCandidates(exchange, symbol, normalizedMarket);
 
   if (candidates.length === 0) {
     return {
       ok: false,
+      status: 'unresolved',
+      reasonCode: 'INVALID_SYMBOL',
       price: null,
       symbol: '',
       source: 'invalid_symbol',
@@ -107,13 +125,19 @@ async function fetchExchangePriceSnapshot({ exchange, market, symbol, strict = t
   if (typeof service.fetchCurrentPriceBySymbol === 'function') {
     for (const candidate of candidates) {
       try {
-        const directPrice = Number(await service.fetchCurrentPriceBySymbol(candidate, exchangeType));
+        const directPrice = Number(
+          await service.fetchCurrentPriceBySymbol(candidate, exchangeType, {
+            strict,
+            exchangeOnly: true,
+          })
+        );
         if (Number.isFinite(directPrice) && directPrice > 0) {
           return {
             ok: true,
+            status: 'resolved',
             price: directPrice,
             symbol: candidate,
-            source: `${String(exchange || 'binance').toLowerCase()}_direct_symbol_ticker`,
+            source: `${exchangeKey}_direct_symbol_ticker`,
             candidates,
           };
         }
@@ -138,9 +162,10 @@ async function fetchExchangePriceSnapshot({ exchange, market, symbol, strict = t
     if (Number.isFinite(resolved.price) && resolved.price > 0) {
       return {
         ok: true,
+        status: 'resolved',
         price: resolved.price,
         symbol: resolved.symbol || candidates[0],
-        source: `${String(exchange || 'binance').toLowerCase()}_exchange_map`,
+        source: `${exchangeKey}_exchange_map`,
         candidates,
       };
     }
@@ -150,14 +175,30 @@ async function fetchExchangePriceSnapshot({ exchange, market, symbol, strict = t
       market: normalizedMarket,
       symbol,
       message: error?.message,
+      code: error?.code,
     });
+
+    if (strict && error?.code === 'UPSTREAM_PRICE_UNAVAILABLE') {
+      return {
+        ok: false,
+        status: 'unresolved',
+        reasonCode: 'UPSTREAM_PRICE_UNAVAILABLE',
+        price: null,
+        symbol: candidates[0] || '',
+        source: `${exchangeKey}_exchange_map_unavailable`,
+        candidates,
+        error: error?.message || 'Exchange map unavailable',
+      };
+    }
   }
 
   return {
     ok: false,
+    status: 'unresolved',
+    reasonCode: 'SYMBOL_UNRESOLVED',
     price: null,
     symbol: candidates[0] || '',
-    source: `${String(exchange || 'binance').toLowerCase()}_exchange_map_unavailable`,
+    source: `${exchangeKey}_exchange_map_unavailable`,
     candidates,
     error: 'Exchange map unavailable or symbol unresolved',
   };

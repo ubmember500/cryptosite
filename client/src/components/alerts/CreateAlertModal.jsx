@@ -241,23 +241,23 @@ const CreateAlertModal = ({ isOpen, onClose, onSuccess, editingAlertId, editingA
           : null;
 
       const payload = {
-        type: formData.alertType, // Backend normalizes type → alertType
+        alertType: formData.alertType,
         name: formData.name || generateAlertDescription(formData),
-        exchanges: formData.exchanges, // Backend normalizes exchanges → exchange
+        exchange: formData.exchanges?.[0] || 'binance',
         market: formData.market,
         notificationOptions: {
           ...formData.notificationOptions,
           ...(formData.alertType === 'complex' ? { alertForMode } : {}),
         },
         symbols: formData.alertType === 'complex' && alertForMode === 'all' 
-          ? [] // Empty array means "all tokens" - backend will use all available
-          : formData.symbols, // Array of symbols for whitelist
+          ? []
+          : formData.symbols,
         description: generateAlertDescription(formData),
       };
 
       if (formData.alertType === 'price') {
-        // Condition is auto-determined by backend based on initialPrice vs targetValue
-        // Don't send condition field - backend will determine it
+        payload.symbol = String(selectedSymbol || '').toUpperCase();
+        payload.symbols = [payload.symbol];
         payload.targetValue = parseFloat(formData.targetValue);
         if (clientCurrentPrice != null) {
           payload.currentPrice = clientCurrentPrice;
@@ -277,7 +277,12 @@ const CreateAlertModal = ({ isOpen, onClose, onSuccess, editingAlertId, editingA
         addToast(t('Alert updated'), 'success');
       } else {
         resultAlert = await createAlert(payload);
-        addToast(t('Alert created'), 'success');
+        const createdAlert = resultAlert?.alert ?? resultAlert;
+        if (resultAlert?.immediateTrigger && createdAlert?.alertType === 'price') {
+          addToast(t('Alert created and triggered immediately'), 'warning');
+        } else {
+          addToast(t('Alert created'), 'success');
+        }
       }
       
       if (onSuccess) {
@@ -493,7 +498,7 @@ const CreateAlertModal = ({ isOpen, onClose, onSuccess, editingAlertId, editingA
                     placeholder={t('e.g. 50000')}
                   />
                   <p className="text-xs text-textSecondary mt-1">
-                    {t('Alert fires when price reaches this value (above or below based on current price).')}
+                    {t('Flow: exchange → market → coin → target. Alert triggers on first hit since creation.')}
                   </p>
                 </div>
               </>

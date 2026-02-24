@@ -11,10 +11,238 @@ const telegramService = require('./telegramService');
 const { processPriceAlerts } = require('./priceAlertEngine');
 
 let alertEngineRunning = false;
+let alertEngineShuttingDown = false;
+let engineWorkerActive = false;
 let alertCheckInProgress = false;
 let fastPriceCheckInProgress = false;
 let fastPriceTimer = null;
+let complexCronTask = null;
+let leaseCoordinatorTimer = null;
+let leaseOpInProgress = false;
+
+const ENGINE_INSTANCE_ID = process.env.ALERT_ENGINE_INSTANCE_ID || `${process.pid}-${Math.random().toString(36).slice(2, 10)}`;
+const LEASE_TABLE = '"EngineLease"';
+const LEASE_NAME = process.env.ALERT_ENGINE_LEASE_NAME || 'price-alert-engine';
+const LEASE_TTL_MS = Math.max(5000, Number(process.env.ALERT_ENGINE_LEASE_TTL_MS || 15000));
+const LEASE_HEARTBEAT_MS = Math.max(1000, Number(process.env.ALERT_ENGINE_LEASE_HEARTBEAT_MS || Math.floor(LEASE_TTL_MS / 3)));
+const LEASE_RETRY_MS = Math.max(1000, Number(process.env.ALERT_ENGINE_LEASE_RETRY_MS || 2000));
+const LEASE_ENABLED = String(process.env.ALERT_ENGINE_SINGLE_WORKER || '').toLowerCase() === 'true' || process.env.NODE_ENV === 'production';
+
+let leaseOwner = false;
+
+const engineCounters = {
+  leaseClaimAttempt: 0,
+  leaseClaimSuccess: 0,
+  leaseClaimMiss: 0,
+  leaseRenewSuccess: 0,
+  leaseRenewFail: 0,
+  leaseRelease: 0,
+  evaluateRuns: 0,
+  evaluateSkippedReentry: 0,
+  priceRuns: 0,
+  priceSkippedReentry: 0,
+  triggersPrice: 0,
+  triggersComplex: 0,
+  transientErrors: 0,
+};
+
 const FAST_PRICE_ALERT_INTERVAL_MS = Math.max(150, Number(process.env.PRICE_ALERT_POLL_MS || 300));
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function logEngine(level, event, fields = {}) {
+  const payload = {
+    scope: 'alertEngine',
+    event,
+    level,
+    ts: nowIso(),
+    instanceId: ENGINE_INSTANCE_ID,
+    leaseEnabled: LEASE_ENABLED,
+    leaseOwner,
+    ...fields,
+  };
+  const line = JSON.stringify(payload);
+  if (level === 'error') {
+    console.error(line);
+    return;
+  }
+  if (level === 'warn') {
+    console.warn(line);
+    return;
+  }
+  console.log(line);
+}
+
+async function ensureLeaseTable() {
+  if (!LEASE_ENABLED) return;
+  await prisma.$executeRawUnsafe(
+    `CREATE TABLE IF NOT EXISTS ${LEASE_TABLE} (
+      "name" TEXT PRIMARY KEY,
+      "ownerId" TEXT NOT NULL,
+      "acquiredAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      "renewedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      "expiresAt" TIMESTAMPTZ NOT NULL,
+      "meta" JSONB
+    )`
+  );
+  await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "EngineLease_expiresAt_idx" ON ${LEASE_TABLE}("expiresAt")`);
+}
+
+async function claimLease() {
+  if (!LEASE_ENABLED) {
+    leaseOwner = true;
+    return true;
+  }
+
+  engineCounters.leaseClaimAttempt += 1;
+  const ttlSeconds = LEASE_TTL_MS / 1000;
+  const result = await prisma.$queryRawUnsafe(
+    `INSERT INTO ${LEASE_TABLE} ("name", "ownerId", "acquiredAt", "renewedAt", "expiresAt", "meta")
+     VALUES ($1, $2, NOW(), NOW(), NOW() + ($3 * INTERVAL '1 second'), $4::jsonb)
+     ON CONFLICT ("name") DO UPDATE
+       SET "ownerId" = EXCLUDED."ownerId",
+           "renewedAt" = NOW(),
+           "expiresAt" = NOW() + ($3 * INTERVAL '1 second'),
+           "meta" = EXCLUDED."meta"
+     WHERE ${LEASE_TABLE}."expiresAt" <= NOW() OR ${LEASE_TABLE}."ownerId" = EXCLUDED."ownerId"
+     RETURNING "ownerId", "expiresAt"`,
+    LEASE_NAME,
+    ENGINE_INSTANCE_ID,
+    ttlSeconds,
+    JSON.stringify({ pid: process.pid, host: process.env.HOSTNAME || null, at: nowIso() })
+  );
+
+  const acquired = Array.isArray(result) && result.length > 0 && result[0].ownerId === ENGINE_INSTANCE_ID;
+  leaseOwner = acquired;
+
+  if (acquired) {
+    engineCounters.leaseClaimSuccess += 1;
+    logEngine('info', 'lease.claim.success', { leaseName: LEASE_NAME, expiresAt: result[0].expiresAt });
+    return true;
+  }
+
+  engineCounters.leaseClaimMiss += 1;
+  logEngine('info', 'lease.claim.miss', { leaseName: LEASE_NAME });
+  return false;
+}
+
+async function renewLease() {
+  if (!LEASE_ENABLED) return true;
+  if (!leaseOwner) return false;
+
+  const ttlSeconds = LEASE_TTL_MS / 1000;
+  const result = await prisma.$queryRawUnsafe(
+    `UPDATE ${LEASE_TABLE}
+     SET "renewedAt" = NOW(),
+         "expiresAt" = NOW() + ($3 * INTERVAL '1 second'),
+         "meta" = $4::jsonb
+     WHERE "name" = $1
+       AND "ownerId" = $2
+       AND "expiresAt" > NOW()
+     RETURNING "expiresAt"`,
+    LEASE_NAME,
+    ENGINE_INSTANCE_ID,
+    ttlSeconds,
+    JSON.stringify({ pid: process.pid, host: process.env.HOSTNAME || null, at: nowIso() })
+  );
+
+  const renewed = Array.isArray(result) && result.length > 0;
+  if (renewed) {
+    engineCounters.leaseRenewSuccess += 1;
+    logEngine('info', 'lease.renew.success', { leaseName: LEASE_NAME, expiresAt: result[0].expiresAt });
+    return true;
+  }
+
+  engineCounters.leaseRenewFail += 1;
+  leaseOwner = false;
+  logEngine('warn', 'lease.renew.lost', { leaseName: LEASE_NAME });
+  return false;
+}
+
+async function releaseLease(reason = 'shutdown') {
+  if (!LEASE_ENABLED || !leaseOwner) return;
+  await prisma.$executeRawUnsafe(
+    `DELETE FROM ${LEASE_TABLE} WHERE "name" = $1 AND "ownerId" = $2`,
+    LEASE_NAME,
+    ENGINE_INSTANCE_ID
+  );
+  leaseOwner = false;
+  engineCounters.leaseRelease += 1;
+  logEngine('info', 'lease.release', { leaseName: LEASE_NAME, reason });
+}
+
+function startWorkerLoops() {
+  if (engineWorkerActive) return;
+  fastPriceTimer = setInterval(() => {
+    checkPriceAlertsFast();
+  }, FAST_PRICE_ALERT_INTERVAL_MS);
+  complexCronTask = cron.schedule('* * * * * *', () => checkAlerts());
+  checkPriceAlertsFast();
+  checkAlerts();
+  engineWorkerActive = true;
+  logEngine('info', 'worker.start', { fastIntervalMs: FAST_PRICE_ALERT_INTERVAL_MS });
+}
+
+function stopWorkerLoops(reason = 'manual') {
+  if (fastPriceTimer) {
+    clearInterval(fastPriceTimer);
+    fastPriceTimer = null;
+  }
+  if (complexCronTask) {
+    complexCronTask.stop();
+    complexCronTask = null;
+  }
+  if (engineWorkerActive) {
+    logEngine('info', 'worker.stop', { reason });
+  }
+  engineWorkerActive = false;
+}
+
+async function waitForInFlightChecks(maxWaitMs = 5000) {
+  const startedAt = Date.now();
+  while ((alertCheckInProgress || fastPriceCheckInProgress) && Date.now() - startedAt < maxWaitMs) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
+async function runLeaseCoordinatorTick(trigger) {
+  if (!alertEngineRunning || alertEngineShuttingDown || leaseOpInProgress) {
+    return;
+  }
+
+  leaseOpInProgress = true;
+  try {
+    if (!LEASE_ENABLED) {
+      if (!engineWorkerActive) startWorkerLoops();
+      return;
+    }
+
+    if (leaseOwner) {
+      const renewed = await renewLease();
+      if (!renewed) {
+        stopWorkerLoops('lease-lost');
+      }
+      return;
+    }
+
+    const claimed = await claimLease();
+    if (claimed) {
+      startWorkerLoops();
+    } else {
+      stopWorkerLoops('standby');
+    }
+  } catch (error) {
+    engineCounters.transientErrors += 1;
+    logEngine('error', 'lease.coordinator.error', {
+      trigger,
+      message: error?.message || String(error),
+    });
+  } finally {
+    leaseOpInProgress = false;
+  }
+}
 
 // Store initial prices for pct_change alerts (alertId -> initialPrice). Kept for backward compat.
 const initialPrices = new Map();
@@ -269,11 +497,17 @@ function parseTimeframeSeconds(timeframe) {
  * Complex: alertType === 'complex', % move over timeframe.
  */
 async function checkAlerts() {
-  if (alertCheckInProgress) {
-    console.warn('[alertEngine] Skipping tick: previous check is still running');
+  if (!alertEngineRunning || alertEngineShuttingDown || (LEASE_ENABLED && !leaseOwner)) {
     return;
   }
 
+  if (alertCheckInProgress) {
+    engineCounters.evaluateSkippedReentry += 1;
+    logEngine('warn', 'evaluate.skip.reentry');
+    return;
+  }
+
+  engineCounters.evaluateRuns += 1;
   alertCheckInProgress = true;
   try {
     // Fetch active alerts: price alerts must not be triggered (they self-delete), complex alerts can be triggered (keep monitoring)
@@ -303,6 +537,8 @@ async function checkAlerts() {
           }
         },
         onTriggered: async (alert, payload) => {
+          engineCounters.triggersPrice += 1;
+          logEngine('info', 'trigger.price', { alertId: alert.id, userId: alert.userId, symbol: payload?.symbol || payload?.coinSymbol || null });
           socketService.emitAlertTriggered(alert.userId, payload);
           await sendAlertToTelegram(alert.userId, payload);
         },
@@ -500,6 +736,7 @@ async function checkAlerts() {
                 },
               });
               markComplexTrigger(alert.id, resolvedSymbol, nowMs);
+              engineCounters.triggersComplex += 1;
               
               const payload = {
                 id: updatedAlert.id,
@@ -518,6 +755,14 @@ async function checkAlerts() {
               
               socketService.emitAlertTriggered(updatedAlert.userId, payload);
               await sendAlertToTelegram(updatedAlert.userId, payload);
+              logEngine('info', 'trigger.complex', {
+                alertId: updatedAlert.id,
+                userId: updatedAlert.userId,
+                symbol: resolvedSymbol,
+                spanPct: Number(spanPct.toFixed(4)),
+                threshold,
+                timeframeSec,
+              });
               console.log(
                 `⚡⚡⚡ Complex alert ${alert.id} TRIGGERED: ${resolvedSymbol} ` +
                 `span=${spanPct.toFixed(2)}% (threshold=${threshold}%) in ${timeframeSec}s. ` +
@@ -531,17 +776,24 @@ async function checkAlerts() {
       }
     }
   } catch (error) {
-    console.error('Error in alert engine:', error);
+    engineCounters.transientErrors += 1;
+    logEngine('error', 'evaluate.error', { message: error?.message || String(error) });
   } finally {
     alertCheckInProgress = false;
   }
 }
 
 async function checkPriceAlertsFast() {
-  if (fastPriceCheckInProgress) {
+  if (!alertEngineRunning || alertEngineShuttingDown || (LEASE_ENABLED && !leaseOwner)) {
     return;
   }
 
+  if (fastPriceCheckInProgress) {
+    engineCounters.priceSkippedReentry += 1;
+    return;
+  }
+
+  engineCounters.priceRuns += 1;
   fastPriceCheckInProgress = true;
   try {
     const priceAlerts = await prisma.alert.findMany({
@@ -565,6 +817,8 @@ async function checkPriceAlertsFast() {
           }
         },
         onTriggered: async (alert, payload) => {
+          engineCounters.triggersPrice += 1;
+          logEngine('info', 'trigger.price', { alertId: alert.id, userId: alert.userId, symbol: payload?.symbol || payload?.coinSymbol || null });
           socketService.emitAlertTriggered(alert.userId, payload);
           await sendAlertToTelegram(alert.userId, payload);
         },
@@ -572,35 +826,76 @@ async function checkPriceAlertsFast() {
       }
     );
   } catch (error) {
-    console.error('[alertEngine] Fast price check failed:', error.message);
+    engineCounters.transientErrors += 1;
+    logEngine('error', 'evaluate.fast.error', { message: error?.message || String(error) });
   } finally {
     fastPriceCheckInProgress = false;
   }
 }
 
-function startAlertEngine() {
+async function startAlertEngine() {
   if (alertEngineRunning) {
-    console.warn('Alert engine is already running');
+    logEngine('warn', 'engine.start.duplicate');
     return;
   }
-  console.log('Starting alert engine...');
-  fastPriceTimer = setInterval(() => {
-    checkPriceAlertsFast();
-  }, FAST_PRICE_ALERT_INTERVAL_MS);
-  checkPriceAlertsFast();
-  cron.schedule('* * * * * *', () => checkAlerts());
-  checkAlerts();
+
+  alertEngineShuttingDown = false;
   alertEngineRunning = true;
-  console.log(`Alert engine started (complex: 1s, price: ${FAST_PRICE_ALERT_INTERVAL_MS}ms)`);
+  logEngine('info', 'engine.starting', {
+    mode: LEASE_ENABLED ? 'lease-single-worker' : 'local-multi-worker',
+    leaseName: LEASE_NAME,
+    leaseTtlMs: LEASE_TTL_MS,
+    heartbeatMs: LEASE_HEARTBEAT_MS,
+    retryMs: LEASE_RETRY_MS,
+  });
+
+  try {
+    await ensureLeaseTable();
+    await runLeaseCoordinatorTick('startup');
+    const cadenceMs = LEASE_ENABLED ? Math.min(LEASE_HEARTBEAT_MS, LEASE_RETRY_MS) : LEASE_HEARTBEAT_MS;
+    leaseCoordinatorTimer = setInterval(() => {
+      runLeaseCoordinatorTick('interval');
+    }, cadenceMs);
+
+    logEngine('info', 'engine.started', {
+      mode: LEASE_ENABLED ? 'lease-single-worker' : 'local-multi-worker',
+      workerActive: engineWorkerActive,
+      counters: engineCounters,
+    });
+  } catch (error) {
+    engineCounters.transientErrors += 1;
+    alertEngineRunning = false;
+    stopWorkerLoops('startup-failure');
+    logEngine('error', 'engine.start.failed', { message: error?.message || String(error) });
+    throw error;
+  }
 }
 
-function stopAlertEngine() {
-  if (fastPriceTimer) {
-    clearInterval(fastPriceTimer);
-    fastPriceTimer = null;
+async function stopAlertEngine() {
+  if (!alertEngineRunning && !alertEngineShuttingDown) {
+    return;
   }
+
+  alertEngineShuttingDown = true;
+  if (leaseCoordinatorTimer) {
+    clearInterval(leaseCoordinatorTimer);
+    leaseCoordinatorTimer = null;
+  }
+
+  stopWorkerLoops('shutdown');
+  await waitForInFlightChecks(5000);
+
+  try {
+    await releaseLease('shutdown');
+  } catch (error) {
+    engineCounters.transientErrors += 1;
+    logEngine('error', 'lease.release.error', { message: error?.message || String(error) });
+  }
+
   alertEngineRunning = false;
-  console.log('Alert engine stopped');
+  alertEngineShuttingDown = false;
+  leaseOwner = false;
+  logEngine('info', 'engine.stopped', { counters: engineCounters });
 }
 
 module.exports = {

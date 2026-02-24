@@ -11,6 +11,7 @@ import { SOCKET_URL } from '../utils/constants';
  */
 export const useSocket = (options = {}) => {
   const socketRef = useRef(null);
+  const seenTriggeredEventsRef = useRef(new Set());
   const callbacksRef = useRef({
     onConnect: null,
     onDisconnect: null,
@@ -68,6 +69,20 @@ export const useSocket = (options = {}) => {
 
     // Listen for alert triggered events
     socket.on('alert-triggered', (alertData) => {
+      const alertId = alertData?.id || alertData?.alertId;
+      const triggeredAt = alertData?.triggeredAt ? new Date(alertData.triggeredAt).toISOString() : 'na';
+      const dedupeKey = `${alertId || 'unknown'}:${triggeredAt}`;
+
+      if (seenTriggeredEventsRef.current.has(dedupeKey)) {
+        return;
+      }
+      seenTriggeredEventsRef.current.add(dedupeKey);
+
+      if (seenTriggeredEventsRef.current.size > 500) {
+        const keys = Array.from(seenTriggeredEventsRef.current);
+        seenTriggeredEventsRef.current = new Set(keys.slice(-200));
+      }
+
       if (callbacksRef.current.onAlertTriggered) {
         callbacksRef.current.onAlertTriggered(alertData);
       }

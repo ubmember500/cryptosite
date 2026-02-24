@@ -34,7 +34,30 @@ function wait(ms) {
  */
 function normalizeSymbol(symbol) {
   if (typeof symbol !== 'string') return '';
-  return symbol.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const raw = symbol.trim().toUpperCase();
+  if (!raw) return '';
+
+  let normalized = raw
+    .replace(/\.P$/i, '')
+    .replace(/-PERP(ETUAL)?$/i, '')
+    .replace(/PERP$/i, '')
+    .replace(/-SWAP$/i, '')
+    .replace(/_PERP(ETUAL)?$/i, '')
+    .replace(/USDTM$/i, 'USDT');
+
+  if (normalized.includes('-') || normalized.includes('_') || normalized.includes('/')) {
+    const parts = normalized
+      .replace(/[_/]/g, '-')
+      .split('-')
+      .filter(Boolean);
+    if (parts.length >= 2 && (parts[1] === 'USDT' || parts[1] === 'USD')) {
+      normalized = `${parts[0]}${parts[1]}`;
+    } else {
+      normalized = parts.join('');
+    }
+  }
+
+  return normalized.replace(/[^A-Z0-9]/g, '');
 }
 
 /**
@@ -44,9 +67,11 @@ function normalizeSymbol(symbol) {
  * @param {'futures'|'spot'} exchangeType
  * @returns {Promise<Record<string, number>>} symbol -> lastPrice
  */
-async function getLastPricesBySymbols(symbols, exchangeType) {
+async function getLastPricesBySymbols(symbols, exchangeType, options = {}) {
+  const { strict = false } = options;
   const cacheKey = exchangeType === 'futures' ? 'futures' : 'spot';
   const now = Date.now();
+  const hasRequestedSymbols = Array.isArray(symbols) && symbols.length > 0;
   if (
     lastPricesCache[cacheKey].data &&
     lastPricesCache[cacheKey].timestamp &&
@@ -96,6 +121,12 @@ async function getLastPricesBySymbols(symbols, exchangeType) {
     return out;
   } catch (error) {
     console.warn(`[Gate.io getLastPricesBySymbols] ${exchangeType} failed:`, error.message);
+    if (strict && hasRequestedSymbols) {
+      const upstreamError = new Error(`Gate ${exchangeType} price feed unavailable: ${error.message}`);
+      upstreamError.statusCode = error?.statusCode || error?.response?.status || 503;
+      upstreamError.code = 'UPSTREAM_PRICE_UNAVAILABLE';
+      throw upstreamError;
+    }
     return {};
   }
 }

@@ -4,6 +4,7 @@ import { alertService } from '../services/alertService';
 export const useAlertStore = create((set, get) => ({
   alerts: [],
   history: [],
+  processedTriggerKeys: {},
   loading: false,
   error: null,
 
@@ -24,7 +25,7 @@ export const useAlertStore = create((set, get) => ({
       set({ loading: true, error: null });
       try {
         const data = await alertService.getHistory();
-        set({ history: data, loading: false });
+        set({ history: Array.isArray(data) ? data : [], loading: false });
       } catch (error) {
         set({ error: error.message, loading: false });
       }
@@ -33,12 +34,26 @@ export const useAlertStore = create((set, get) => ({
   createAlert: async (alertData) => {
     set({ loading: true, error: null });
     try {
-      const newAlert = await alertService.createAlert(alertData);
-      set((state) => ({
-        alerts: [newAlert, ...state.alerts],
-        loading: false,
-      }));
-      return newAlert;
+      const response = await alertService.createAlert(alertData);
+      const newAlert = response?.alert ?? response;
+
+      set((state) => {
+        const isPriceImmediateTrigger = response?.immediateTrigger && newAlert?.alertType === 'price';
+        if (isPriceImmediateTrigger) {
+          const nextHistory = [newAlert, ...state.history.filter((item) => item.id !== newAlert.id)];
+          return {
+            history: nextHistory,
+            alerts: state.alerts.filter((a) => a.id !== newAlert.id),
+            loading: false,
+          };
+        }
+
+        return {
+          alerts: [newAlert, ...state.alerts.filter((a) => a.id !== newAlert.id)],
+          loading: false,
+        };
+      });
+      return response;
     } catch (error) {
       set({ error: error.message, loading: false });
       throw error;
@@ -105,6 +120,53 @@ export const useAlertStore = create((set, get) => ({
           }
           return { alerts: [alertUpdate, ...state.alerts] };
       });
+  },
+
+  applyTriggeredEvent: (payload) => {
+    const alertId = payload?.id || payload?.alertId;
+    if (!alertId) return false;
+
+    const triggeredAtRaw = payload?.triggeredAt ? new Date(payload.triggeredAt).toISOString() : 'na';
+    const dedupeKey = `${alertId}:${triggeredAtRaw}`;
+    let applied = false;
+
+    set((state) => {
+      if (state.processedTriggerKeys[dedupeKey]) {
+        return state;
+      }
+
+      const baseAlert = state.alerts.find((a) => a.id === alertId) || state.history.find((a) => a.id === alertId) || {};
+      const mergedAlert = {
+        ...baseAlert,
+        ...payload,
+        id: alertId,
+        alertId,
+        triggered: true,
+        triggeredAt: payload?.triggeredAt || new Date().toISOString(),
+      };
+
+      const isPrice = (mergedAlert.alertType || '').toLowerCase() === 'price';
+      const nextAlerts = isPrice
+        ? state.alerts.filter((a) => a.id !== alertId)
+        : state.alerts.map((a) => (a.id === alertId ? { ...a, ...mergedAlert, isActive: true } : a));
+
+      const existingHistoryIndex = state.history.findIndex((item) => item.id === alertId);
+      const nextHistory = existingHistoryIndex >= 0
+        ? state.history.map((item) => (item.id === alertId ? { ...item, ...mergedAlert } : item))
+        : [mergedAlert, ...state.history];
+
+      applied = true;
+      return {
+        alerts: nextAlerts,
+        history: nextHistory,
+        processedTriggerKeys: {
+          ...state.processedTriggerKeys,
+          [dedupeKey]: true,
+        },
+      };
+    });
+
+    return applied;
   },
 
   // Remove alert from store (for auto-deleted price alerts)

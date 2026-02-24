@@ -92,7 +92,7 @@ const Alerts = () => {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-textPrimary">{t('Alerts')}</h1>
-          <p className="text-textSecondary mt-1">{t('Manage your cryptocurrency price alerts')}</p>
+          <p className="text-textSecondary mt-1">{t('Create alerts in order: exchange → market → coin → target. Triggers on first hit since creation.')}</p>
         </div>
         <div className="flex items-center gap-3">
           {selectedIds.length > 0 && (

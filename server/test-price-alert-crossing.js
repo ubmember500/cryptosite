@@ -1,30 +1,41 @@
-const {
-  hasTouchedTargetWithTolerance,
-  hasCrossedTargetWithTolerance,
-  hasReachedTargetFromPrevious,
-} = require('./src/services/priceAlertTrigger');
+const { __test__ } = require('./src/services/priceAlertEngine');
 
-function assertCase(name, actual, expected) {
+const results = {
+  passed: 0,
+  failed: 0,
+};
+
+function assertCase(id, name, actual, expected) {
   if (actual !== expected) {
-    throw new Error(`[FAIL] ${name}: expected ${expected}, got ${actual}`);
+    results.failed += 1;
+    console.error(`[FAIL] ${id} ${name}: expected ${expected}, got ${actual}`);
+    return;
   }
-  console.log(`[PASS] ${name}`);
+  results.passed += 1;
+  console.log(`[PASS] ${id} ${name}`);
 }
 
 function run() {
-  assertCase('touch exact target', hasTouchedTargetWithTolerance(1000, 1000), true);
-  assertCase('cross up (99 -> 106, target 105)', hasCrossedTargetWithTolerance(99, 106, 105), true);
-  assertCase('cross down (99 -> 89, target 90)', hasCrossedTargetWithTolerance(99, 89, 90), true);
-  assertCase('no cross same side (99 -> 104, target 105)', hasCrossedTargetWithTolerance(99, 104, 105), false);
-  assertCase('no cross same side down (99 -> 95, target 90)', hasCrossedTargetWithTolerance(99, 95, 90), false);
+  assertCase('CROSS-01', 'up-cross pre-step does not trigger (99 < 105)', __test__.shouldTriggerAtCurrentPrice(99, 105, 'above'), false);
+  assertCase('CROSS-02', 'up-cross triggers at target (105 >= 105)', __test__.shouldTriggerAtCurrentPrice(105, 105, 'above'), true);
+  assertCase('CROSS-03', 'up-cross triggers above target (106 >= 105)', __test__.shouldTriggerAtCurrentPrice(106, 105, 'above'), true);
+  assertCase('CROSS-04', 'down-cross pre-step does not trigger (99 > 90)', __test__.shouldTriggerAtCurrentPrice(99, 90, 'below'), false);
+  assertCase('CROSS-05', 'down-cross triggers at target (90 <= 90)', __test__.shouldTriggerAtCurrentPrice(90, 90, 'below'), true);
+  assertCase('CROSS-06', 'down-cross triggers below target (89 <= 90)', __test__.shouldTriggerAtCurrentPrice(89, 90, 'below'), true);
 
-  assertCase('reaches target from below after creation (0.69 -> 0.70)', hasReachedTargetFromPrevious(0.69, 0.7, 0.7), true);
-  assertCase('reaches target from above after creation (0.71 -> 0.70)', hasReachedTargetFromPrevious(0.71, 0.7, 0.7), true);
-  assertCase('does not trigger while staying below (0.69 -> 0.695)', hasReachedTargetFromPrevious(0.69, 0.695, 0.7), false);
-  assertCase('does not trigger while staying above (0.71 -> 0.705)', hasReachedTargetFromPrevious(0.71, 0.705, 0.7), false);
-  assertCase('does not trigger if already at target previously (0.70 -> 0.705)', hasReachedTargetFromPrevious(0.7, 0.705, 0.7), false);
+  assertCase('CROSS-07', 'equal-at-create keeps explicit above condition', __test__.resolveCondition({ initialPrice: 100, condition: 'above' }, 100), 'above');
+  assertCase('CROSS-08', 'equal-at-create keeps explicit below condition', __test__.resolveCondition({ initialPrice: 100, condition: 'below' }, 100), 'below');
+  assertCase('CROSS-09', 'initial above target derives below condition', __test__.resolveCondition({ initialPrice: 101, condition: 'above' }, 100), 'below');
+  assertCase('CROSS-10', 'initial below target derives above condition', __test__.resolveCondition({ initialPrice: 99, condition: 'below' }, 100), 'above');
+  assertCase('CROSS-11', 'invalid target does not trigger', __test__.shouldTriggerAtCurrentPrice(100, 0, 'above'), false);
 
-  console.log('\nAll price crossing checks passed.');
+  console.log(`\nSummary: passed=${results.passed}, failed=${results.failed}`);
+  if (results.failed > 0) {
+    process.exitCode = 1;
+    throw new Error('Price crossing regression checks failed');
+  }
+
+  console.log('All price crossing regression checks passed.');
 }
 
 run();

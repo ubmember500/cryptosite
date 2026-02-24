@@ -128,6 +128,30 @@ The Telegram notification bot is **not** created by the app; it is created once 
 - **Agent Tasks**: `AGENT_TASKS.md` - Step-by-step instructions for each agent
 - **Architecture**: `ARCHITECTURE_OVERVIEW.md` - System design and API reference
 - **Chart Deploy Troubleshooting**: `docs/CHART-DEPLOYMENT-TROUBLESHOOTING.md` - Smoke checks and fixes when charts fail after deploy
+- **Alert Regression QA**: `docs/ALERT-REGRESSION-QA.md` - Regression scenarios, command map, and pass/fail rules
+- **Alert Staging Checklist**: `docs/ALERT-STAGING-CHECKLIST.md` - Ops-ready staging verification checklist
+- **Alert QA Report (2026-02-24)**: `docs/ALERT-QA-REPORT-2026-02-24.md` - Latest alert regression execution report
+
+## ✅ Alert Regression Commands
+
+Run from repository root:
+
+```bash
+node server/test-price-alert-crossing.js
+node server/test-price-resolver-live.js --mode=regression
+node server/test-price-alert-live-sim.js --mode=regression
+```
+
+Expected outcomes:
+- PASS lines for each scenario in each script output
+- Final regression summary shows `failed=0`
+
+Optional live probing commands (staging/runtime validation):
+
+```bash
+node server/test-price-resolver-live.js bybit futures BTCUSDT 8 1000
+node server/test-price-alert-live-sim.js --mode=live bybit futures BTCUSDT
+```
 
 ## 📅 Futures Listings Feed
 
