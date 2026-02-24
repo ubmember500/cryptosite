@@ -8,10 +8,7 @@ const mexcService = require('./mexcService');
 const bitgetService = require('./bitgetService');
 const socketService = require('./socketService');
 const telegramService = require('./telegramService');
-const {
-  hasCrossedTargetWithTolerance,
-  hasReachedTargetWithCondition,
-} = require('./priceAlertTrigger');
+const { processPriceAlerts } = require('./priceAlertEngine');
 
 let alertEngineRunning = false;
 let alertCheckInProgress = false;
@@ -38,16 +35,6 @@ const complexPriceHistory = {
   bitget: { futures: new Map(), spot: new Map() },
 };
 const complexLastTrigger = new Map(); // alertId -> Map(symbol -> ts)
-const priceAlertLastObserved = new Map(); // alertId -> last observed currentPrice
-const priceAlertsInFlight = new Set(); // alertId currently being processed
-
-function prunePriceAlertRuntimeState(activePriceAlertIds) {
-  for (const alertId of Array.from(priceAlertLastObserved.keys())) {
-    if (!activePriceAlertIds.has(alertId)) {
-      priceAlertLastObserved.delete(alertId);
-    }
-  }
-}
 
 function getExchangeKey(exchange) {
   const ex = (exchange || 'binance').toLowerCase();
@@ -273,139 +260,6 @@ function parseTimeframeSeconds(timeframe) {
   return TIMEFRAME_TO_SECONDS[timeframe] ?? 60;
 }
 
-function normalizeSymbolForExchange(exchange, symbol) {
-  const raw = String(symbol || '').trim();
-  if (!raw) return '';
-
-  const key = String(exchange || '').toLowerCase();
-  const normalize =
-    key === 'bybit'
-      ? bybitService.normalizeSymbol
-      : key === 'okx'
-        ? okxService.normalizeSymbol
-        : key === 'gate'
-          ? gateService.normalizeSymbol
-          : key === 'mexc'
-            ? mexcService.normalizeSymbol
-            : key === 'bitget'
-              ? bitgetService.normalizeSymbol
-              : binanceService.normalizeSymbol;
-
-  try {
-    const normalized = normalize(raw);
-    return typeof normalized === 'string' ? normalized : '';
-  } catch {
-    return raw.toUpperCase().replace(/[^A-Z0-9.]/g, '');
-  }
-}
-
-async function fetchCurrentPriceByExchangeSymbol(exchange, symbol, exchangeType) {
-  const key = String(exchange || '').toLowerCase();
-  const normalizedSymbol = normalizeSymbolForExchange(key, symbol);
-  if (!normalizedSymbol) return null;
-
-  const getPrices =
-    key === 'bybit'
-      ? () => bybitService.getLastPricesBySymbols([normalizedSymbol], exchangeType, { strict: true, exchangeOnly: true })
-      : key === 'okx'
-        ? () => okxService.getLastPricesBySymbols([normalizedSymbol], exchangeType)
-        : key === 'gate'
-          ? () => gateService.getLastPricesBySymbols([normalizedSymbol], exchangeType)
-          : key === 'mexc'
-            ? () => mexcService.getLastPricesBySymbols([normalizedSymbol], exchangeType)
-            : key === 'bitget'
-              ? () => bitgetService.getLastPricesBySymbols([normalizedSymbol], exchangeType)
-              : () => binanceService.getLastPricesBySymbols([normalizedSymbol], exchangeType, { strict: true, exchangeOnly: true });
-
-  try {
-    const priceMap = await getPrices();
-    const raw = resolvePriceForPriceAlert(priceMap || {}, normalizedSymbol, exchangeType);
-    const price = Number(raw);
-    return Number.isFinite(price) && price > 0 ? price : null;
-  } catch {
-    return null;
-  }
-}
-
-async function fetchFreshPricesForKey(exchange, exchangeType, symbols) {
-  const key = String(exchange || '').toLowerCase();
-  if (!Array.isArray(symbols) || symbols.length === 0) {
-    return {};
-  }
-
-  if (symbols.length > 30) {
-    console.warn(`[alertEngine] Skipping fresh per-symbol prices for ${key}/${exchangeType}: too many symbols (${symbols.length})`);
-    return {};
-  }
-
-  const freshMap = {};
-  await Promise.all(
-    symbols.map(async (symbol) => {
-      try {
-        const price = await fetchCurrentPriceByExchangeSymbol(key, symbol, exchangeType);
-        if (!Number.isFinite(price) || price <= 0) return;
-        freshMap[symbol] = price;
-        freshMap[String(symbol).toUpperCase()] = price;
-      } catch (error) {
-        console.warn(`[alertEngine] Fresh price fetch failed for ${key} ${symbol}:`, error.message);
-      }
-    })
-  );
-
-  return freshMap;
-}
-
-function resolvePriceForPriceAlert(priceMap, symbol, market) {
-  if (!priceMap || typeof priceMap !== 'object') return null;
-  const raw = String(symbol || '').trim();
-  if (!raw) return null;
-
-  const candidates = new Set();
-  candidates.add(raw);
-  candidates.add(raw.toUpperCase());
-
-  const compact = raw.toUpperCase().replace(/[^A-Z0-9.]/g, '');
-  if (compact) candidates.add(compact);
-
-  const compactNoPerp = compact.replace(/\.P$/i, '');
-  if (compactNoPerp) {
-    candidates.add(compactNoPerp);
-    if (!/(USDT|USD)$/i.test(compactNoPerp)) {
-      candidates.add(`${compactNoPerp}USDT`);
-      candidates.add(`${compactNoPerp}USD`);
-    }
-  }
-
-  if (market === 'futures') {
-    for (const c of Array.from(candidates)) {
-      if (c.endsWith('USDT') && !c.endsWith('.P')) candidates.add(`${c}.P`);
-      if (c.endsWith('USD') && !c.endsWith('.P')) candidates.add(`${c}.P`);
-      if (c.endsWith('.P')) candidates.add(c.slice(0, -2));
-    }
-  }
-
-  const entries = Object.entries(priceMap);
-  const byUpper = new Map(entries.map(([k, v]) => [String(k).toUpperCase(), v]));
-
-  for (const c of candidates) {
-    if (Object.prototype.hasOwnProperty.call(priceMap, c)) return priceMap[c];
-    const upperHit = byUpper.get(String(c).toUpperCase());
-    if (upperHit != null) return upperHit;
-  }
-
-  return null;
-}
-
-function resolvePriceAlertCondition(alert, targetValue) {
-  const initialPrice = alert?.initialPrice != null ? Number(alert.initialPrice) : null;
-  if (Number.isFinite(initialPrice) && initialPrice > 0 && Number.isFinite(targetValue)) {
-    if (initialPrice > targetValue) return 'below';
-    if (initialPrice < targetValue) return 'above';
-  }
-
-  return String(alert?.condition || '').toLowerCase() === 'below' ? 'below' : 'above';
-}
-
 /**
  * Check and trigger alerts. Uses Binance for price and complex alerts.
  * Price: alertType === 'price', first symbol vs targetValue.
@@ -433,206 +287,24 @@ async function checkAlerts() {
     if (activeAlerts.length === 0) return;
 
     // ---- Price alerts ----
-    const priceAlerts = activeAlerts.filter((a) => {
-      if (a.alertType !== 'price') return false;
-      const syms = parseSymbols(a.symbols);
-      return syms.length > 0;
+    const priceAlerts = activeAlerts.filter((alert) => {
+      if (alert.alertType !== 'price') return false;
+      return parseSymbols(alert.symbols).length > 0;
     });
 
-    const activePriceAlertIds = new Set(priceAlerts.map((a) => a.id));
-    prunePriceAlertRuntimeState(activePriceAlertIds);
-
     if (priceAlerts.length > 0) {
-      // Group by (exchange, market) so we fetch from the correct exchange
-      const byExchangeMarket = new Map(); // key: 'exchange|market'
-      for (const a of priceAlerts) {
-        const ex = (a.exchange || 'binance').toLowerCase();
-        const market = (a.market || 'futures').toLowerCase();
-        const key = `${ex}|${market}`;
-        if (!byExchangeMarket.has(key)) byExchangeMarket.set(key, []);
-        byExchangeMarket.get(key).push(a);
-      }
-
-      const priceMapByKey = {};
-      for (const [key, alerts] of byExchangeMarket) {
-        const [exchange, market] = key.split('|');
-        const symbols = [
-          ...new Set(
-            alerts
-              .flatMap((a) => parseSymbols(a.symbols))
-              .map((s) => normalizeSymbolForExchange(exchange, s))
-              .filter(Boolean)
-          ),
-        ];
-        const exchangeType = market === 'spot' ? 'spot' : 'futures';
-        const getPrices =
-          exchange === 'bybit'
-            ? () => bybitService.getLastPricesBySymbols(symbols, exchangeType, { strict: false, exchangeOnly: true })
-            : exchange === 'okx'
-              ? () => okxService.getLastPricesBySymbols(symbols, exchangeType)
-              : exchange === 'gate'
-                ? () => gateService.getLastPricesBySymbols(symbols, exchangeType)
-                : exchange === 'mexc'
-                  ? () => mexcService.getLastPricesBySymbols(symbols, exchangeType)
-                  : exchange === 'bitget'
-                    ? () => bitgetService.getLastPricesBySymbols(symbols, exchangeType)
-                    : () => binanceService.getLastPricesBySymbols(symbols, exchangeType, { strict: false, exchangeOnly: true });
-        try {
-          const [bulkResult, freshResult] = await Promise.allSettled([
-            getPrices(),
-            fetchFreshPricesForKey(exchange, exchangeType, symbols),
-          ]);
-
-          const bulkPriceMap = bulkResult.status === 'fulfilled' ? (bulkResult.value || {}) : {};
-          const freshPriceMap = freshResult.status === 'fulfilled' ? (freshResult.value || {}) : {};
-
-          if (bulkResult.status === 'rejected') {
-            console.warn(`[alertEngine] Bulk price fetch failed for ${key}:`, bulkResult.reason?.message || bulkResult.reason);
+      await processPriceAlerts(priceAlerts, {
+        onDeleted: async (alert) => {
+          if (alert.condition === 'pct_change') {
+            clearInitialPrice(alert.id);
           }
-          if (freshResult.status === 'rejected') {
-            console.warn(`[alertEngine] Fresh price fetch failed for ${key}:`, freshResult.reason?.message || freshResult.reason);
-          }
-
-          priceMapByKey[key] = {
-            ...(bulkPriceMap || {}),
-            ...(freshPriceMap || {}),
-          };
-        } catch (err) {
-          console.warn(`[alertEngine] Failed to fetch prices for ${key}:`, err.message);
-          priceMapByKey[key] = {};
-        }
-      }
-
-      const skippedMissing = new Set();
-
-      for (const alert of priceAlerts) {
-        if (priceAlertsInFlight.has(alert.id)) {
-          continue;
-        }
-        priceAlertsInFlight.add(alert.id);
-
-        try {
-        const syms = parseSymbols(alert.symbols);
-        const ex = (alert.exchange || 'binance').toLowerCase();
-        const market = (alert.market || 'futures').toLowerCase();
-        const firstSymbol = normalizeSymbolForExchange(ex, syms[0]);
-        if (!firstSymbol) {
-          console.warn(`[alertEngine] Alert ${alert.id} has invalid symbol, skipping`);
-          continue;
-        }
-        const key = `${ex}|${market}`;
-        const priceMap = priceMapByKey[key] || {};
-        const currentPriceRaw = resolvePriceForPriceAlert(priceMap, firstSymbol, market);
-        const currentPrice = Number(currentPriceRaw);
-        if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
-          if (!skippedMissing.has(alert.id)) {
-            console.warn(`Price not available for ${firstSymbol}, skipping alert ${alert.id}`);
-            skippedMissing.add(alert.id);
-          }
-          continue;
-        }
-
-        const targetValue = Number(alert.targetValue);
-        if (!Number.isFinite(targetValue)) continue;
-
-        if (!Number.isFinite(currentPrice) || !Number.isFinite(targetValue)) {
-          continue;
-        }
-
-        const initialPrice = alert.initialPrice != null ? Number(alert.initialPrice) : null;
-        const hasValidInitialPrice = Number.isFinite(initialPrice) && initialPrice > 0;
-        const previousObserved = priceAlertLastObserved.get(alert.id);
-        const previousPrice = Number.isFinite(previousObserved)
-          ? Number(previousObserved)
-          : (hasValidInitialPrice ? initialPrice : null);
-
-        if (!Number.isFinite(previousPrice)) {
-          // No reliable baseline yet (legacy alert without initialPrice): seed now and wait
-          // for the next observed movement.
-          priceAlertLastObserved.set(alert.id, currentPrice);
-          continue;
-        }
-
-        const resolvedCondition = resolvePriceAlertCondition(alert, targetValue);
-        const crossedTarget = hasCrossedTargetWithTolerance(previousPrice, currentPrice, targetValue);
-        const shouldTrigger = hasReachedTargetWithCondition(previousPrice, currentPrice, targetValue, resolvedCondition);
-
-        if (shouldTrigger) {
-          if (crossedTarget && Number.isFinite(previousPrice)) {
-            console.log(
-              `[Alert ${alert.id}] Price crossed target (${resolvedCondition}): ${previousPrice} -> ${currentPrice} (target: ${targetValue})`
-            );
-          } else {
-            console.log(
-              `[Alert ${alert.id}] Price touched target (${resolvedCondition}): ${currentPrice} (target: ${targetValue})`
-            );
-          }
-        }
-        // pct_change could be added later using initialPrices or klines
-
-        if (!shouldTrigger) {
-          priceAlertLastObserved.set(alert.id, currentPrice);
-          continue;
-        }
-
-        priceAlertLastObserved.delete(alert.id);
-
-        // For price alerts: DELETE from database when triggered (self-delete)
-        // Store alert data before deletion for socket payload
-        const alertDataBeforeDelete = {
-          id: alert.id,
-          name: alert.name,
-          description: alert.description ?? null,
-          triggered: true,
-          triggeredAt: new Date(),
-          currentPrice,
-          targetValue: alert.targetValue,
-          condition: resolvedCondition,
-          coinSymbol: alert.coinSymbol ?? firstSymbol.replace(/USDT$/i, ''),
-          symbol: firstSymbol,
-          alertType: 'price',
-          ...(alert.initialPrice != null && Number.isFinite(alert.initialPrice)
-            ? { initialPrice: alert.initialPrice }
-            : {}),
-        };
-
-        // Delete the alert from database
-        let deleted = false;
-        try {
-          await prisma.alert.delete({
-            where: { id: alert.id },
-          });
-          deleted = true;
-        } catch (error) {
-          const prismaCode = error?.code;
-          if (prismaCode === 'P2025') {
-            console.warn(`[alertEngine] Price alert ${alert.id} already deleted, skipping emit`);
-          } else {
-            throw error;
-          }
-        }
-
-        if (!deleted) {
-          continue;
-        }
-
-        if (alert.condition === 'pct_change') {
-          clearInitialPrice(alert.id);
-        }
-
-        const payload = {
-          id: alertDataBeforeDelete.id,
-          alertId: alertDataBeforeDelete.id,
-          ...alertDataBeforeDelete,
-        };
-
-        socketService.emitAlertTriggered(alert.userId, payload);
-        await sendAlertToTelegram(alert.userId, payload);
-        console.log(`Price alert ${alert.id} triggered and deleted for user ${alert.userId}`);
-        } finally {
-          priceAlertsInFlight.delete(alert.id);
-        }
-      }
+        },
+        onTriggered: async (alert, payload) => {
+          socketService.emitAlertTriggered(alert.userId, payload);
+          await sendAlertToTelegram(alert.userId, payload);
+        },
+        logger: console,
+      });
     }
 
     // ---- Complex alerts: sharp movement in user timeframe ----
