@@ -21,7 +21,7 @@ const loginSchema = z.object({
  * Create alert validation schema
  * Supports both price and complex alerts
  */
-const createAlertSchema = z.object({
+const alertBaseSchema = z.object({
   alertType: z.enum(['price', 'complex']).default('price'),
   name: z.string().optional(),
   exchange: z.string().optional(),
@@ -48,7 +48,9 @@ const createAlertSchema = z.object({
   targetValue: z.number().optional(),
   currentPrice: z.number().optional(),
   description: z.string().optional(),
-}).superRefine((data, ctx) => {
+});
+
+const createAlertSchema = alertBaseSchema.superRefine((data, ctx) => {
   if (data.alertType !== 'price') return;
 
   const hasExchange = typeof data.exchange === 'string' && data.exchange.trim() !== '';
@@ -81,7 +83,7 @@ const createAlertSchema = z.object({
 /**
  * Update alert validation schema (partial)
  */
-const updateAlertSchema = createAlertSchema.partial();
+const updateAlertSchema = alertBaseSchema.partial();
 
 module.exports = {
   registerSchema,
