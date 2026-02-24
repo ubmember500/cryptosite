@@ -267,41 +267,50 @@ async function createAlert(req, res, next) {
           });
         }
 
-        try {
-          const getPrices =
-            exchange === 'bybit'
-              ? () => bybitService.getLastPricesBySymbols([normalizedSymbol], exchangeType, { strict: true })
-              : exchange === 'okx'
-                ? () => okxService.getLastPricesBySymbols([normalizedSymbol], exchangeType, { strict: true })
-                : exchange === 'gate'
-                  ? () => gateService.getLastPricesBySymbols([normalizedSymbol], exchangeType, { strict: true })
-                  : exchange === 'mexc'
-                    ? () => mexcService.getLastPricesBySymbols([normalizedSymbol], exchangeType, { strict: true })
-                    : exchange === 'bitget'
-                      ? () => bitgetService.getLastPricesBySymbols([normalizedSymbol], exchangeType, { strict: true })
-                      : () => binanceService.getLastPricesBySymbols([normalizedSymbol], exchangeType, { strict: true });
-          const prices = await getPrices();
+        if (Number.isFinite(clientProvidedInitialPrice) && clientProvidedInitialPrice > 0) {
+          initialPrice = clientProvidedInitialPrice;
+          console.log('[createAlert] Initial price resolved from client market snapshot:', {
+            exchange,
+            symbol: normalizedSymbol,
+            market,
+            initialPrice,
+          });
+        } else {
+          try {
+            const getPrices =
+              exchange === 'bybit'
+                ? () => bybitService.getLastPricesBySymbols([normalizedSymbol], exchangeType, { strict: true })
+                : exchange === 'okx'
+                  ? () => okxService.getLastPricesBySymbols([normalizedSymbol], exchangeType, { strict: true })
+                  : exchange === 'gate'
+                    ? () => gateService.getLastPricesBySymbols([normalizedSymbol], exchangeType, { strict: true })
+                    : exchange === 'mexc'
+                      ? () => mexcService.getLastPricesBySymbols([normalizedSymbol], exchangeType, { strict: true })
+                      : exchange === 'bitget'
+                        ? () => bitgetService.getLastPricesBySymbols([normalizedSymbol], exchangeType, { strict: true })
+                        : () => binanceService.getLastPricesBySymbols([normalizedSymbol], exchangeType, { strict: true });
+            const prices = await getPrices();
 
-          const p = prices[normalizedSymbol];
-          if (p != null && Number.isFinite(p) && p > 0) {
-            initialPrice = p;
-            console.log('[createAlert] Initial price fetched:', {
-              exchange,
-              originalSymbol: firstSymbolRaw,
-              normalizedSymbol,
-              initialPrice,
-            });
-          } else {
-            return res.status(400).json({
-              error: 'Could not fetch current price for symbol. Symbol may not exist or may not be trading.',
-              details: {
-                symbol: firstSymbolRaw,
+            const p = prices[normalizedSymbol];
+            if (p != null && Number.isFinite(p) && p > 0) {
+              initialPrice = p;
+              console.log('[createAlert] Initial price fetched from exchange:', {
+                exchange,
+                originalSymbol: firstSymbolRaw,
                 normalizedSymbol,
-                availableSymbolsCount: Object.keys(prices).length,
-              },
-            });
-          }
-        } catch (err) {
+                initialPrice,
+              });
+            } else {
+              return res.status(400).json({
+                error: 'Could not fetch current price for symbol. Symbol may not exist or may not be trading.',
+                details: {
+                  symbol: firstSymbolRaw,
+                  normalizedSymbol,
+                  availableSymbolsCount: Object.keys(prices).length,
+                },
+              });
+            }
+          } catch (err) {
           console.error(`[createAlert] ${exchange} API error when fetching initial price:`, {
             error: err.message,
             code: err.code,
@@ -310,46 +319,58 @@ async function createAlert(req, res, next) {
             market,
           });
 
-          const isUpstreamUnavailable =
-            err?.code === 'UPSTREAM_PRICE_UNAVAILABLE' ||
-            ['ECONNRESET', 'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'ETIMEDOUT', 'ECONNABORTED'].includes(String(err?.code || '').toUpperCase()) ||
-            [403, 429, 451, 502, 503, 504].includes(err?.statusCode || err?.response?.status);
+            const isUpstreamUnavailable =
+              err?.code === 'UPSTREAM_PRICE_UNAVAILABLE' ||
+              ['ECONNRESET', 'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'ETIMEDOUT', 'ECONNABORTED'].includes(String(err?.code || '').toUpperCase()) ||
+              [403, 429, 451, 502, 503, 504].includes(err?.statusCode || err?.response?.status);
 
-          if (isUpstreamUnavailable) {
-            if (exchange === 'binance' || exchange === 'bybit') {
-              const snapshotFallback = await fetchExchangeTokenSnapshotPrice({
-                exchange,
-                symbol: normalizedSymbol,
-                market,
-              });
-
-              if (snapshotFallback?.price != null && Number.isFinite(snapshotFallback.price) && snapshotFallback.price > 0) {
-                initialPrice = snapshotFallback.price;
-                console.log('[createAlert] Initial price resolved via exchange token snapshot fallback:', {
+            if (isUpstreamUnavailable) {
+              if (exchange === 'binance' || exchange === 'bybit') {
+                const snapshotFallback = await fetchExchangeTokenSnapshotPrice({
                   exchange,
                   symbol: normalizedSymbol,
                   market,
-                  initialPrice,
                 });
+
+                if (snapshotFallback?.price != null && Number.isFinite(snapshotFallback.price) && snapshotFallback.price > 0) {
+                  initialPrice = snapshotFallback.price;
+                  console.log('[createAlert] Initial price resolved via exchange token snapshot fallback:', {
+                    exchange,
+                    symbol: normalizedSymbol,
+                    market,
+                    initialPrice,
+                  });
+                }
+
+                if ((initialPrice == null || !Number.isFinite(initialPrice) || initialPrice <= 0) && Number.isFinite(clientProvidedInitialPrice) && clientProvidedInitialPrice > 0) {
+                  initialPrice = clientProvidedInitialPrice;
+                  console.log('[createAlert] Initial price resolved via client snapshot fallback:', {
+                    exchange,
+                    symbol: normalizedSymbol,
+                    market,
+                    initialPrice,
+                  });
+                }
+
               }
 
-              if ((initialPrice == null || !Number.isFinite(initialPrice) || initialPrice <= 0) && Number.isFinite(clientProvidedInitialPrice) && clientProvidedInitialPrice > 0) {
-                initialPrice = clientProvidedInitialPrice;
-                console.log('[createAlert] Initial price resolved via client snapshot fallback:', {
-                  exchange,
-                  symbol: normalizedSymbol,
-                  market,
-                  initialPrice,
+              if (initialPrice != null && Number.isFinite(initialPrice) && initialPrice > 0) {
+                // Continue create flow using fallback snapshot price.
+              } else {
+                return res.status(503).json({
+                  error: `Failed to fetch current price from ${exchange}. Exchange upstream is temporarily unavailable from server environment. Please try again later or switch exchange.`,
+                  details: {
+                    exchange,
+                    symbol: firstSymbolRaw,
+                    normalizedSymbol,
+                    market,
+                    error: err.message,
+                  },
                 });
               }
-
-            }
-
-            if (initialPrice != null && Number.isFinite(initialPrice) && initialPrice > 0) {
-              // Continue create flow using fallback snapshot price.
             } else {
               return res.status(503).json({
-                error: `Failed to fetch current price from ${exchange}. Exchange upstream is temporarily unavailable from server environment. Please try again later or switch exchange.`,
+                error: 'Failed to fetch current price from exchange. Please try again later.',
                 details: {
                   exchange,
                   symbol: firstSymbolRaw,
@@ -359,17 +380,6 @@ async function createAlert(req, res, next) {
                 },
               });
             }
-          } else {
-            return res.status(503).json({
-              error: 'Failed to fetch current price from exchange. Please try again later.',
-              details: {
-                exchange,
-                symbol: firstSymbolRaw,
-                normalizedSymbol,
-                market,
-                error: err.message,
-              },
-            });
           }
         }
       } else {

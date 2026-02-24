@@ -12,6 +12,9 @@ const { processPriceAlerts } = require('./priceAlertEngine');
 
 let alertEngineRunning = false;
 let alertCheckInProgress = false;
+let fastPriceCheckInProgress = false;
+let fastPriceTimer = null;
+const FAST_PRICE_ALERT_INTERVAL_MS = Math.max(150, Number(process.env.PRICE_ALERT_POLL_MS || 300));
 
 // Store initial prices for pct_change alerts (alertId -> initialPrice). Kept for backward compat.
 const initialPrices = new Map();
@@ -292,7 +295,7 @@ async function checkAlerts() {
       return parseSymbols(alert.symbols).length > 0;
     });
 
-    if (priceAlerts.length > 0) {
+    if (priceAlerts.length > 0 && !fastPriceTimer) {
       await processPriceAlerts(priceAlerts, {
         onDeleted: async (alert) => {
           if (alert.condition === 'pct_change') {
@@ -534,19 +537,68 @@ async function checkAlerts() {
   }
 }
 
+async function checkPriceAlertsFast() {
+  if (fastPriceCheckInProgress) {
+    return;
+  }
+
+  fastPriceCheckInProgress = true;
+  try {
+    const priceAlerts = await prisma.alert.findMany({
+      where: {
+        isActive: true,
+        triggered: false,
+        alertType: 'price',
+      },
+    });
+
+    if (!Array.isArray(priceAlerts) || priceAlerts.length === 0) {
+      return;
+    }
+
+    await processPriceAlerts(
+      priceAlerts.filter((alert) => parseSymbols(alert.symbols).length > 0),
+      {
+        onDeleted: async (alert) => {
+          if (alert.condition === 'pct_change') {
+            clearInitialPrice(alert.id);
+          }
+        },
+        onTriggered: async (alert, payload) => {
+          socketService.emitAlertTriggered(alert.userId, payload);
+          await sendAlertToTelegram(alert.userId, payload);
+        },
+        logger: console,
+      }
+    );
+  } catch (error) {
+    console.error('[alertEngine] Fast price check failed:', error.message);
+  } finally {
+    fastPriceCheckInProgress = false;
+  }
+}
+
 function startAlertEngine() {
   if (alertEngineRunning) {
     console.warn('Alert engine is already running');
     return;
   }
   console.log('Starting alert engine...');
+  fastPriceTimer = setInterval(() => {
+    checkPriceAlertsFast();
+  }, FAST_PRICE_ALERT_INTERVAL_MS);
+  checkPriceAlertsFast();
   cron.schedule('* * * * * *', () => checkAlerts());
   checkAlerts();
   alertEngineRunning = true;
-  console.log('Alert engine started (checking every 1 second)');
+  console.log(`Alert engine started (complex: 1s, price: ${FAST_PRICE_ALERT_INTERVAL_MS}ms)`);
 }
 
 function stopAlertEngine() {
+  if (fastPriceTimer) {
+    clearInterval(fastPriceTimer);
+    fastPriceTimer = null;
+  }
   alertEngineRunning = false;
   console.log('Alert engine stopped');
 }
