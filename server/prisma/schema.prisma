@@ -90,3 +90,15 @@ model FutureListing {
   @@unique([exchange, symbol])
   @@index([exchange])
 }
+
+model EngineLease {
+  name       String   @id
+  ownerId    String
+  acquiredAt DateTime @default(now()) @db.Timestamptz(6)
+  renewedAt  DateTime @default(now()) @db.Timestamptz(6)
+  expiresAt  DateTime @db.Timestamptz(6)
+  meta       Json?
+
+  @@index([expiresAt], map: "EngineLease_expiresAt_idx")
+  @@map("EngineLease")
+}
