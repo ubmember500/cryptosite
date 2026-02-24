@@ -232,12 +232,12 @@ const CreateAlertModal = ({ isOpen, onClose, onSuccess, editingAlertId, editingA
         return full === selectedSymbol || `${base}USDT` === selectedSymbol || base === selectedSymbol;
       });
 
-      const initialDataPrice = Number(initialData?.currentPrice);
       const selectedTokenPrice = Number(selectedToken?.lastPrice);
-      const clientCurrentPrice = Number.isFinite(initialDataPrice) && initialDataPrice > 0
-        ? initialDataPrice
-        : Number.isFinite(selectedTokenPrice) && selectedTokenPrice > 0
-          ? selectedTokenPrice
+      const initialDataPrice = Number(initialData?.currentPrice);
+      const clientCurrentPrice = Number.isFinite(selectedTokenPrice) && selectedTokenPrice > 0
+        ? selectedTokenPrice
+        : Number.isFinite(initialDataPrice) && initialDataPrice > 0
+            ? initialDataPrice
           : null;
 
       const payload = {

@@ -104,6 +104,30 @@ async function fetchExchangePriceSnapshot({ exchange, market, symbol, strict = t
     };
   }
 
+  if (typeof service.fetchCurrentPriceBySymbol === 'function') {
+    for (const candidate of candidates) {
+      try {
+        const directPrice = Number(await service.fetchCurrentPriceBySymbol(candidate, exchangeType));
+        if (Number.isFinite(directPrice) && directPrice > 0) {
+          return {
+            ok: true,
+            price: directPrice,
+            symbol: candidate,
+            source: `${String(exchange || 'binance').toLowerCase()}_direct_symbol_ticker`,
+            candidates,
+          };
+        }
+      } catch (error) {
+        logger.warn?.('[priceSourceResolver] direct symbol fetch failed', {
+          exchange,
+          market: normalizedMarket,
+          symbol: candidate,
+          message: error?.message,
+        });
+      }
+    }
+  }
+
   try {
     const priceMap = await service.getLastPricesBySymbols(candidates, exchangeType, {
       strict,
