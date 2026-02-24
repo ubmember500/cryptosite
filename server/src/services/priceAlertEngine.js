@@ -6,8 +6,25 @@ const gateService = require('./gateService');
 const mexcService = require('./mexcService');
 const bitgetService = require('./bitgetService');
 
-const lastObservedPriceByAlertId = new Map();
+/* ================================================================
+ *  Price Alert Engine — simplified, robust, stateless trigger logic
+ *
+ *  Design:
+ *    1. For each active price alert, fetch the current price.
+ *    2. Compare currentPrice directly against targetValue:
+ *       - condition 'below': trigger when currentPrice <= targetValue
+ *       - condition 'above': trigger when currentPrice >= targetValue
+ *    3. No "zone-crossing" between consecutive observations.
+ *       The controller guarantees that at creation time initialPrice
+ *       is on the OPPOSITE side of the target, so a simple threshold
+ *       comparison is correct.
+ *    4. On trigger: delete alert from DB, notify user via socket + Telegram.
+ * ================================================================ */
+
+// Guard against concurrent trigger+delete for the same alert within one tick
 const inFlightAlertIds = new Set();
+
+// ---------- helpers ----------
 
 function parseSymbols(symbols) {
   if (Array.isArray(symbols)) return symbols;
@@ -32,201 +49,159 @@ function getExchangeService(exchange) {
   return binanceService;
 }
 
+/** Uppercase, keep alphanumeric + dot (for .P futures suffix) */
 function normalizeRawSymbol(rawSymbol) {
   if (typeof rawSymbol !== 'string') return '';
   return rawSymbol.trim().toUpperCase().replace(/[^A-Z0-9.]/g, '');
 }
 
-function buildSymbolCandidates(rawSymbol, market) {
-  const base = normalizeRawSymbol(rawSymbol);
-  if (!base) return [];
-
-  const candidates = new Set([base]);
-  if (!/(USDT|USD)(\.P)?$/i.test(base)) {
-    candidates.add(`${base}USDT`);
-    candidates.add(`${base}USD`);
-  }
-
-  for (const candidate of Array.from(candidates)) {
-    const noPerp = candidate.replace(/\.P$/i, '');
-    candidates.add(noPerp);
-
-    if (market === 'futures') {
-      if (!candidate.endsWith('.P')) candidates.add(`${candidate}.P`);
-      if (noPerp !== candidate) candidates.add(noPerp);
-    }
-  }
-
-  return Array.from(candidates).filter(Boolean);
-}
-
-function normalizeForExchange(exchange, symbol) {
+/**
+ * Build candidate symbol strings to try against the exchange API.
+ * We normalise through the exchange service ONLY for the base symbol
+ * (without .P) so the dot is never stripped.  Then we add .P variants
+ * for futures *after* normalisation.
+ */
+function buildCandidates(exchange, rawSymbol, market) {
   const service = getExchangeService(exchange);
+  const raw = normalizeRawSymbol(rawSymbol);
+  if (!raw) return [];
+
+  // Strip trailing .P if present; we'll add it back for futures
+  const base = raw.replace(/\.P$/i, '');
+
+  // Normalise through exchange-specific function (strip "/" etc., uppercase)
+  let normBase = base;
   if (typeof service.normalizeSymbol === 'function') {
     try {
-      const normalized = service.normalizeSymbol(symbol);
-      if (typeof normalized === 'string' && normalized) return normalized;
-    } catch {
-      // fall through to generic normalization
-    }
+      const n = service.normalizeSymbol(base);
+      if (n) normBase = n;
+    } catch { /* keep normBase */ }
   }
-  return normalizeRawSymbol(symbol);
-}
+  normBase = normBase.toUpperCase();
 
-function buildExchangeCandidates(exchange, rawSymbol, market) {
-  const candidateSet = new Set();
-  const rawCandidates = buildSymbolCandidates(rawSymbol, market);
+  const set = new Set();
+  set.add(normBase);                                         // ESPUSDT
 
-  for (const candidate of rawCandidates) {
-    const normalized = normalizeForExchange(exchange, candidate);
-    if (!normalized) continue;
+  // Add quote-suffixed variants
+  const hasQuote = /(USDT|USD)$/i.test(normBase);
+  if (!hasQuote) {
+    set.add(`${normBase}USDT`);                              // ESP → ESPUSDT
+    set.add(`${normBase}USD`);                               // ESP → ESPUSD
+  } else {
+    // Also try without quote suffix (some exchanges use base only)
+    const stripped = normBase.replace(/USDT$|USD$/i, '');
+    if (stripped) set.add(stripped);
+  }
 
-    candidateSet.add(normalized);
-    candidateSet.add(normalized.toUpperCase());
-
-    const noPerp = normalized.replace(/\.P$/i, '');
-    candidateSet.add(noPerp);
-
-    if (!/(USDT|USD)$/i.test(noPerp)) {
-      candidateSet.add(`${noPerp}USDT`);
-      candidateSet.add(`${noPerp}USD`);
-    }
-
-    if (market === 'futures') {
-      candidateSet.add(`${noPerp}.P`);
-      candidateSet.add(`${noPerp}USDT.P`);
-      candidateSet.add(`${noPerp}USD.P`);
+  // For futures, add .P variants
+  if (market === 'futures') {
+    for (const s of Array.from(set)) {
+      set.add(`${s}.P`);
     }
   }
 
-  return Array.from(candidateSet).filter(Boolean);
+  return Array.from(set).filter(Boolean);
 }
 
+/** Resolve a price from a map { SYMBOL: price } trying candidates in order. */
 function resolvePriceFromMap(priceMap, candidates) {
-  if (!priceMap || typeof priceMap !== 'object') {
-    return { price: null, symbol: '' };
+  if (!priceMap || typeof priceMap !== 'object') return { price: null, symbol: '' };
+
+  // Build an uppercase lookup for case-insensitive matching
+  const upperMap = new Map();
+  for (const [k, v] of Object.entries(priceMap)) {
+    upperMap.set(String(k).toUpperCase(), { key: k, value: Number(v) });
   }
 
-  const byUpper = new Map(
-    Object.entries(priceMap).map(([key, value]) => [String(key).toUpperCase(), value])
-  );
-
-  for (const candidate of candidates) {
-    if (Object.prototype.hasOwnProperty.call(priceMap, candidate)) {
-      const direct = Number(priceMap[candidate]);
-      if (Number.isFinite(direct) && direct > 0) {
-        return { price: direct, symbol: candidate };
-      }
-    }
-
-    const upperValue = byUpper.get(String(candidate).toUpperCase());
-    const parsed = Number(upperValue);
-    if (Number.isFinite(parsed) && parsed > 0) {
-      return { price: parsed, symbol: candidate };
+  for (const c of candidates) {
+    const entry = upperMap.get(String(c).toUpperCase());
+    if (entry && Number.isFinite(entry.value) && entry.value > 0) {
+      return { price: entry.value, symbol: entry.key };
     }
   }
-
   return { price: null, symbol: '' };
 }
 
+/**
+ * Fetch the **current live price** for a single symbol.
+ *
+ * Strategy (ordered by reliability):
+ *   1. getLastPricesBySymbols with strict=false (uses 2-second cache → bulk ticker → per-symbol fallback)
+ *   2. fetchCurrentPriceBySymbol (direct /ticker/price per candidate)
+ */
 async function fetchCurrentPrice(exchange, market, rawSymbol) {
   const service = getExchangeService(exchange);
   const exchangeType = market === 'spot' ? 'spot' : 'futures';
-  const candidates = buildExchangeCandidates(exchange, rawSymbol, market);
+  const candidates = buildCandidates(exchange, rawSymbol, market);
+  if (candidates.length === 0) return { price: null, symbol: '' };
 
-  if (candidates.length === 0) {
-    return { price: null, symbol: '' };
-  }
-
+  // Strategy 1 — bulk/cached path (DO NOT set exchangeOnly so per-symbol fallback is available)
   try {
     const priceMap = await service.getLastPricesBySymbols(candidates, exchangeType, {
       strict: false,
-      exchangeOnly: true,
+      exchangeOnly: false,
     });
     const resolved = resolvePriceFromMap(priceMap, candidates);
-    if (Number.isFinite(resolved.price) && resolved.price > 0) {
-      return resolved;
-    }
-  } catch {
-    // ignore and fallback
-  }
+    if (Number.isFinite(resolved.price) && resolved.price > 0) return resolved;
+  } catch { /* fall through */ }
 
+  // Strategy 2 — direct single-symbol ticker
   if (typeof service.fetchCurrentPriceBySymbol === 'function') {
     for (const candidate of candidates) {
       try {
         const price = Number(await service.fetchCurrentPriceBySymbol(candidate, exchangeType));
-        if (Number.isFinite(price) && price > 0) {
-          return { price, symbol: candidate };
-        }
-      } catch {
-        // continue
-      }
+        if (Number.isFinite(price) && price > 0) return { price, symbol: candidate };
+      } catch { /* try next */ }
     }
   }
 
   return { price: null, symbol: candidates[0] || '' };
 }
 
-function getPriceTolerance(targetValue) {
-  const target = Number(targetValue);
-  if (!Number.isFinite(target)) return 1e-8;
-  return Math.max(Math.abs(target) * 1e-4, 1e-8);
-}
+// ---------- trigger logic ----------
 
-function classifyRelativeToTarget(price, targetValue) {
-  const numericPrice = Number(price);
-  const target = Number(targetValue);
-  if (!Number.isFinite(numericPrice) || !Number.isFinite(target)) return null;
-
-  const tolerance = getPriceTolerance(target);
-  const delta = numericPrice - target;
-
-  if (Math.abs(delta) <= tolerance) return 0;
-  return delta > 0 ? 1 : -1;
-}
-
+/**
+ * Determine effective condition from DB alert.
+ * The controller already stores the correct condition, but re-derive from
+ * initialPrice vs targetValue as a safety net.
+ */
 function resolveCondition(alert, targetValue) {
-  const initialPrice = alert?.initialPrice != null ? Number(alert.initialPrice) : null;
-  if (Number.isFinite(initialPrice) && initialPrice > 0) {
-    if (initialPrice > targetValue) return 'below';
-    if (initialPrice < targetValue) return 'above';
+  const ip = alert?.initialPrice != null ? Number(alert.initialPrice) : null;
+  if (Number.isFinite(ip) && ip > 0) {
+    if (ip > targetValue) return 'below';
+    if (ip < targetValue) return 'above';
   }
   return String(alert?.condition || '').toLowerCase() === 'below' ? 'below' : 'above';
 }
 
-function shouldTrigger(previousPrice, currentPrice, targetValue, condition) {
-  const previousZone = classifyRelativeToTarget(previousPrice, targetValue);
-  const currentZone = classifyRelativeToTarget(currentPrice, targetValue);
+/**
+ * SIMPLE threshold trigger — no zone-crossing, no state.
+ * Returns true when the current price has reached (or passed) the target.
+ */
+function shouldTrigger(currentPrice, targetValue, condition) {
+  const cur = Number(currentPrice);
+  const tgt = Number(targetValue);
+  if (!Number.isFinite(cur) || !Number.isFinite(tgt)) return false;
 
-  if (previousZone == null || currentZone == null) return false;
-  if (previousZone === 0) return false;
-
-  if (condition === 'below') {
-    return previousZone > 0 && currentZone <= 0;
-  }
-
-  return previousZone < 0 && currentZone >= 0;
+  if (condition === 'below') return cur <= tgt;
+  return cur >= tgt; // 'above'
 }
+
+// ---------- helpers ----------
 
 function getCoinSymbol(alert, resolvedSymbol) {
   if (typeof alert?.coinSymbol === 'string' && alert.coinSymbol.trim()) {
     return alert.coinSymbol;
   }
-  const normalized = String(resolvedSymbol || '').toUpperCase();
-  return normalized
+  return String(resolvedSymbol || '')
+    .toUpperCase()
     .replace(/\.P$/i, '')
     .replace(/USDT$/i, '')
     .replace(/USD$/i, '')
     .trim();
 }
 
-function pruneRuntime(activeAlertIds) {
-  for (const alertId of Array.from(lastObservedPriceByAlertId.keys())) {
-    if (!activeAlertIds.has(alertId)) {
-      lastObservedPriceByAlertId.delete(alertId);
-    }
-  }
-}
+// ---------- main entry ----------
 
 async function processPriceAlerts(priceAlerts, handlers = {}) {
   const {
@@ -235,10 +210,8 @@ async function processPriceAlerts(priceAlerts, handlers = {}) {
     logger = console,
   } = handlers;
 
-  const activeIds = new Set((priceAlerts || []).map((alert) => alert.id));
-  pruneRuntime(activeIds);
-
   for (const alert of priceAlerts || []) {
+    // Prevent double-processing if a previous tick is still deleting this alert
     if (inFlightAlertIds.has(alert.id)) continue;
     inFlightAlertIds.add(alert.id);
 
@@ -246,7 +219,7 @@ async function processPriceAlerts(priceAlerts, handlers = {}) {
       const symbols = parseSymbols(alert.symbols);
       const firstSymbol = symbols[0];
       if (!firstSymbol) {
-        logger.warn?.(`[priceAlertEngine] Alert ${alert.id} has no symbol, skipping`);
+        logger.warn?.(`[priceAlert] alert=${alert.id} — no symbol, skipping`);
         continue;
       }
 
@@ -254,34 +227,33 @@ async function processPriceAlerts(priceAlerts, handlers = {}) {
       const market = String(alert.market || 'futures').toLowerCase() === 'spot' ? 'spot' : 'futures';
       const targetValue = Number(alert.targetValue);
       if (!Number.isFinite(targetValue) || targetValue <= 0) {
+        logger.warn?.(`[priceAlert] alert=${alert.id} — bad targetValue=${alert.targetValue}, skipping`);
         continue;
       }
 
+      // ---- Fetch current price ----
       const current = await fetchCurrentPrice(exchange, market, firstSymbol);
       const currentPrice = Number(current.price);
       if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
-        logger.warn?.(`[priceAlertEngine] Price unavailable for alert ${alert.id}, symbol ${firstSymbol}`);
+        logger.warn?.(
+          `[priceAlert] alert=${alert.id} sym=${firstSymbol} exchange=${exchange}/${market} — price unavailable, skipping`
+        );
         continue;
       }
 
-      const previousObserved = Number(lastObservedPriceByAlertId.get(alert.id));
-      const initialPrice = alert.initialPrice != null ? Number(alert.initialPrice) : null;
-      const previousPrice = Number.isFinite(previousObserved)
-        ? previousObserved
-        : (Number.isFinite(initialPrice) && initialPrice > 0 ? initialPrice : null);
+      // ---- Determine condition and check trigger ----
+      const condition = resolveCondition(alert, targetValue);
+      const triggered = shouldTrigger(currentPrice, targetValue, condition);
 
-      if (!Number.isFinite(previousPrice)) {
-        lastObservedPriceByAlertId.set(alert.id, currentPrice);
-        continue;
-      }
+      logger.log?.(
+        `[priceAlert] alert=${alert.id} sym=${firstSymbol} ` +
+        `target=${targetValue} current=${currentPrice} cond=${condition} ` +
+        `triggered=${triggered}`
+      );
 
-      const resolvedCondition = resolveCondition(alert, targetValue);
-      const triggered = shouldTrigger(previousPrice, currentPrice, targetValue, resolvedCondition);
-      if (!triggered) {
-        lastObservedPriceByAlertId.set(alert.id, currentPrice);
-        continue;
-      }
+      if (!triggered) continue;
 
+      // ---- TRIGGERED — delete + notify ----
       const payload = {
         id: alert.id,
         alertId: alert.id,
@@ -291,12 +263,12 @@ async function processPriceAlerts(priceAlerts, handlers = {}) {
         triggeredAt: new Date(),
         currentPrice,
         targetValue: alert.targetValue,
-        condition: resolvedCondition,
+        condition,
         coinSymbol: getCoinSymbol(alert, current.symbol || firstSymbol),
-        symbol: current.symbol || normalizeForExchange(exchange, firstSymbol),
+        symbol: current.symbol || firstSymbol,
         alertType: 'price',
-        ...(alert.initialPrice != null && Number.isFinite(alert.initialPrice)
-          ? { initialPrice: alert.initialPrice }
+        ...(alert.initialPrice != null && Number.isFinite(Number(alert.initialPrice))
+          ? { initialPrice: Number(alert.initialPrice) }
           : {}),
       };
 
@@ -304,16 +276,20 @@ async function processPriceAlerts(priceAlerts, handlers = {}) {
         await prisma.alert.delete({ where: { id: alert.id } });
       } catch (error) {
         if (error?.code === 'P2025') {
-          logger.warn?.(`[priceAlertEngine] Alert ${alert.id} already deleted`);
+          logger.warn?.(`[priceAlert] alert=${alert.id} already deleted by another tick`);
           continue;
         }
         throw error;
       }
 
-      lastObservedPriceByAlertId.delete(alert.id);
       await onDeleted(alert);
       await onTriggered(alert, payload);
-      logger.log?.(`[priceAlertEngine] Triggered and deleted alert ${alert.id}`);
+      logger.log?.(
+        `[priceAlert] ✅ TRIGGERED alert=${alert.id} sym=${firstSymbol} ` +
+        `target=${targetValue} current=${currentPrice} cond=${condition}`
+      );
+    } catch (err) {
+      logger.error?.(`[priceAlert] alert=${alert.id} unexpected error:`, err);
     } finally {
       inFlightAlertIds.delete(alert.id);
     }
