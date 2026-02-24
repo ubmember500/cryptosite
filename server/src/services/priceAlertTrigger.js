@@ -52,9 +52,28 @@ function hasReachedTargetFromPrevious(previousPrice, currentPrice, targetValue) 
   return previousZone !== currentZone;
 }
 
+function hasReachedTargetWithCondition(previousPrice, currentPrice, targetValue, condition) {
+  const previousZone = classifyRelativeToTarget(previousPrice, targetValue);
+  const currentZone = classifyRelativeToTarget(currentPrice, targetValue);
+
+  if (previousZone == null || currentZone == null) return false;
+  if (previousZone === 0) return false;
+
+  const normalizedCondition = String(condition || '').toLowerCase();
+  if (normalizedCondition === 'below') {
+    return previousZone > 0 && currentZone <= 0;
+  }
+  if (normalizedCondition === 'above') {
+    return previousZone < 0 && currentZone >= 0;
+  }
+
+  return hasReachedTargetFromPrevious(previousPrice, currentPrice, targetValue);
+}
+
 module.exports = {
   getPriceTolerance,
   hasTouchedTargetWithTolerance,
   hasCrossedTargetWithTolerance,
   hasReachedTargetFromPrevious,
+  hasReachedTargetWithCondition,
 };

@@ -10,10 +10,11 @@ const socketService = require('./socketService');
 const telegramService = require('./telegramService');
 const {
   hasCrossedTargetWithTolerance,
-  hasReachedTargetFromPrevious,
+  hasReachedTargetWithCondition,
 } = require('./priceAlertTrigger');
 
 let alertEngineRunning = false;
+let alertCheckInProgress = false;
 
 // Store initial prices for pct_change alerts (alertId -> initialPrice). Kept for backward compat.
 const initialPrices = new Map();
@@ -38,6 +39,7 @@ const complexPriceHistory = {
 };
 const complexLastTrigger = new Map(); // alertId -> Map(symbol -> ts)
 const priceAlertLastObserved = new Map(); // alertId -> last observed currentPrice
+const priceAlertsInFlight = new Set(); // alertId currently being processed
 
 function prunePriceAlertRuntimeState(activePriceAlertIds) {
   for (const alertId of Array.from(priceAlertLastObserved.keys())) {
@@ -365,9 +367,19 @@ function resolvePriceForPriceAlert(priceMap, symbol, market) {
   const compact = raw.toUpperCase().replace(/[^A-Z0-9.]/g, '');
   if (compact) candidates.add(compact);
 
+  const compactNoPerp = compact.replace(/\.P$/i, '');
+  if (compactNoPerp) {
+    candidates.add(compactNoPerp);
+    if (!/(USDT|USD)$/i.test(compactNoPerp)) {
+      candidates.add(`${compactNoPerp}USDT`);
+      candidates.add(`${compactNoPerp}USD`);
+    }
+  }
+
   if (market === 'futures') {
     for (const c of Array.from(candidates)) {
       if (c.endsWith('USDT') && !c.endsWith('.P')) candidates.add(`${c}.P`);
+      if (c.endsWith('USD') && !c.endsWith('.P')) candidates.add(`${c}.P`);
       if (c.endsWith('.P')) candidates.add(c.slice(0, -2));
     }
   }
@@ -384,12 +396,28 @@ function resolvePriceForPriceAlert(priceMap, symbol, market) {
   return null;
 }
 
+function resolvePriceAlertCondition(alert, targetValue) {
+  const initialPrice = alert?.initialPrice != null ? Number(alert.initialPrice) : null;
+  if (Number.isFinite(initialPrice) && initialPrice > 0 && Number.isFinite(targetValue)) {
+    if (initialPrice > targetValue) return 'below';
+    if (initialPrice < targetValue) return 'above';
+  }
+
+  return String(alert?.condition || '').toLowerCase() === 'below' ? 'below' : 'above';
+}
+
 /**
  * Check and trigger alerts. Uses Binance for price and complex alerts.
  * Price: alertType === 'price', first symbol vs targetValue.
  * Complex: alertType === 'complex', % move over timeframe.
  */
 async function checkAlerts() {
+  if (alertCheckInProgress) {
+    console.warn('[alertEngine] Skipping tick: previous check is still running');
+    return;
+  }
+
+  alertCheckInProgress = true;
   try {
     // Fetch active alerts: price alerts must not be triggered (they self-delete), complex alerts can be triggered (keep monitoring)
     const activeAlerts = await prisma.alert.findMany({
@@ -478,6 +506,12 @@ async function checkAlerts() {
       const skippedMissing = new Set();
 
       for (const alert of priceAlerts) {
+        if (priceAlertsInFlight.has(alert.id)) {
+          continue;
+        }
+        priceAlertsInFlight.add(alert.id);
+
+        try {
         const syms = parseSymbols(alert.symbols);
         const ex = (alert.exchange || 'binance').toLowerCase();
         const market = (alert.market || 'futures').toLowerCase();
@@ -519,18 +553,18 @@ async function checkAlerts() {
           continue;
         }
 
+        const resolvedCondition = resolvePriceAlertCondition(alert, targetValue);
         const crossedTarget = hasCrossedTargetWithTolerance(previousPrice, currentPrice, targetValue);
-        const reachedFromPrevious = hasReachedTargetFromPrevious(previousPrice, currentPrice, targetValue);
-        const shouldTrigger = reachedFromPrevious;
+        const shouldTrigger = hasReachedTargetWithCondition(previousPrice, currentPrice, targetValue, resolvedCondition);
 
         if (shouldTrigger) {
           if (crossedTarget && Number.isFinite(previousPrice)) {
             console.log(
-              `[Alert ${alert.id}] Price crossed target: ${previousPrice} -> ${currentPrice} (target: ${targetValue})`
+              `[Alert ${alert.id}] Price crossed target (${resolvedCondition}): ${previousPrice} -> ${currentPrice} (target: ${targetValue})`
             );
           } else {
             console.log(
-              `[Alert ${alert.id}] Price touched target: ${currentPrice} (target: ${targetValue})`
+              `[Alert ${alert.id}] Price touched target (${resolvedCondition}): ${currentPrice} (target: ${targetValue})`
             );
           }
         }
@@ -542,10 +576,6 @@ async function checkAlerts() {
         }
 
         priceAlertLastObserved.delete(alert.id);
-
-        const resolvedCondition = hasValidInitialPrice
-          ? (initialPrice > targetValue ? 'below' : 'above')
-          : (String(alert.condition || '').toLowerCase() === 'below' ? 'below' : 'above');
 
         // For price alerts: DELETE from database when triggered (self-delete)
         // Store alert data before deletion for socket payload
@@ -567,9 +597,24 @@ async function checkAlerts() {
         };
 
         // Delete the alert from database
-        await prisma.alert.delete({
-          where: { id: alert.id },
-        });
+        let deleted = false;
+        try {
+          await prisma.alert.delete({
+            where: { id: alert.id },
+          });
+          deleted = true;
+        } catch (error) {
+          const prismaCode = error?.code;
+          if (prismaCode === 'P2025') {
+            console.warn(`[alertEngine] Price alert ${alert.id} already deleted, skipping emit`);
+          } else {
+            throw error;
+          }
+        }
+
+        if (!deleted) {
+          continue;
+        }
 
         if (alert.condition === 'pct_change') {
           clearInitialPrice(alert.id);
@@ -584,6 +629,9 @@ async function checkAlerts() {
         socketService.emitAlertTriggered(alert.userId, payload);
         await sendAlertToTelegram(alert.userId, payload);
         console.log(`Price alert ${alert.id} triggered and deleted for user ${alert.userId}`);
+        } finally {
+          priceAlertsInFlight.delete(alert.id);
+        }
       }
     }
 
@@ -809,6 +857,8 @@ async function checkAlerts() {
     }
   } catch (error) {
     console.error('Error in alert engine:', error);
+  } finally {
+    alertCheckInProgress = false;
   }
 }
 

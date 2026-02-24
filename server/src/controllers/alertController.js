@@ -18,6 +18,14 @@ function deriveLegacyFromFirstSymbol(symbols) {
   return { coinSymbol: base, coinId: base.toLowerCase() };
 }
 
+function normalizeQuoteSymbol(rawSymbol) {
+  if (typeof rawSymbol !== 'string') return '';
+  const compact = rawSymbol.trim().toUpperCase().replace(/[^A-Z0-9.]/g, '');
+  if (!compact) return '';
+  if (/(USDT|USD)(\.P)?$/i.test(compact)) return compact;
+  return `${compact}USDT`;
+}
+
 async function fetchExchangeTokenSnapshotPrice({ exchange, symbol, market }) {
   const exchangeType = market === 'spot' ? 'spot' : 'futures';
   const key = String(exchange || '').toLowerCase();
@@ -238,10 +246,12 @@ async function createAlert(req, res, next) {
                   : exchange === 'bitget'
                     ? bitgetService.normalizeSymbol
                     : binanceService.normalizeSymbol;
-        const normalizedSymbol = normalize(firstSymbolRaw);
+        const quotedSymbol = normalizeQuoteSymbol(firstSymbolRaw);
+        const normalizedSymbol = normalize(quotedSymbol);
         console.log('[createAlert] Fetching initial price for price alert:', {
           exchange,
           originalSymbol: firstSymbolRaw,
+          quotedSymbol,
           normalizedSymbol,
           market,
         });
