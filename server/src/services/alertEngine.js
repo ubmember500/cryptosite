@@ -864,10 +864,22 @@ async function startAlertEngine() {
     });
   } catch (error) {
     engineCounters.transientErrors += 1;
-    alertEngineRunning = false;
-    stopWorkerLoops('startup-failure');
-    logEngine('error', 'engine.start.failed', { message: error?.message || String(error) });
-    throw error;
+    logEngine('error', 'engine.start.failed', {
+      message: error?.message || String(error),
+      fallback: 'start-without-lease',
+    });
+
+    // Do not fail process startup because of lease bootstrap issues.
+    // Fallback keeps alerts operational on single-instance deployments.
+    leaseOwner = true;
+    if (!engineWorkerActive) {
+      startWorkerLoops();
+    }
+
+    logEngine('warn', 'engine.start.fallback', {
+      mode: 'no-lease-fallback',
+      workerActive: engineWorkerActive,
+    });
   }
 }
 
