@@ -17,8 +17,8 @@
 const WebSocket = require('ws');
 
 // ─── Configuration ──────────────────────────────────────────────────────────
-const RECONNECT_BASE_MS = 3000;
-const RECONNECT_MAX_MS = 60000;
+const RECONNECT_BASE_MS = 2000;
+const RECONNECT_MAX_MS = 10000;
 const PING_INTERVAL_MS = 20000;
 const STALE_THRESHOLD_MS = 30000; // map considered stale after 30 s without update
 const REST_POLL_INTERVAL_MS = 3000; // for MEXC REST polling

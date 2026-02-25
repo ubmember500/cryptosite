@@ -370,10 +370,18 @@ function handlePriceTick({ exchange, market, prices: tickPrices }) {
     for (const alert of relevantAlerts) {
       // Scope filter
       if (alert.alertForMode === 'whitelist') {
-        if (!alert.symbolSet.has(resolvedSymbol) && !alert.symbolSet.has(symbolUpper)) continue;
+        // Match symbols with or without .P suffix (futures symbols may have either form)
+        const bareSymbol = resolvedSymbol.replace(/\.P$/, '');
+        if (
+          !alert.symbolSet.has(resolvedSymbol) &&
+          !alert.symbolSet.has(symbolUpper) &&
+          !alert.symbolSet.has(bareSymbol) &&
+          !alert.symbolSet.has(bareSymbol + '.P')
+        ) continue;
       } else {
         // 'all' mode: only USDT pairs (skip .P suffixed and non-USDT)
-        if (!resolvedSymbol.endsWith('USDT') && !resolvedSymbol.replace(/\.P$/, '').endsWith('USDT')) continue;
+        const bare = resolvedSymbol.replace(/\.P$/, '');
+        if (!bare.endsWith('USDT')) continue;
       }
 
       // Quick cooldown check before expensive window stats
@@ -395,12 +403,99 @@ function handlePriceTick({ exchange, market, prices: tickPrices }) {
 
 // ─── Complex alert loop (independent of lease system) ────────────────────
 let complexLoopActive = false;
+let complexSweepTimer = null;
+const COMPLEX_SWEEP_INTERVAL_MS = 10_000; // 10-second safety-net sweep
+
+/**
+ * Seed price history from priceWatcher's in-memory price maps.
+ * Called once on startup / after cold start to give the engine at least 1 data
+ * point per symbol immediately, so the very FIRST WS tick already has a
+ * baseline to compare against (via the bridge in getWindowStats).
+ */
+function seedHistoryFromPriceMaps() {
+  const nowMs = Date.now();
+  let seeded = 0;
+  for (const exKey of activeComplexExchangeMarkets) {
+    const [exchange, market] = exKey.split('|');
+    const priceMap = priceWatcher.getPriceMap(exchange, market);
+    if (priceMap && typeof priceMap === 'object') {
+      const count = Object.keys(priceMap).length;
+      if (count > 0) {
+        appendComplexPricePoints(exchange, market, priceMap, nowMs, COMPLEX_HISTORY_LOOKBACK_SEC);
+        seeded += count;
+      }
+    }
+  }
+  if (seeded > 0) {
+    logEngine('info', 'complex.history.seeded', { symbols: seeded });
+  }
+}
+
+/**
+ * Periodic safety-net: iterate over ALL symbols in the history maps and
+ * evaluate them against cached complex alerts.  Catches moves that the
+ * per-tick handler may have missed due to timing, dropped WS msgs, or
+ * edge-of-window threshold crossings caused by time advancing.
+ */
+function sweepAllComplexSymbols() {
+  if (!complexLoopActive || complexAlertsCache.length === 0) return;
+  const nowMs = Date.now();
+
+  for (const exKey of activeComplexExchangeMarkets) {
+    const [exchange, market] = exKey.split('|');
+    const relevantAlerts = complexAlertsCache.filter(
+      (a) => a.exchange === exchange && a.market === market,
+    );
+    if (relevantAlerts.length === 0) continue;
+
+    const historyMap = getHistoryMapForExchangeMarket(exchange, market);
+
+    for (const [symbol] of historyMap) {
+      for (const alert of relevantAlerts) {
+        // Scope filter (same logic as handlePriceTick)
+        if (alert.alertForMode === 'whitelist') {
+          const bareSymbol = symbol.replace(/\.P$/, '');
+          if (
+            !alert.symbolSet.has(symbol) &&
+            !alert.symbolSet.has(bareSymbol) &&
+            !alert.symbolSet.has(bareSymbol + '.P')
+          ) continue;
+        } else {
+          const bare = symbol.replace(/\.P$/, '');
+          if (!bare.endsWith('USDT')) continue;
+        }
+
+        if (!canEmitComplexTrigger(alert.id, symbol, nowMs)) continue;
+
+        const stats = getWindowStats(exchange, market, symbol, nowMs, alert.timeframeSec);
+        if (!stats) continue;
+
+        const spanPct = ((stats.max - stats.min) / stats.min) * 100;
+        if (spanPct < alert.threshold) continue;
+
+        const alertSnap = { ...alert };
+        const statsSnap = { ...stats };
+        setImmediate(() => fireTriggerAsync(alertSnap, symbol, statsSnap, spanPct, nowMs));
+      }
+    }
+  }
+}
 
 function startComplexLoop() {
   if (complexLoopActive) return;
   priceWatcher.onTick(handlePriceTick);
-  refreshComplexAlertsCache();
+
+  // Refresh cache first, then seed history from priceWatcher's in-memory maps
+  // so the very first WS tick can immediately compare against a baseline price.
+  refreshComplexAlertsCache()
+    .then(() => seedHistoryFromPriceMaps())
+    .catch((err) => logEngine('error', 'complex.seed.error', { message: err?.message || String(err) }));
+
   complexCacheRefreshTimer = setInterval(() => refreshComplexAlertsCache(), COMPLEX_CACHE_REFRESH_MS);
+
+  // Safety-net sweep — catches threshold crossings that the per-tick handler missed
+  complexSweepTimer = setInterval(sweepAllComplexSymbols, COMPLEX_SWEEP_INTERVAL_MS);
+
   complexLoopActive = true;
   logEngine('info', 'complex.loop.start');
 }
@@ -411,6 +506,10 @@ function stopComplexLoop() {
   if (complexCacheRefreshTimer) {
     clearInterval(complexCacheRefreshTimer);
     complexCacheRefreshTimer = null;
+  }
+  if (complexSweepTimer) {
+    clearInterval(complexSweepTimer);
+    complexSweepTimer = null;
   }
   complexAlertsCache = [];
   activeComplexExchangeMarkets = new Set();
@@ -560,6 +659,11 @@ function getWindowStats(exchange, market, symbol, nowMs, lookbackSec) {
   if (!arr || arr.length < 2) return null;
 
   const cutoff = nowMs - lookbackSec * 1000;
+
+  // Track the most recent pre-cutoff point as a "bridge" baseline.
+  // This lets us detect moves that started just before the current window,
+  // which is critical after WS reconnects or data gaps.
+  let bridgePoint = null;
   let min = Number.POSITIVE_INFINITY;
   let max = Number.NEGATIVE_INFINITY;
   let oldest = null;
@@ -568,12 +672,25 @@ function getWindowStats(exchange, market, symbol, nowMs, lookbackSec) {
 
   for (let i = 0; i < arr.length; i += 1) {
     const p = arr[i];
-    if (p.ts < cutoff) continue;
     if (!Number.isFinite(p.price) || p.price <= 0) continue;
+    if (p.ts < cutoff) {
+      bridgePoint = p; // keep updating — last one before cutoff wins
+      continue;
+    }
     if (oldest == null) oldest = p.price;
     if (p.price < min) min = p.price;
     if (p.price > max) max = p.price;
     current = p.price;
+    points += 1;
+  }
+
+  // If insufficient in-window points but we have a bridge point, include it
+  // as the baseline so we can detect moves that span the window boundary.
+  if (points < 2 && bridgePoint) {
+    if (oldest == null) oldest = bridgePoint.price;
+    if (bridgePoint.price < min) min = bridgePoint.price;
+    if (bridgePoint.price > max) max = bridgePoint.price;
+    if (current == null) current = bridgePoint.price;
     points += 1;
   }
 
