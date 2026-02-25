@@ -10,7 +10,6 @@ try {
 const FUTURES_BASE_URL = 'https://fapi.binance.com/fapi/v1';
 const SPOT_BASE_URL = 'https://api.binance.com/api/v3';
 const FUTURES_BASE_URLS = [
-  'https://data-api.binance.vision/fapi/v1',
   'https://fapi.binance.com/fapi/v1',
   'https://fapi1.binance.com/fapi/v1',
   'https://fapi2.binance.com/fapi/v1',
