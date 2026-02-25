@@ -126,19 +126,25 @@ function createPriceAlertProcessor(deps = {}) {
             : {}),
         };
 
-        try {
-          await prismaClient.alert.delete({ where: { id: alert.id } });
-        } catch (error) {
-          if (error?.code === 'P2025') {
-            logger.warn?.(`[priceAlertV2] alert=${alert.id} already deleted`);
-            continue;
-          }
-          throw error;
+        // Atomic update: only succeeds if THIS process is the first to mark it triggered.
+        // Using updateMany with triggered:false guard prevents double-firing when the
+        // engine and the sweep both race to the same alert.
+        // We intentionally keep the row in the DB (triggered=true, isActive=false) so
+        // that the client can retrieve it as a pendingNotification if the socket event
+        // was missed (race condition on page-load, disconnect, cold start, etc.).
+        const updateResult = await prismaClient.alert.updateMany({
+          where: { id: alert.id, triggered: false, isActive: true },
+          data: { triggered: true, isActive: false, triggeredAt: new Date() },
+        });
+
+        if (updateResult.count === 0) {
+          logger.warn?.(`[priceAlertV2] alert=${alert.id} already triggered by another process, skipping`);
+          continue;
         }
 
         await onDeleted(alert);
         await onTriggered(alert, payload);
-        logger.log?.(`[priceAlertV2] TRIGGERED alert=${alert.id} and deleted`);
+        logger.log?.(`[priceAlertV2] TRIGGERED alert=${alert.id} (marked triggered, kept in DB for notification delivery)`);
       } catch (error) {
         logger.error?.(`[priceAlertV2] alert=${alert.id} unexpected error:`, error);
       } finally {

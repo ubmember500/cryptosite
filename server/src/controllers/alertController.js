@@ -230,7 +230,23 @@ async function getAlerts(req, res, next) {
       orderBy: { createdAt: 'desc' },
     });
 
-    res.json({ alerts, sweptTriggers: [] });
+    // Include recently-triggered price alerts so the client can show a notification even
+    // when the socket event was missed (race condition, disconnect, cold start).
+    // The client deduplicates using processedTriggerKeys, so this only fires once per session.
+    const ONE_HOUR_AGO = new Date(Date.now() - 60 * 60 * 1000);
+    const pendingNotifications = await prisma.alert.findMany({
+      where: {
+        userId,
+        alertType: 'price',
+        triggered: true,
+        isActive: false,
+        triggeredAt: { gte: ONE_HOUR_AGO },
+      },
+      orderBy: { triggeredAt: 'desc' },
+      take: 20,
+    });
+
+    res.json({ alerts, sweptTriggers: [], pendingNotifications });
   } catch (error) {
     next(error);
   }

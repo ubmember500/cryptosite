@@ -17,7 +17,8 @@ export const alertService = {
     const data = response.data;
     const alerts = Array.isArray(data?.alerts) ? data.alerts : (Array.isArray(data) ? data : []);
     const sweptTriggers = Array.isArray(data?.sweptTriggers) ? data.sweptTriggers : [];
-    return { alerts, sweptTriggers };
+    const pendingNotifications = Array.isArray(data?.pendingNotifications) ? data.pendingNotifications : [];
+    return { alerts, sweptTriggers, pendingNotifications };
   },
 
   /**

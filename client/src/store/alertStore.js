@@ -18,17 +18,27 @@ export const useAlertStore = create((set, get) => ({
   fetchAlerts: async (filters = {}) => {
     set({ loading: true, error: null });
     try {
-      const { alerts, sweptTriggers } = await alertService.getAlerts(filters);
+      const { alerts, pendingNotifications } = await alertService.getAlerts(filters);
       set({ alerts: Array.isArray(alerts) ? alerts : [], loading: false });
 
-      // Process sweep-detected triggers that may have been missed by the socket
-      // (race condition: socket might not have joined the room yet when the sweep fired)
-      if (Array.isArray(sweptTriggers) && sweptTriggers.length > 0) {
-        for (const payload of sweptTriggers) {
+      // pendingNotifications = price alerts triggered in the last hour that are still in DB.
+      // The engine keeps triggered alerts in the DB (instead of deleting) precisely so we
+      // can deliver the notification here if the socket event was missed.
+      // processedTriggerKeys deduplicates across the 30-s polling loop so notifications
+      // only show once per session.
+      if (Array.isArray(pendingNotifications) && pendingNotifications.length > 0) {
+        for (const alert of pendingNotifications) {
+          const payload = {
+            ...alert,
+            id: alert.id,
+            alertId: alert.id,
+            triggered: true,
+            triggeredAt: alert.triggeredAt || new Date().toISOString(),
+          };
           const applied = get().applyTriggeredEvent(payload);
           if (applied) {
+            // Show one notification at a time; subsequent polls will surface the next one
             set({ pendingTriggerAlert: payload });
-            // Only show the first one; user can dismiss and next fetch will show next if needed
             break;
           }
         }
