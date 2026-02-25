@@ -58,6 +58,22 @@ const watchedSymbols = {
   bitget: { futures: new Set(), spot: new Set() },
 };
 
+// ─── Tick listeners (event-driven price push) ───────────────────────────────
+// Listeners receive { exchange, market, prices: { SYMBOL: price, ... } } on
+// every WS batch / REST poll — no sampling loss, no polling delay.
+const tickListeners = new Set();
+
+function onTick(fn) { if (typeof fn === 'function') tickListeners.add(fn); }
+function offTick(fn) { tickListeners.delete(fn); }
+
+function emitTick(exchange, market, tickPrices) {
+  if (tickListeners.size === 0) return;
+  const event = { exchange, market, prices: tickPrices };
+  for (const fn of tickListeners) {
+    try { fn(event); } catch { /* listener error must not crash WS handler */ }
+  }
+}
+
 // ─── Public API ─────────────────────────────────────────────────────────────
 
 /**
@@ -280,13 +296,15 @@ function connectBinance(market) {
         const tickers = JSON.parse(data);
         if (!Array.isArray(tickers)) return;
         const map = prices.binance[market];
+        const batch = {};
         for (const t of tickers) {
           if (t.s && t.c) {
             const p = Number(t.c);
-            if (Number.isFinite(p) && p > 0) map[t.s] = p;
+            if (Number.isFinite(p) && p > 0) { map[t.s] = p; batch[t.s] = p; }
           }
         }
         lastUpdated.binance[market] = Date.now();
+        emitTick('binance', market, batch);
       } catch { /* ignore malformed */ }
     },
   });
@@ -324,6 +342,7 @@ function connectBybit(market) {
           if (symbol && Number.isFinite(p) && p > 0) {
             prices.bybit[market][symbol] = p;
             lastUpdated.bybit[market] = Date.now();
+            emitTick('bybit', market, { [symbol]: p });
           }
         }
       } catch { /* ignore */ }
@@ -378,17 +397,18 @@ function connectOKX(market) {
         const msg = JSON.parse(data);
         if (msg.data && Array.isArray(msg.data)) {
           const map = prices.okx[market];
+          const batch = {};
           for (const t of msg.data) {
-            // OKX instId: BTC-USDT (spot) or BTC-USDT-SWAP (futures)
-            // Normalize to BTCUSDT for consistent lookup
             const instId = t.instId || '';
             const sym = instId.replace(/-SWAP$/i, '').replace(/-/g, '');
             const p = Number(t.last);
             if (sym && Number.isFinite(p) && p > 0) {
               map[sym] = p;
+              batch[sym] = p;
             }
           }
           lastUpdated.okx[market] = Date.now();
+          emitTick('okx', market, batch);
         }
       } catch { /* ignore */ }
     },
@@ -424,17 +444,19 @@ function connectGate(market) {
         const msg = JSON.parse(data);
         if (msg.event === 'update' && msg.result) {
           const map = prices.gate[market];
+          const batch = {};
           const results = Array.isArray(msg.result) ? msg.result : [msg.result];
           for (const t of results) {
-            // Gate uses BTC_USDT → normalize to BTCUSDT
             const contract = t.contract || t.currency_pair || '';
             const sym = contract.replace(/_/g, '');
             const p = Number(t.last || t.close);
             if (sym && Number.isFinite(p) && p > 0) {
               map[sym] = p;
+              batch[sym] = p;
             }
           }
           lastUpdated.gate[market] = Date.now();
+          emitTick('gate', market, batch);
         }
       } catch { /* ignore */ }
     },
@@ -467,14 +489,17 @@ function connectBitget(market) {
         const msg = JSON.parse(data);
         if (msg.data && Array.isArray(msg.data)) {
           const map = prices.bitget[market];
+          const batch = {};
           for (const t of msg.data) {
             const sym = t.instId || '';
             const p = Number(t.lastPr || t.last);
             if (sym && Number.isFinite(p) && p > 0) {
               map[sym] = p;
+              batch[sym] = p;
             }
           }
           lastUpdated.bitget[market] = Date.now();
+          emitTick('bitget', market, batch);
         }
       } catch { /* ignore */ }
     },
@@ -497,11 +522,13 @@ async function pollMexcREST(market) {
     });
     if (map && typeof map === 'object') {
       prices.mexc[market] = {};
+      const batch = {};
       for (const [sym, val] of Object.entries(map)) {
         const p = Number(val);
-        if (Number.isFinite(p) && p > 0) prices.mexc[market][sym] = p;
+        if (Number.isFinite(p) && p > 0) { prices.mexc[market][sym] = p; batch[sym] = p; }
       }
       lastUpdated.mexc[market] = Date.now();
+      emitTick('mexc', market, batch);
     }
   } catch (err) {
     console.warn(`[PriceWatcher] MEXC ${market} REST poll failed:`, err.message);
@@ -598,4 +625,6 @@ module.exports = {
   getPriceMap,
   isFresh,
   refreshSubscriptions,
+  onTick,
+  offTick,
 };

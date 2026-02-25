@@ -18,14 +18,13 @@ let alertCheckInProgress = false;
 let fastPriceCheckInProgress = false;
 let fastPriceTimer = null;
 let complexCronTask = null;
-let complexHistoryTimer = null;
 let leaseCoordinatorTimer = null;
 let leaseOpInProgress = false;
 
 // Tracks which exchange|market combos have active complex alerts (updated by checkAlerts)
-let activeComplexExchangeMarkets = new Set();
+// null = not yet initialized (tick handler records ALL combos until first checkAlerts cycle)
+let activeComplexExchangeMarkets = null;
 let activeComplexMaxLookbackSec = 60;
-const COMPLEX_HISTORY_FEED_MS = 500; // Feed WS prices into complex history every 500ms
 
 const ENGINE_INSTANCE_ID = process.env.ALERT_ENGINE_INSTANCE_ID || `${process.pid}-${Math.random().toString(36).slice(2, 10)}`;
 const LEASE_TABLE = '"EngineLease"';
@@ -181,19 +180,38 @@ async function releaseLease(reason = 'shutdown') {
 }
 
 /**
- * Feed priceWatcher WS prices into the complex alert rolling history.
- * Runs every 500ms for finer-grained sampling than the 1s checkAlerts cycle.
- * Zero I/O — reads in-memory maps only.
+ * Event-driven tick handler — called by priceWatcher.onTick() for EVERY WS
+ * batch / REST poll.  Pushes raw tick prices directly into complexPriceHistory
+ * with zero delay.  This captures every single price update the exchange sends,
+ * eliminating the lossy snapshot-polling that missed short spikes.
  */
-function feedComplexHistory() {
-  if (activeComplexExchangeMarkets.size === 0) return;
-  const nowMs = Date.now();
-  for (const key of activeComplexExchangeMarkets) {
-    const [exchange, market] = key.split('|');
-    const wsMap = priceWatcher.getPriceMap(exchange, market);
-    if (wsMap && Object.keys(wsMap).length > 0) {
-      appendComplexPricePoints(exchange, market, wsMap, nowMs, activeComplexMaxLookbackSec);
-    }
+let complexTickCount = 0;
+let complexTickLogTs = 0;
+
+function handlePriceTick({ exchange, market, prices: tickPrices }) {
+  // Accept ALL ticks when we have any active complex exchange+market combos,
+  // OR when activeComplexExchangeMarkets hasn't been initialized yet (first few seconds).
+  // After the first checkAlerts() cycle, this set gets populated properly.
+  if (!tickPrices || typeof tickPrices !== 'object') return;
+  const key = `${exchange}|${market}`;
+  // During startup (before first checkAlerts), record everything; after that filter.
+  if (activeComplexExchangeMarkets !== null && activeComplexExchangeMarkets.size > 0 && !activeComplexExchangeMarkets.has(key)) return;
+  const symbolCount = Object.keys(tickPrices).length;
+  if (symbolCount === 0) return;
+  appendComplexPricePoints(exchange, market, tickPrices, Date.now(), activeComplexMaxLookbackSec);
+  complexTickCount += 1;
+  // Log summary every 30 seconds
+  const now = Date.now();
+  if (now - complexTickLogTs >= 30000) {
+    const historyMap = getHistoryMapForExchangeMarket(exchange, market);
+    const totalSymbols = historyMap ? historyMap.size : 0;
+    const sampleSym = historyMap ? historyMap.keys().next().value : null;
+    const samplePoints = sampleSym ? (historyMap.get(sampleSym)?.length || 0) : 0;
+    console.log(
+      `[alertEngine] Complex ticks: ${complexTickCount} batches received since start | ` +
+      `${key}: ${totalSymbols} symbols tracked, sample ${sampleSym}: ${samplePoints} points`
+    );
+    complexTickLogTs = now;
   }
 }
 
@@ -205,7 +223,8 @@ function startWorkerLoops() {
   klinesSweepTimer = setInterval(() => {
     runKlinesSweep();
   }, KLINES_SWEEP_INTERVAL_MS);
-  complexHistoryTimer = setInterval(feedComplexHistory, COMPLEX_HISTORY_FEED_MS);
+  // Register event-driven tick listener for complex alert history
+  priceWatcher.onTick(handlePriceTick);
   complexCronTask = cron.schedule('* * * * * *', () => checkAlerts());
   checkPriceAlertsFast();
   checkAlerts();
@@ -224,10 +243,8 @@ function stopWorkerLoops(reason = 'manual') {
     clearInterval(klinesSweepTimer);
     klinesSweepTimer = null;
   }
-  if (complexHistoryTimer) {
-    clearInterval(complexHistoryTimer);
-    complexHistoryTimer = null;
-  }
+  priceWatcher.offTick(handlePriceTick);
+  activeComplexExchangeMarkets = null; // Reset so next start buffers all ticks
   if (complexCronTask) {
     complexCronTask.stop();
     complexCronTask = null;
@@ -644,33 +661,29 @@ async function checkAlerts() {
         }
       }
       
-      // Update the module-level set so the fast history feeder (feedComplexHistory)
-      // knows which exchange+market combos to sample from priceWatcher WS streams.
+      // Update the module-level set so the event-driven tick handler
+      // (handlePriceTick) knows which exchange+market combos to record.
       activeComplexExchangeMarkets = new Set(symbolsByExchangeMarket.keys());
       activeComplexMaxLookbackSec = maxLookbackSec;
 
-      // Step 2: Read prices from priceWatcher WS maps (zero I/O). Fall back to
-      // REST only when WS data is stale. This replaces the old REST-only approach
-      // with real-time WS-fed prices that are also continuously sampled at 500ms
-      // by feedComplexHistory() between checkAlerts() cycles.
+      // Step 2: History is now populated by the event-driven tick listener
+      // (handlePriceTick via priceWatcher.onTick). We only need a snapshot
+      // for the symbol-universe lookup in Step 3 ("all coins" mode).
+      // Also push one more sample per cycle as a safety net.
       const pricesByKey = {};
-      for (const [key, symbolSet] of symbolsByExchangeMarket.entries()) {
+      for (const [key] of symbolsByExchangeMarket.entries()) {
         const [exchange, market] = key.split('|');
-        const symbols = [...symbolSet];
-        if (symbols.length === 0) {
-          pricesByKey[key] = {};
-          continue;
-        }
 
-        // Try priceWatcher WS map first (instant, no network I/O)
+        // Read current WS snapshot for symbol-universe + safety append
         let wsMap = priceWatcher.getPriceMap(exchange, market);
         const wsFresh = priceWatcher.isFresh(exchange, market);
 
         if (wsFresh && wsMap && Object.keys(wsMap).length > 0) {
-          // WS data is fresh — use it directly
           pricesByKey[key] = wsMap;
+          // Safety: also append snapshot in case tick listener missed anything
+          appendComplexPricePoints(exchange, market, wsMap, nowMs, maxLookbackSec);
         } else {
-          // WS stale or empty — fall back to REST (same as old behavior)
+          // WS stale or empty — fall back to REST
           const needsAllCoins = complexAlerts.some(a => {
             const ex2 = (a.exchange || 'binance').toLowerCase();
             const alertMarket = (a.market || 'futures').toLowerCase() === 'spot' ? 'spot' : 'futures';
@@ -692,14 +705,15 @@ async function checkAlerts() {
                       ? (symList) => bitgetService.getLastPricesBySymbols(symList, exchangeType)
                       : (symList) => binanceService.getLastPricesBySymbols(symList, exchangeType);
           try {
-            const prices = needsAllCoins ? await getPrices([]) : await getPrices(symbols);
-            pricesByKey[key] = prices || {};
+            const symbols = [...(symbolsByExchangeMarket.get(key) || [])];
+            const pricesResult = needsAllCoins ? await getPrices([]) : await getPrices(symbols);
+            pricesByKey[key] = pricesResult || {};
           } catch (err) {
             console.warn(`[alertEngine] Failed to fetch prices for ${key}:`, err.message);
             pricesByKey[key] = {};
           }
+          appendComplexPricePoints(exchange, market, pricesByKey[key], nowMs, maxLookbackSec);
         }
-        appendComplexPricePoints(exchange, market, pricesByKey[key], nowMs, maxLookbackSec);
       }
       
       // Step 3: Evaluate each alert condition against window range stats.
@@ -723,12 +737,14 @@ async function checkAlerts() {
         }).filter(Boolean);
         
         if (alertForMode === 'all' && syms.length === 0) {
-          syms = Object.keys(pricesByKey[key] || {})
-            .map((s) => s.toUpperCase())
-            .filter((s) => s.endsWith('USDT'));
+          // Use ALL symbols that we have history for (from tick listener),
+          // supplemented by the current price snapshot.
+          const historyMap = getHistoryMapForExchangeMarket(ex, market);
+          const historySyms = historyMap ? Array.from(historyMap.keys()) : [];
+          const snapshotSyms = Object.keys(pricesByKey[key] || {}).map(s => s.toUpperCase());
+          const allSyms = new Set([...historySyms, ...snapshotSyms]);
+          syms = Array.from(allSyms).filter(s => s.endsWith('USDT'));
         }
-        
-        const priceMap = pricesByKey[key] || {};
         
         // Process each condition
         for (const cond of conditions) {
@@ -746,20 +762,19 @@ async function checkAlerts() {
           for (const symbol of syms) {
             const symbolUpper = symbol.toUpperCase();
 
-            // Symbol matching against price map keys (supports *.P futures aliases).
-            const priceKeys = Object.keys(priceMap);
+            // For symbol resolution, check the history map directly — it has
+            // every symbol that ever received a WS tick. No need to resolve
+            // against the potentially incomplete snapshot.
             let resolvedSymbol = null;
-            const exact = priceKeys.find((k) => k.toUpperCase() === symbolUpper);
-            if (exact) resolvedSymbol = exact.toUpperCase();
-            if (!resolvedSymbol && market === 'futures' && symbolUpper.endsWith('USDT')) {
+            const historyMap = getHistoryMapForExchangeMarket(ex, market);
+            if (historyMap.has(symbolUpper)) {
+              resolvedSymbol = symbolUpper;
+            } else if (market === 'futures' && symbolUpper.endsWith('USDT')) {
               const withP = `${symbolUpper}.P`;
-              const p = priceKeys.find((k) => k.toUpperCase() === withP);
-              if (p) resolvedSymbol = p.toUpperCase();
-            }
-            if (!resolvedSymbol && symbolUpper.endsWith('.P')) {
+              if (historyMap.has(withP)) resolvedSymbol = withP;
+            } else if (symbolUpper.endsWith('.P')) {
               const noP = symbolUpper.slice(0, -2);
-              const p = priceKeys.find((k) => k.toUpperCase() === noP);
-              if (p) resolvedSymbol = p.toUpperCase();
+              if (historyMap.has(noP)) resolvedSymbol = noP;
             }
             if (!resolvedSymbol) continue;
 
