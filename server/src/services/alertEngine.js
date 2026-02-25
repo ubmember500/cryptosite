@@ -910,10 +910,24 @@ async function stopAlertEngine() {
   logEngine('info', 'engine.stopped', { counters: engineCounters });
 }
 
+function getEngineStatus() {
+  return {
+    running: alertEngineRunning,
+    workerActive: engineWorkerActive,
+    leaseEnabled: LEASE_ENABLED,
+    leaseOwner,
+    instanceId: ENGINE_INSTANCE_ID,
+    fastIntervalMs: FAST_PRICE_ALERT_INTERVAL_MS,
+    counters: { ...engineCounters },
+    ts: nowIso(),
+  };
+}
+
 module.exports = {
   startAlertEngine,
   stopAlertEngine,
   checkAlerts,
   setInitialPrice,
   clearInitialPrice,
+  getEngineStatus,
 };

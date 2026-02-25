@@ -18,29 +18,34 @@ export const useAlertStore = create((set, get) => ({
   fetchAlerts: async (filters = {}) => {
     set({ loading: true, error: null });
     try {
-      const { alerts, pendingNotifications } = await alertService.getAlerts(filters);
+      const { alerts, sweptTriggers, pendingNotifications } = await alertService.getAlerts(filters);
       set({ alerts: Array.isArray(alerts) ? alerts : [], loading: false });
 
-      // pendingNotifications = price alerts triggered in the last hour that are still in DB.
-      // The engine keeps triggered alerts in the DB (instead of deleting) precisely so we
-      // can deliver the notification here if the socket event was missed.
-      // processedTriggerKeys deduplicates across the 30-s polling loop so notifications
-      // only show once per session.
+      // Helper: process one notification payload, show modal on first new one.
+      const tryNotify = (payload) => {
+        const applied = get().applyTriggeredEvent(payload);
+        if (applied && !get().pendingTriggerAlert) {
+          set({ pendingTriggerAlert: payload });
+        }
+      };
+
+      // sweptTriggers = alerts triggered JUST NOW by the synchronous per-request sweep
+      // (catches current live price AND historical klines — includes server-sleep gaps).
+      if (Array.isArray(sweptTriggers) && sweptTriggers.length > 0) {
+        sweptTriggers.forEach(tryNotify);
+      }
+
+      // pendingNotifications = already-triggered rows from the last hour in DB
+      // (catches missed socket events from any previous trigger moment).
       if (Array.isArray(pendingNotifications) && pendingNotifications.length > 0) {
         for (const alert of pendingNotifications) {
-          const payload = {
+          tryNotify({
             ...alert,
             id: alert.id,
             alertId: alert.id,
             triggered: true,
             triggeredAt: alert.triggeredAt || new Date().toISOString(),
-          };
-          const applied = get().applyTriggeredEvent(payload);
-          if (applied) {
-            // Show one notification at a time; subsequent polls will surface the next one
-            set({ pendingTriggerAlert: payload });
-            break;
-          }
+          });
         }
       }
     } catch (error) {

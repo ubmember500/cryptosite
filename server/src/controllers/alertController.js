@@ -1,11 +1,190 @@
+const axios = require('axios');
 const prisma = require('../utils/prisma');
 const { createAlertSchema, updateAlertSchema } = require('../utils/validators');
 const priceService = require('../services/priceService');
-const { setInitialPrice, clearInitialPrice } = require('../services/alertEngine');
+const { setInitialPrice, clearInitialPrice, getEngineStatus } = require('../services/alertEngine');
 const { fetchExchangePriceSnapshot } = require('../services/priceSourceResolver');
 const { processPriceAlerts } = require('../services/priceAlertEngine');
 const socketService = require('../services/socketService');
 const telegramService = require('../services/telegramService');
+
+// ---------------------------------------------------------------------------
+// Helpers used by historical klines trigger check
+// ---------------------------------------------------------------------------
+
+function parseAlertSymbols(symbols) {
+  if (Array.isArray(symbols)) return symbols;
+  if (typeof symbols !== 'string' || !symbols) return [];
+  try {
+    const parsed = JSON.parse(symbols);
+    if (Array.isArray(parsed)) return parsed;
+    if (typeof parsed === 'string' && parsed.trim()) return [parsed.trim()];
+    return parsed ? [parsed] : [];
+  } catch {
+    return [symbols.trim()].filter(Boolean);
+  }
+}
+
+/** Re-derive directed condition from stored initialPrice vs targetValue (same logic as priceAlertEngine). */
+function resolveConditionFromAlert(alert) {
+  const initial = Number(alert?.initialPrice);
+  const target = Number(alert?.targetValue);
+  if (Number.isFinite(initial) && initial > 0 && Number.isFinite(target) && target > 0) {
+    if (initial > target) return 'below';
+    if (initial < target) return 'above';
+  }
+  return String(alert?.condition || '').toLowerCase() === 'below' ? 'below' : 'above';
+}
+
+/**
+ * Fetch 1-minute OHLC candles from the relevant exchange since startTimeMs.
+ * Returns array of { high, low } objects.  Falls back to [] on any error so the
+ * caller (checkAlertHistorically) can degrade gracefully.
+ */
+async function fetchKlinesForHistoricalCheck(exchange, market, symbol, startTimeMs) {
+  const isFutures = String(market || 'futures').toLowerCase() !== 'spot';
+  const sym = String(symbol || '').toUpperCase();
+  const endTimeMs = Date.now();
+  const TIMEOUT = 6000;
+
+  try {
+    if (exchange === 'bybit') {
+      const category = isFutures ? 'linear' : 'spot';
+      const resp = await axios.get('https://api.bybit.com/v5/market/kline', {
+        params: { category, symbol: sym, interval: '1', start: startTimeMs, end: endTimeMs, limit: 500 },
+        timeout: TIMEOUT,
+      });
+      const list = resp.data?.result?.list || [];
+      // Bybit kline: [startTime, open, high, low, close, volume, turnover]
+      return list.map((k) => ({ high: Number(k[2]), low: Number(k[3]) }));
+    }
+
+    if (exchange === 'okx') {
+      const base = sym.replace(/USDT$/i, '');
+      const instId = isFutures ? `${base}-USDT-SWAP` : `${base}-USDT`;
+      const resp = await axios.get('https://www.okx.com/api/v5/market/history-candles', {
+        params: { instId, bar: '1m', before: String(startTimeMs), limit: 100 },
+        timeout: TIMEOUT,
+      });
+      const data = resp.data?.data || [];
+      // OKX candle: [ts, open, high, low, close, ...]
+      return data.map((k) => ({ high: Number(k[2]), low: Number(k[3]) }));
+    }
+
+    if (exchange === 'gate') {
+      const contract = `${sym.replace(/USDT$/i, '')}_USDT`;
+      const resp = await axios.get('https://fx-api.gateio.ws/api/v4/futures/usdt/candlesticks', {
+        params: { contract, interval: '1m', from: Math.floor(startTimeMs / 1000), to: Math.floor(endTimeMs / 1000), limit: 500 },
+        timeout: TIMEOUT,
+      });
+      // Gate candle: { h, l, ... }
+      return (Array.isArray(resp.data) ? resp.data : []).map((k) => ({ high: Number(k.h), low: Number(k.l) }));
+    }
+
+    if (exchange === 'mexc') {
+      const contract = `${sym.replace(/USDT$/i, '')}_USDT`;
+      const resp = await axios.get(`https://futures.mexc.com/api/v1/contract/kline/${contract}`, {
+        params: { interval: 'Min1', start: Math.floor(startTimeMs / 1000), end: Math.floor(endTimeMs / 1000) },
+        timeout: TIMEOUT,
+      });
+      const highs = resp.data?.data?.highPrices || [];
+      const lows = resp.data?.data?.lowPrices || [];
+      return highs.map((h, i) => ({ high: Number(h), low: Number(lows[i] ?? h) }));
+    }
+
+    if (exchange === 'bitget') {
+      const productType = isFutures ? 'USDT-FUTURES' : 'SPOT';
+      const bitgetSym = isFutures ? `${sym}` : sym; // POWERUSDT, BTCUSDT etc.
+      const resp = await axios.get('https://api.bitget.com/api/v2/mix/market/history-candles', {
+        params: { symbol: bitgetSym, productType, granularity: '1m', startTime: String(startTimeMs), endTime: String(endTimeMs), limit: '500' },
+        timeout: TIMEOUT,
+      });
+      const list = Array.isArray(resp.data?.data) ? resp.data.data : [];
+      // Bitget candle: [ts, open, high, low, close, vol, ...]
+      return list.map((k) => ({ high: Number(k[2]), low: Number(k[3]) }));
+    }
+
+    // Default: Binance
+    const baseUrl = isFutures ? 'https://fapi.binance.com/fapi/v1' : 'https://api.binance.com/api/v3';
+    const resp = await axios.get(`${baseUrl}/klines`, {
+      params: { symbol: sym, interval: '1m', startTime: startTimeMs, endTime: endTimeMs, limit: 500 },
+      timeout: TIMEOUT,
+    });
+    // Binance kline: [openTime, open, high, low, close, vol, closeTime, ...]
+    return (Array.isArray(resp.data) ? resp.data : []).map((k) => ({ high: Number(k[2]), low: Number(k[3]) }));
+  } catch (error) {
+    console.warn(`[fetchKlinesForHistoricalCheck] ${exchange}/${market}/${sym} failed:`, error?.message);
+    return [];
+  }
+}
+
+/**
+ * Check if a price alert should have triggered historically (e.g. while the
+ * server was sleeping on Render free tier).  Fetches 1-min OHLC candles since
+ * the alert was created and checks whether the price ever crossed the target.
+ * If yes, atomically marks the alert as triggered in the DB and returns the
+ * payload; returns null otherwise.
+ */
+async function checkAlertHistorically(alert) {
+  const symbols = parseAlertSymbols(alert.symbols);
+  const symbol = symbols[0];
+  if (!symbol) return null;
+
+  const targetValue = Number(alert.targetValue);
+  if (!Number.isFinite(targetValue) || targetValue <= 0) return null;
+
+  const condition = resolveConditionFromAlert(alert);
+  const exchange = String(alert.exchange || 'binance').toLowerCase();
+  const market = String(alert.market || 'futures').toLowerCase();
+
+  // Skip very recent alerts (< 2 min old) to avoid false positives from
+  // creation-time price jitter before the engine first runs.
+  const createdAtMs = alert.createdAt ? new Date(alert.createdAt).getTime() : 0;
+  if (Date.now() - createdAtMs < 120_000) return null;
+
+  const klines = await fetchKlinesForHistoricalCheck(exchange, market, symbol, createdAtMs);
+  if (!klines.length) return null;
+
+  let crossed = false;
+  for (const { high, low } of klines) {
+    if (condition === 'above' && Number.isFinite(high) && high >= targetValue) { crossed = true; break; }
+    if (condition === 'below' && Number.isFinite(low) && low <= targetValue) { crossed = true; break; }
+  }
+  if (!crossed) return null;
+
+  // Atomically mark triggered — prevents double-fire with the background engine.
+  const updateResult = await prisma.alert.updateMany({
+    where: { id: alert.id, triggered: false, isActive: true },
+    data: { triggered: true, isActive: false, triggeredAt: new Date() },
+  });
+  if (updateResult.count === 0) return null; // already handled elsewhere
+
+  console.log(`[checkAlertHistorically] TRIGGERED alert=${alert.id} ${symbol} ${condition} ${targetValue} (historical klines)`);
+
+  const coinSymbol = (typeof alert.coinSymbol === 'string' && alert.coinSymbol.trim())
+    ? alert.coinSymbol
+    : symbol.replace(/USDT$/i, '').replace(/USD$/i, '');
+
+  return {
+    id: alert.id,
+    alertId: alert.id,
+    name: alert.name,
+    description: alert.description ?? null,
+    triggered: true,
+    triggeredAt: new Date(),
+    currentPrice: targetValue,
+    targetValue: alert.targetValue,
+    condition,
+    coinSymbol,
+    symbol,
+    exchange,
+    market,
+    alertType: 'price',
+    priceSource: `historical_${exchange}_klines`,
+    ...(alert.initialPrice != null && Number.isFinite(Number(alert.initialPrice))
+      ? { initialPrice: Number(alert.initialPrice) } : {}),
+  };
+}
 
 async function sendAlertToTelegram(userId, payload) {
   try {
@@ -47,24 +226,45 @@ async function sweepUserPriceAlerts(userId) {
     }
 
     const triggeredPayloads = [];
+    const triggeredIds = new Set();
 
+    // --- Pass 1: current live price check ---
     await processPriceAlerts(priceAlerts, {
       logger: console,
       onDeleted: async (alert) => {
-        if (alert.condition === 'pct_change') {
-          clearInitialPrice(alert.id);
-        }
+        if (alert.condition === 'pct_change') clearInitialPrice(alert.id);
       },
       onTriggered: async (alert, payload) => {
+        triggeredIds.add(alert.id);
         triggeredPayloads.push(payload);
         socketService.emitAlertTriggered(alert.userId, payload);
         await sendAlertToTelegram(alert.userId, payload);
       },
     });
 
+    // --- Pass 2: historical klines check for alerts current price didn't catch ---
+    // This catches cases where the server was sleeping (Render free-tier) when the
+    // price spike occurred and the price has since reverted.
+    const unchecked = priceAlerts.filter((a) => !triggeredIds.has(a.id));
+    await Promise.allSettled(
+      unchecked.map(async (alert) => {
+        try {
+          const payload = await checkAlertHistorically(alert);
+          if (!payload) return;
+          triggeredIds.add(alert.id);
+          triggeredPayloads.push(payload);
+          socketService.emitAlertTriggered(alert.userId, payload);
+          await sendAlertToTelegram(alert.userId, payload);
+        } catch (error) {
+          console.warn('[sweepUserPriceAlerts] historical check error alert=' + alert.id + ':', error?.message);
+        }
+      })
+    );
+
     return triggeredPayloads;
   } catch (error) {
     console.warn('[alertController] sweepUserPriceAlerts failed:', error?.message);
+    return [];
   }
 }
 
@@ -190,13 +390,20 @@ async function getAlerts(req, res, next) {
     const { status, exchange, market, type } = req.query;
     const userId = req.user.id;
 
-    // Run sweep in the background — do NOT await it.
-    // Awaiting it forces every live exchange price fetch to finish before we
-    // can reply, adding 1-5 s of latency per request.
-    // The sweep still fires socket events when done; the 30-s polling in the
-    // client provides the fallback for any race-condition misses.
+    // Run sweep WITH a 6-second timeout so:
+    //   a) The response is still fast (DB query takes ~50 ms; klines add ≤ 2 s per alert).
+    //   b) Any triggers detected (current price OR historical klines) come back to the
+    //      client synchronously as `sweptTriggers` — no need to wait for the next poll.
+    // This catches missed triggers when Render's server was sleeping during the price spike.
+    let sweptTriggers = [];
     if (status !== 'triggered') {
-      sweepUserPriceAlerts(userId).catch(() => {});
+      try {
+        const sweepPromise = sweepUserPriceAlerts(userId);
+        const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve([]), 6000));
+        sweptTriggers = await Promise.race([sweepPromise, timeoutPromise]) || [];
+      } catch {
+        sweptTriggers = [];
+      }
     }
 
     const where = { userId };
@@ -246,7 +453,7 @@ async function getAlerts(req, res, next) {
       take: 20,
     });
 
-    res.json({ alerts, sweptTriggers: [], pendingNotifications });
+    res.json({ alerts, sweptTriggers, pendingNotifications });
   } catch (error) {
     next(error);
   }
@@ -748,4 +955,5 @@ module.exports = {
   toggleAlert,
   deleteAlert,
   getHistory,
+  getEngineStatus: (req, res) => res.json(getEngineStatus()),
 };
