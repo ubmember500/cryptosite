@@ -6,12 +6,14 @@ import Input from '../common/Input';
 import Select from '../common/Select';
 import TokenSelector from './TokenSelector';
 import { useMarketStore } from '../../store/marketStore';
-import { AlertCircle, Info, X } from 'lucide-react';
+import { useAlertStore } from '../../store/alertStore';
+import { AlertCircle, Info, Lock, X } from 'lucide-react';
 import { cn } from '../../utils/cn';
 
 const CreateAlertModal = ({ isOpen, onClose, onSuccess, editingAlertId, editingAlert, initialData = null }) => {
   const { t } = useTranslation();
   const { fetchBinanceTokens, binanceTokens, loadingBinance, setExchange } = useMarketStore();
+  const { createAlert, updateAlert } = useAlertStore();
 
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
@@ -155,8 +157,45 @@ const CreateAlertModal = ({ isOpen, onClose, onSuccess, editingAlertId, editingA
           return Number.isFinite(v) && v > 0 && c?.timeframe;
         })();
 
-  const handleSubmit = () => {
-    onClose();
+  const handleSubmit = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      let payload;
+      if (formData.alertType === 'price') {
+        payload = {
+          alertType: 'price',
+          name: formData.name || '',
+          exchange: formData.exchanges[0] || 'binance',
+          market: formData.market,
+          symbols: formData.symbols,
+          targetValue: Number(formData.targetValue),
+        };
+      } else {
+        payload = {
+          alertType: 'complex',
+          name: formData.name || '',
+          exchange: formData.exchanges[0] || 'binance',
+          market: formData.market,
+          symbols: formData.symbols,
+          conditions: formData.conditions,
+          notificationOptions: { ...formData.notificationOptions, alertForMode },
+        };
+      }
+
+      if (editingAlertId) {
+        // Price alert: only name is editable (backend constraint — symbol/target are immutable)
+        const editPayload = formData.alertType === 'price' ? { name: formData.name } : payload;
+        await updateAlert(editingAlertId, editPayload);
+      } else {
+        await createAlert(payload);
+      }
+      onSuccess();
+    } catch (err) {
+      setError(err?.message || t('Failed to save alert. Please try again.'));
+    } finally {
+      setLoading(false);
+    }
   };
 
   const title = editingAlertId ? t('Edit alert') : t('Create alert');
@@ -325,20 +364,35 @@ const CreateAlertModal = ({ isOpen, onClose, onSuccess, editingAlertId, editingA
           <div className="space-y-4">
             {formData.alertType === 'price' ? (
               <>
+                {editingAlertId && (
+                  <div className="flex items-center gap-2 p-3 bg-surface/50 border border-border rounded-lg text-sm text-textSecondary mb-2">
+                    <Lock size={14} className="flex-shrink-0" />
+                    {t('Symbol and target price are locked after creation. Only the name can be changed.')}
+                  </div>
+                )}
+
                 <div>
                   <label className="block text-sm font-medium text-textPrimary mb-2">
                     {t('Token / symbol')}
                   </label>
-                  <TokenSelector
-                    tokens={binanceTokens}
-                    value={formData.symbols[0] || ''}
-                    onChange={(symbol) => setFormData({ ...formData, symbols: [symbol] })}
-                    placeholder={t('Search or select token')}
-                    loading={loadingBinance}
-                  />
-                  <p className="text-xs text-textSecondary mt-1">
-                    {t('Select from {{count}} tokens.', { count: binanceTokens.length })}
-                  </p>
+                  {editingAlertId ? (
+                    <div className="w-full bg-surface/50 border border-border rounded-lg px-4 py-2 text-textSecondary opacity-75">
+                      {formData.symbols[0] || '—'}
+                    </div>
+                  ) : (
+                    <TokenSelector
+                      tokens={binanceTokens}
+                      value={formData.symbols[0] || ''}
+                      onChange={(symbol) => setFormData({ ...formData, symbols: [symbol] })}
+                      placeholder={t('Search or select token')}
+                      loading={loadingBinance}
+                    />
+                  )}
+                  {!editingAlertId && (
+                    <p className="text-xs text-textSecondary mt-1">
+                      {t('Select from {{count}} tokens.', { count: binanceTokens.length })}
+                    </p>
+                  )}
                 </div>
 
                 <div>
@@ -349,12 +403,15 @@ const CreateAlertModal = ({ isOpen, onClose, onSuccess, editingAlertId, editingA
                     type="number"
                     step="0.01"
                     value={formData.targetValue}
-                    onChange={(e) => setFormData({ ...formData, targetValue: e.target.value })}
+                    onChange={(e) => !editingAlertId && setFormData({ ...formData, targetValue: e.target.value })}
                     placeholder={t('e.g. 50000')}
+                    disabled={!!editingAlertId}
                   />
-                  <p className="text-xs text-textSecondary mt-1">
-                    {t('Flow: exchange → market → coin → target. Alert triggers on first hit since creation.')}
-                  </p>
+                  {!editingAlertId && (
+                    <p className="text-xs text-textSecondary mt-1">
+                      {t('Alert triggers the first time price crosses your target (up or down).')}
+                    </p>
+                  )}
                 </div>
               </>
             ) : (

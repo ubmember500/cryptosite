@@ -1,28 +1,39 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import AlertsTable from '../components/alerts/AlertsTable';
+import AlertsFilter from '../components/alerts/AlertsFilter';
 import CreateAlertModal from '../components/alerts/CreateAlertModal';
 import Button from '../components/common/Button';
 import { Plus, Trash2 } from 'lucide-react';
+import { useAlertStore } from '../store/alertStore';
 
 const Alerts = () => {
   const { t } = useTranslation();
 
-  const alerts = [];
-  const loading = false;
+  const { alerts, loading, fetchAlerts, deleteAlert, toggleAlert } = useAlertStore();
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingAlertId, setEditingAlertId] = useState(null);
   const [selectedIds, setSelectedIds] = useState([]);
+  const [filters, setFilters] = useState({ status: 'active', exchange: 'all', market: 'all', type: 'all' });
 
-  const editingAlert = null;
+  const editingAlert = editingAlertId ? (alerts.find((a) => a.id === editingAlertId) ?? null) : null;
+
+  useEffect(() => {
+    fetchAlerts(filters);
+  }, [filters, fetchAlerts]);
+
+  const handleFilterChange = (category, value) => {
+    setFilters((prev) => ({ ...prev, [category]: value }));
+  };
 
   const handleCreateClick = () => {
     setEditingAlertId(null);
     setIsModalOpen(true);
   };
 
-  const handleEdit = () => {
+  const handleEdit = (row) => {
+    setEditingAlertId(row.id);
     setIsModalOpen(true);
   };
 
@@ -35,13 +46,33 @@ const Alerts = () => {
     handleCloseModal();
   };
 
-  const handleDelete = () => {};
+  const handleDelete = async (id) => {
+    if (!window.confirm(t('Delete this alert?'))) return;
+    try {
+      await deleteAlert(id);
+      setSelectedIds((prev) => prev.filter((sid) => sid !== id));
+    } catch (err) {
+      console.error('Delete failed:', err);
+    }
+  };
 
-  const handleToggle = () => {};
+  const handleToggle = async (id) => {
+    try {
+      await toggleAlert(id);
+    } catch (err) {
+      console.error('Toggle failed:', err);
+    }
+  };
 
-  const handleBulkDelete = () => {
+  const handleBulkDelete = async () => {
     if (selectedIds.length === 0) return;
-    setSelectedIds([]);
+    if (!window.confirm(t('Delete {{count}} selected alerts?', { count: selectedIds.length }))) return;
+    try {
+      await Promise.all(selectedIds.map((id) => deleteAlert(id)));
+      setSelectedIds([]);
+    } catch (err) {
+      console.error('Bulk delete failed:', err);
+    }
   };
 
   return (
@@ -73,6 +104,9 @@ const Alerts = () => {
           </Button>
         </div>
       </div>
+
+      {/* Filters */}
+      <AlertsFilter filters={filters} onFilterChange={handleFilterChange} />
 
       {/* Alerts Table */}
       <AlertsTable

@@ -13,8 +13,11 @@ const filterOptions = {
   exchange: [
     { value: 'all', label: 'All', icon: Filter },
     { value: 'binance', label: 'Binance' },
-    { value: 'kucoin', label: 'KuCoin' },
     { value: 'bybit', label: 'Bybit' },
+    { value: 'okx', label: 'OKX' },
+    { value: 'gate', label: 'Gate.io' },
+    { value: 'mexc', label: 'MEXC' },
+    { value: 'bitget', label: 'Bitget' },
   ],
   market: [
     { value: 'all', label: 'All', icon: Filter },
