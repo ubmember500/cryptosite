@@ -109,33 +109,12 @@ const CreateAlertModal = ({ isOpen, onClose, onSuccess, editingAlertId, editingA
     }
   }, [formData.market, formData.exchanges, fetchBinanceTokens, setExchange]);
 
-  // Complex alerts: when entering Step 3 with tokens loaded and "all" mode, set all tokens (new alert only)
+  // When switching from "all" to "whitelist", clear symbols
   useEffect(() => {
-    if (
-      step === 3 &&
-      formData.alertType === 'complex' &&
-      !editingAlertId &&
-      binanceTokens.length > 0 &&
-      alertForMode === 'all' &&
-      formData.symbols.length === 0
-    ) {
-      const allSymbols = binanceTokens.map((t) => t.fullSymbol || t.symbol || '').filter(Boolean);
-      setFormData((prev) => ({ ...prev, symbols: allSymbols }));
+    if (step === 3 && formData.alertType === 'complex' && alertForMode === 'whitelist' && formData.symbols.length === 0) {
+      // Nothing to do — whitelist starts empty
     }
-  }, [step, formData.alertType, formData.symbols.length, editingAlertId, binanceTokens, alertForMode]);
-
-  // Update symbols when alertForMode changes
-  useEffect(() => {
-    if (step === 3 && formData.alertType === 'complex' && binanceTokens.length > 0) {
-      if (alertForMode === 'all') {
-        const allSymbols = binanceTokens.map((t) => t.fullSymbol || t.symbol || '').filter(Boolean);
-        setFormData((prev) => ({ ...prev, symbols: allSymbols }));
-      } else if (alertForMode === 'whitelist' && formData.symbols.length === binanceTokens.length) {
-        // Switching from "all" to "whitelist" - clear symbols
-        setFormData((prev) => ({ ...prev, symbols: [] }));
-      }
-    }
-  }, [alertForMode, step, formData.alertType, binanceTokens.length]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [alertForMode, step, formData.alertType]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const filteredComplexTokens = useMemo(() => {
     if (!binanceTokens.length) return [];
@@ -222,8 +201,8 @@ const CreateAlertModal = ({ isOpen, onClose, onSuccess, editingAlertId, editingA
           name: formData.name || '',
           exchange: formData.exchanges[0] || 'binance',
           market: formData.market,
-          symbols: formData.symbols,
-          conditions: formData.conditions,
+          symbols: alertForMode === 'all' ? [] : formData.symbols,
+          conditions: formData.conditions.map(c => ({ ...c, timeframe: '1m' })),
           notificationOptions: { ...formData.notificationOptions, alertForMode },
         };
       }
@@ -604,25 +583,9 @@ const CreateAlertModal = ({ isOpen, onClose, onSuccess, editingAlertId, editingA
                     </div>
                     <div className="flex-1">
                       <label className="block text-xs text-textSecondary mb-1">{t('Timeframe')}</label>
-                      <Select
-                        value={formData.conditions?.[0]?.timeframe ?? '1m'}
-                        onChange={(e) => {
-                          const cond = formData.conditions?.[0] || { type: 'pct_change', value: '', timeframe: '1m' };
-                          setFormData({
-                            ...formData,
-                            conditions: [{ ...cond, timeframe: e.target.value }],
-                          });
-                        }}
-                        options={[
-                          { value: '1m', label: t('1 minute') },
-                          { value: '5m', label: t('5 minutes') },
-                          { value: '15m', label: t('15 minutes') },
-                          { value: '30m', label: t('30 minutes') },
-                          { value: '1h', label: t('1 hour') },
-                          { value: '4h', label: t('4 hours') },
-                          { value: '1d', label: t('1 day') },
-                        ]}
-                      />
+                      <div className="px-3 py-2 rounded-lg border border-border bg-surface text-sm text-textPrimary">
+                        {t('1 minute')}
+                      </div>
                     </div>
                   </div>
                 </div>

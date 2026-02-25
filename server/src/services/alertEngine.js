@@ -615,43 +615,26 @@ async function checkAlerts() {
         const ex = (alert.exchange || 'binance').toLowerCase();
         const market = (alert.market || 'futures').toLowerCase() === 'spot' ? 'spot' : 'futures';
         const notifOptions = parseNotificationOptions(alert.notificationOptions);
-        const alertForMode = notifOptions.alertForMode || 'whitelist';
-        
-        let syms = parseSymbols(alert.symbols).map((s) => {
-          const sUpper = String(s || '').toUpperCase().trim();
-          if (!sUpper) return '';
-          if (!sUpper.endsWith('USDT') && !sUpper.endsWith('USD') && !sUpper.includes('/')) {
-            return sUpper + 'USDT';
-          }
-          return sUpper;
-        }).filter(Boolean);
-        
-        if (alertForMode === 'all' && syms.length === 0) {
-          try {
-            const fetchActive =
-              ex === 'bybit'
-                ? bybitService.fetchActiveSymbols
-                : ex === 'okx'
-                  ? okxService.fetchActiveSymbols
-                  : ex === 'gate'
-                    ? gateService.fetchActiveSymbols
-                    : ex === 'mexc'
-                      ? mexcService.fetchActiveSymbols
-                      : ex === 'bitget'
-                        ? bitgetService.fetchActiveSymbols
-                        : binanceService.fetchActiveSymbols;
-            const activeSymbols = await fetchActive(market);
-            if (activeSymbols && activeSymbols.size > 0) {
-              syms = Array.from(activeSymbols).filter(s => s.endsWith('USDT')).map(s => s.toUpperCase());
-            }
-          } catch (error) {
-            console.error(`[alertEngine] Failed to fetch active symbols for ${ex}/${market}:`, error.message);
-          }
-        }
+        const alertForMode = notifOptions.alertForMode || 'all';
         
         const key = `${ex}|${market}`;
-        if (!symbolsByExchangeMarket.has(key)) symbolsByExchangeMarket.set(key, new Set());
-        syms.forEach(s => symbolsByExchangeMarket.get(key).add(s));
+        if (alertForMode === 'all') {
+          // "All coins" mode: just register the exchange+market combo.
+          // Don't enumerate symbols — we'll iterate WS history directly in Step 3.
+          if (!symbolsByExchangeMarket.has(key)) symbolsByExchangeMarket.set(key, new Set());
+        } else {
+          // Whitelist mode: collect specific symbols
+          let syms = parseSymbols(alert.symbols).map((s) => {
+            const sUpper = String(s || '').toUpperCase().trim();
+            if (!sUpper) return '';
+            if (!sUpper.endsWith('USDT') && !sUpper.endsWith('USD') && !sUpper.includes('/')) {
+              return sUpper + 'USDT';
+            }
+            return sUpper;
+          }).filter(Boolean);
+          if (!symbolsByExchangeMarket.has(key)) symbolsByExchangeMarket.set(key, new Set());
+          syms.forEach(s => symbolsByExchangeMarket.get(key).add(s));
+        }
 
         const conds = parseConditions(alert.conditions);
         for (const c of conds) {
@@ -688,7 +671,7 @@ async function checkAlerts() {
             const ex2 = (a.exchange || 'binance').toLowerCase();
             const alertMarket = (a.market || 'futures').toLowerCase() === 'spot' ? 'spot' : 'futures';
             const notifOptions2 = parseNotificationOptions(a.notificationOptions);
-            return (notifOptions2.alertForMode || 'whitelist') === 'all' && ex2 === exchange && alertMarket === market;
+            return (notifOptions2.alertForMode || 'all') === 'all' && ex2 === exchange && alertMarket === market;
           });
 
           const exchangeType = market === 'spot' ? 'spot' : 'futures';
@@ -722,28 +705,30 @@ async function checkAlerts() {
         const market = (alert.market || 'futures').toLowerCase() === 'spot' ? 'spot' : 'futures';
         const key = `${ex}|${market}`;
         const notifOptions = parseNotificationOptions(alert.notificationOptions);
-        const alertForMode = notifOptions.alertForMode || 'whitelist';
+        const alertForMode = notifOptions.alertForMode || 'all';
         const conditions = parseConditions(alert.conditions);
         
         if (conditions.length === 0) continue;
         
-        let syms = parseSymbols(alert.symbols).map((s) => {
-          const sUpper = String(s || '').toUpperCase().trim();
-          if (!sUpper) return '';
-          if (!sUpper.endsWith('USDT') && !sUpper.endsWith('USD') && !sUpper.includes('/')) {
-            return sUpper + 'USDT';
-          }
-          return sUpper;
-        }).filter(Boolean);
-        
-        if (alertForMode === 'all' && syms.length === 0) {
-          // Use ALL symbols that we have history for (from tick listener),
-          // supplemented by the current price snapshot.
+        let syms;
+        if (alertForMode === 'all') {
+          // "All coins" mode: iterate ALL symbols from WS history + current snapshot.
+          // Ignore any stored symbols — use live data directly.
           const historyMap = getHistoryMapForExchangeMarket(ex, market);
           const historySyms = historyMap ? Array.from(historyMap.keys()) : [];
           const snapshotSyms = Object.keys(pricesByKey[key] || {}).map(s => s.toUpperCase());
           const allSyms = new Set([...historySyms, ...snapshotSyms]);
           syms = Array.from(allSyms).filter(s => s.endsWith('USDT'));
+        } else {
+          // Whitelist mode: use stored symbols
+          syms = parseSymbols(alert.symbols).map((s) => {
+            const sUpper = String(s || '').toUpperCase().trim();
+            if (!sUpper) return '';
+            if (!sUpper.endsWith('USDT') && !sUpper.endsWith('USD') && !sUpper.includes('/')) {
+              return sUpper + 'USDT';
+            }
+            return sUpper;
+          }).filter(Boolean);
         }
         
         // Process each condition
@@ -782,7 +767,7 @@ async function checkAlerts() {
             if (!stats) continue;
 
             const spanPct = ((stats.max - stats.min) / stats.min) * 100;
-            if (syms.length <= 20 || spanPct >= threshold * 0.8) {
+            if (spanPct >= threshold * 0.5) {
               console.log(
                 `[alertEngine] Complex ${alert.id} ${resolvedSymbol}: ` +
                 `window ${timeframeSec}s min=${stats.min.toFixed(6)} max=${stats.max.toFixed(6)} ` +
@@ -822,8 +807,8 @@ async function checkAlerts() {
                 alertType: 'complex',
                 symbol: resolvedSymbol,
                 pctChange: reportedPct,
-                baselinePrice: stats.min,
-                currentPrice: stats.max,
+                baselinePrice: direction >= 0 ? stats.min : stats.max,
+                currentPrice: direction >= 0 ? stats.max : stats.min,
                 windowSeconds: timeframeSec,
               };
               

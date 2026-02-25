@@ -576,6 +576,16 @@ async function createAlert(req, res, next) {
       validatedData.symbols != null
         ? (Array.isArray(validatedData.symbols) ? validatedData.symbols : [validatedData.symbols])
         : null;
+
+    // For complex "all coins" mode, force empty array — server uses WS history dynamically
+    if (validatedData.alertType === 'complex') {
+      const notifOpts = validatedData.notificationOptions || {};
+      const parsedOpts = typeof notifOpts === 'string' ? JSON.parse(notifOpts) : notifOpts;
+      if ((parsedOpts.alertForMode || 'all') === 'all') {
+        symbolsForStorage = [];
+      }
+    }
+
     const conditionsStr =
       validatedData.conditions != null && validatedData.conditions !== ''
         ? typeof validatedData.conditions === 'string'
