@@ -120,9 +120,12 @@ function stop() {
 // ─── Subscription management ────────────────────────────────────────────────
 
 /**
- * Query DB for active price alerts, then ensure WS connections exist
- * for each unique exchange+market that has alerts.  Disconnect from
- * exchange+market combos that no longer have alerts.
+ * Query DB for active price alerts AND complex alerts, then ensure WS
+ * connections exist for each unique exchange+market that has alerts.
+ * Disconnect from exchange+market combos that no longer have alerts.
+ *
+ * Complex alerts (alertType='complex') stay active even after triggering,
+ * so we include them via a separate OR branch.
  */
 async function refreshSubscriptions() {
   if (!running) return;
@@ -131,8 +134,16 @@ async function refreshSubscriptions() {
   let alerts;
   try {
     alerts = await prisma.alert.findMany({
-      where: { isActive: true, triggered: false, alertType: 'price' },
-      select: { exchange: true, market: true, symbols: true },
+      where: {
+        isActive: true,
+        OR: [
+          // Price alerts: must not be triggered (they self-delete)
+          { triggered: false, alertType: 'price' },
+          // Complex alerts: keep monitoring even after triggered
+          { alertType: 'complex' },
+        ],
+      },
+      select: { exchange: true, market: true, symbols: true, alertType: true, notificationOptions: true },
     });
   } catch (err) {
     console.error('[PriceWatcher] DB query failed:', err.message);
@@ -153,13 +164,38 @@ async function refreshSubscriptions() {
 
     // For per-symbol exchanges, track needed symbols
     if (ex === 'bybit' || ex === 'bitget') {
+      // Complex alerts with alertForMode='all': we need to add the exchange+market pair
+      // but for per-symbol WS (Bybit/Bitget) we can't subscribe to ALL symbols via WS.
+      // The price feeder in alertEngine will fall back to REST for 'all' mode on these.
+      // For whitelist mode, add each symbol to the per-symbol subscription set.
+      let notifOpts = {};
+      try {
+        notifOpts = typeof alert.notificationOptions === 'string'
+          ? JSON.parse(alert.notificationOptions || '{}')
+          : (alert.notificationOptions || {});
+      } catch { notifOpts = {}; }
+
+      const alertForMode = notifOpts.alertForMode || 'whitelist';
+
       let syms;
       try { syms = JSON.parse(alert.symbols || '[]'); } catch { syms = [alert.symbols]; }
-      const first = Array.isArray(syms) ? syms[0] : syms;
-      if (first) {
-        const sym = String(first).toUpperCase().replace(/\.P$/i, '');
-        if (ex === 'bybit') (mkt === 'spot' ? bybitSpotSyms : bybitFuturesSyms).add(sym);
-        if (ex === 'bitget') (mkt === 'spot' ? bitgetSpotSyms : bitgetFuturesSyms).add(sym);
+      const symList = Array.isArray(syms) ? syms : (syms ? [syms] : []);
+
+      if (alert.alertType === 'complex' && alertForMode === 'all') {
+        // For 'all' mode on per-symbol exchanges, we still add the exchange+market
+        // but can't subscribe to every symbol. The alertEngine history feeder
+        // will handle REST fallback for these.
+        // Don't add individual symbols — just ensure the connection exists.
+      } else {
+        // Price alerts: track first symbol; Complex whitelist: track all symbols
+        const symbolsToTrack = alert.alertType === 'complex' ? symList : (symList.length > 0 ? [symList[0]] : []);
+        for (const s of symbolsToTrack) {
+          if (!s) continue;
+          const sym = String(s).toUpperCase().replace(/\.P$/i, '');
+          if (!sym.endsWith('USDT') && !sym.endsWith('USD')) continue;
+          if (ex === 'bybit') (mkt === 'spot' ? bybitSpotSyms : bybitFuturesSyms).add(sym);
+          if (ex === 'bitget') (mkt === 'spot' ? bitgetSpotSyms : bitgetFuturesSyms).add(sym);
+        }
       }
     }
   }

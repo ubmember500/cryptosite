@@ -9,6 +9,7 @@ const bitgetService = require('./bitgetService');
 const socketService = require('./socketService');
 const telegramService = require('./telegramService');
 const { processPriceAlerts } = require('./priceAlertEngine');
+const priceWatcher = require('./priceWatcher');
 
 let alertEngineRunning = false;
 let alertEngineShuttingDown = false;
@@ -17,8 +18,14 @@ let alertCheckInProgress = false;
 let fastPriceCheckInProgress = false;
 let fastPriceTimer = null;
 let complexCronTask = null;
+let complexHistoryTimer = null;
 let leaseCoordinatorTimer = null;
 let leaseOpInProgress = false;
+
+// Tracks which exchange|market combos have active complex alerts (updated by checkAlerts)
+let activeComplexExchangeMarkets = new Set();
+let activeComplexMaxLookbackSec = 60;
+const COMPLEX_HISTORY_FEED_MS = 500; // Feed WS prices into complex history every 500ms
 
 const ENGINE_INSTANCE_ID = process.env.ALERT_ENGINE_INSTANCE_ID || `${process.pid}-${Math.random().toString(36).slice(2, 10)}`;
 const LEASE_TABLE = '"EngineLease"';
@@ -173,6 +180,23 @@ async function releaseLease(reason = 'shutdown') {
   logEngine('info', 'lease.release', { leaseName: LEASE_NAME, reason });
 }
 
+/**
+ * Feed priceWatcher WS prices into the complex alert rolling history.
+ * Runs every 500ms for finer-grained sampling than the 1s checkAlerts cycle.
+ * Zero I/O — reads in-memory maps only.
+ */
+function feedComplexHistory() {
+  if (activeComplexExchangeMarkets.size === 0) return;
+  const nowMs = Date.now();
+  for (const key of activeComplexExchangeMarkets) {
+    const [exchange, market] = key.split('|');
+    const wsMap = priceWatcher.getPriceMap(exchange, market);
+    if (wsMap && Object.keys(wsMap).length > 0) {
+      appendComplexPricePoints(exchange, market, wsMap, nowMs, activeComplexMaxLookbackSec);
+    }
+  }
+}
+
 function startWorkerLoops() {
   if (engineWorkerActive) return;
   fastPriceTimer = setInterval(() => {
@@ -181,6 +205,7 @@ function startWorkerLoops() {
   klinesSweepTimer = setInterval(() => {
     runKlinesSweep();
   }, KLINES_SWEEP_INTERVAL_MS);
+  complexHistoryTimer = setInterval(feedComplexHistory, COMPLEX_HISTORY_FEED_MS);
   complexCronTask = cron.schedule('* * * * * *', () => checkAlerts());
   checkPriceAlertsFast();
   checkAlerts();
@@ -198,6 +223,10 @@ function stopWorkerLoops(reason = 'manual') {
   if (klinesSweepTimer) {
     clearInterval(klinesSweepTimer);
     klinesSweepTimer = null;
+  }
+  if (complexHistoryTimer) {
+    clearInterval(complexHistoryTimer);
+    complexHistoryTimer = null;
   }
   if (complexCronTask) {
     complexCronTask.stop();
@@ -615,7 +644,15 @@ async function checkAlerts() {
         }
       }
       
-      // Step 2: Fetch prices per (exchange, market) and append to that exchange's history.
+      // Update the module-level set so the fast history feeder (feedComplexHistory)
+      // knows which exchange+market combos to sample from priceWatcher WS streams.
+      activeComplexExchangeMarkets = new Set(symbolsByExchangeMarket.keys());
+      activeComplexMaxLookbackSec = maxLookbackSec;
+
+      // Step 2: Read prices from priceWatcher WS maps (zero I/O). Fall back to
+      // REST only when WS data is stale. This replaces the old REST-only approach
+      // with real-time WS-fed prices that are also continuously sampled at 500ms
+      // by feedComplexHistory() between checkAlerts() cycles.
       const pricesByKey = {};
       for (const [key, symbolSet] of symbolsByExchangeMarket.entries()) {
         const [exchange, market] = key.split('|');
@@ -624,33 +661,43 @@ async function checkAlerts() {
           pricesByKey[key] = {};
           continue;
         }
-        
-        const needsAllCoins = complexAlerts.some(a => {
-          const ex = (a.exchange || 'binance').toLowerCase();
-          const alertMarket = (a.market || 'futures').toLowerCase() === 'spot' ? 'spot' : 'futures';
-          const notifOptions = parseNotificationOptions(a.notificationOptions);
-          return (notifOptions.alertForMode || 'whitelist') === 'all' && ex === exchange && alertMarket === market;
-        });
-        
-        const exchangeType = market === 'spot' ? 'spot' : 'futures';
-        const getPrices =
-          exchange === 'bybit'
-            ? (symList) => bybitService.getLastPricesBySymbols(symList, exchangeType)
-            : exchange === 'okx'
-              ? (symList) => okxService.getLastPricesBySymbols(symList, exchangeType)
-              : exchange === 'gate'
-                ? (symList) => gateService.getLastPricesBySymbols(symList, exchangeType)
-                : exchange === 'mexc'
-                  ? (symList) => mexcService.getLastPricesBySymbols(symList, exchangeType)
-                  : exchange === 'bitget'
-                    ? (symList) => bitgetService.getLastPricesBySymbols(symList, exchangeType)
-                    : (symList) => binanceService.getLastPricesBySymbols(symList, exchangeType);
-        try {
-          const prices = needsAllCoins ? await getPrices([]) : await getPrices(symbols);
-          pricesByKey[key] = prices || {};
-        } catch (err) {
-          console.warn(`[alertEngine] Failed to fetch prices for ${key}:`, err.message);
-          pricesByKey[key] = {};
+
+        // Try priceWatcher WS map first (instant, no network I/O)
+        let wsMap = priceWatcher.getPriceMap(exchange, market);
+        const wsFresh = priceWatcher.isFresh(exchange, market);
+
+        if (wsFresh && wsMap && Object.keys(wsMap).length > 0) {
+          // WS data is fresh — use it directly
+          pricesByKey[key] = wsMap;
+        } else {
+          // WS stale or empty — fall back to REST (same as old behavior)
+          const needsAllCoins = complexAlerts.some(a => {
+            const ex2 = (a.exchange || 'binance').toLowerCase();
+            const alertMarket = (a.market || 'futures').toLowerCase() === 'spot' ? 'spot' : 'futures';
+            const notifOptions2 = parseNotificationOptions(a.notificationOptions);
+            return (notifOptions2.alertForMode || 'whitelist') === 'all' && ex2 === exchange && alertMarket === market;
+          });
+
+          const exchangeType = market === 'spot' ? 'spot' : 'futures';
+          const getPrices =
+            exchange === 'bybit'
+              ? (symList) => bybitService.getLastPricesBySymbols(symList, exchangeType)
+              : exchange === 'okx'
+                ? (symList) => okxService.getLastPricesBySymbols(symList, exchangeType)
+                : exchange === 'gate'
+                  ? (symList) => gateService.getLastPricesBySymbols(symList, exchangeType)
+                  : exchange === 'mexc'
+                    ? (symList) => mexcService.getLastPricesBySymbols(symList, exchangeType)
+                    : exchange === 'bitget'
+                      ? (symList) => bitgetService.getLastPricesBySymbols(symList, exchangeType)
+                      : (symList) => binanceService.getLastPricesBySymbols(symList, exchangeType);
+          try {
+            const prices = needsAllCoins ? await getPrices([]) : await getPrices(symbols);
+            pricesByKey[key] = prices || {};
+          } catch (err) {
+            console.warn(`[alertEngine] Failed to fetch prices for ${key}:`, err.message);
+            pricesByKey[key] = {};
+          }
         }
         appendComplexPricePoints(exchange, market, pricesByKey[key], nowMs, maxLookbackSec);
       }
@@ -734,7 +781,10 @@ async function checkAlerts() {
                 continue; // Skip if cooldown active (60 seconds per symbol)
               }
 
-              const pctChange = ((stats.current - stats.oldest) / stats.oldest) * 100;
+              // Report the actual span move with direction based on current vs oldest.
+              // Previously used oldest→current which could be ~0% even when a 5% spike occurred.
+              const direction = stats.current >= stats.oldest ? 1 : -1;
+              const reportedPct = direction * spanPct;
               // TRIGGER! Continue checking other symbols after this trigger
               const updatedAlert = await prisma.alert.update({
                 where: { id: alert.id },
@@ -756,9 +806,9 @@ async function checkAlerts() {
                 triggeredAt: updatedAlert.triggeredAt,
                 alertType: 'complex',
                 symbol: resolvedSymbol,
-                pctChange: pctChange,
-                baselinePrice: stats.oldest,
-                currentPrice: stats.current,
+                pctChange: reportedPct,
+                baselinePrice: stats.min,
+                currentPrice: stats.max,
                 windowSeconds: timeframeSec,
               };
               
