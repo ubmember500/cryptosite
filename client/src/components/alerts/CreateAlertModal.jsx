@@ -163,6 +163,13 @@ const CreateAlertModal = ({ isOpen, onClose, onSuccess, editingAlertId, editingA
     try {
       let payload;
       if (formData.alertType === 'price') {
+        const selectedToken = binanceTokens.find(
+          (t) => (t.fullSymbol || t.symbol) === formData.symbols[0]
+        );
+        const currentPrice =
+          selectedToken?.lastPrice != null && Number.isFinite(Number(selectedToken.lastPrice))
+            ? Number(selectedToken.lastPrice)
+            : undefined;
         payload = {
           alertType: 'price',
           name: formData.name || '',
@@ -170,6 +177,7 @@ const CreateAlertModal = ({ isOpen, onClose, onSuccess, editingAlertId, editingA
           market: formData.market,
           symbols: formData.symbols,
           targetValue: Number(formData.targetValue),
+          ...(currentPrice != null ? { currentPrice } : {}),
         };
       } else {
         payload = {
