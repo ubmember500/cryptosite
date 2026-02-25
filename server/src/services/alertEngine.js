@@ -21,10 +21,18 @@ let complexCronTask = null;
 let leaseCoordinatorTimer = null;
 let leaseOpInProgress = false;
 
-// Tracks which exchange|market combos have active complex alerts (updated by checkAlerts)
-// null = not yet initialized (tick handler records ALL combos until first checkAlerts cycle)
-let activeComplexExchangeMarkets = null;
-let activeComplexMaxLookbackSec = 60;
+// ─── Complex alert in-memory cache ─────────────────────────────────────────
+// Pre-parsed active complex alerts. Refreshed every 30s + on alert CRUD.
+// Each entry: { id, userId, name, description, exchange, market,
+//               alertForMode, symbolSet (Set), threshold, timeframeSec }
+let complexAlertsCache = [];
+let complexCacheRefreshedAt = 0;
+let complexCacheRefreshTimer = null;
+const COMPLEX_CACHE_REFRESH_MS = 30_000;
+const COMPLEX_HISTORY_LOOKBACK_SEC = 65; // slightly more than 60s window
+
+// Set of 'exchange|market' that have active complex alerts (for tick filter)
+let activeComplexExchangeMarkets = new Set();
 
 const ENGINE_INSTANCE_ID = process.env.ALERT_ENGINE_INSTANCE_ID || `${process.pid}-${Math.random().toString(36).slice(2, 10)}`;
 const LEASE_TABLE = '"EngineLease"';
@@ -180,38 +188,208 @@ async function releaseLease(reason = 'shutdown') {
 }
 
 /**
- * Event-driven tick handler — called by priceWatcher.onTick() for EVERY WS
- * batch / REST poll.  Pushes raw tick prices directly into complexPriceHistory
- * with zero delay.  This captures every single price update the exchange sends,
- * eliminating the lossy snapshot-polling that missed short spikes.
+ * Refresh in-memory cache of active complex alerts from DB.
+ * Called every 30s and after any alert CRUD operation.
+ */
+async function refreshComplexAlertsCache() {
+  try {
+    const alerts = await prisma.alert.findMany({
+      where: { isActive: true, alertType: 'complex' },
+    });
+
+    const newCache = [];
+    for (const a of alerts) {
+      const notifOpts = parseNotificationOptions(a.notificationOptions);
+      const alertForMode = notifOpts.alertForMode || 'all';
+      const conds = parseConditions(a.conditions);
+      const cond = conds.find((c) => c?.type === 'pct_change');
+      if (!cond) continue;
+
+      const threshold = Math.abs(Number(cond.value));
+      const timeframeSec = parseTimeframeSeconds(cond.timeframe);
+      if (!Number.isFinite(threshold) || threshold <= 0) continue;
+      if (!Number.isFinite(timeframeSec) || timeframeSec <= 0) continue;
+
+      const rawSymbols = parseSymbols(a.symbols);
+      const symbolSet = new Set(
+        rawSymbols.map((s) => {
+          const up = String(s || '').toUpperCase().trim();
+          if (!up) return '';
+          if (!up.endsWith('USDT') && !up.endsWith('USD') && !up.includes('/')) return up + 'USDT';
+          return up;
+        }).filter(Boolean)
+      );
+
+      newCache.push({
+        id: a.id,
+        userId: a.userId,
+        name: a.name,
+        description: a.description ?? null,
+        exchange: (a.exchange || 'binance').toLowerCase(),
+        market: (a.market || 'futures').toLowerCase() === 'spot' ? 'spot' : 'futures',
+        alertForMode,
+        symbolSet,
+        threshold,
+        timeframeSec,
+      });
+    }
+
+    complexAlertsCache = newCache;
+    complexCacheRefreshedAt = Date.now();
+    activeComplexExchangeMarkets = new Set(newCache.map((a) => `${a.exchange}|${a.market}`));
+
+    logEngine('info', 'complex.cache.refresh', {
+      count: newCache.length,
+      exchangeMarkets: Array.from(activeComplexExchangeMarkets),
+    });
+  } catch (err) {
+    logEngine('error', 'complex.cache.refresh.error', { message: err?.message || String(err) });
+  }
+}
+
+/**
+ * Fire a complex alert trigger asynchronously (non-blocking from tick handler).
+ * Does a final cooldown check to handle races between rapid ticks.
+ */
+async function fireTriggerAsync(alert, symbol, stats, spanPct, nowMs) {
+  try {
+    // Double-check cooldown — multiple ticks may have queued this concurrently
+    if (!canEmitComplexTrigger(alert.id, symbol, nowMs)) return;
+    markComplexTrigger(alert.id, symbol, nowMs);
+
+    const updatedAlert = await prisma.alert.update({
+      where: { id: alert.id },
+      data: {
+        triggered: true,
+        triggeredAt: new Date(),
+        isActive: true, // Keep active — complex alerts monitor continuously
+      },
+    });
+
+    const direction = stats.current >= stats.oldest ? 1 : -1;
+    const reportedPct = direction * spanPct;
+
+    const payload = {
+      id: updatedAlert.id,
+      alertId: updatedAlert.id,
+      name: updatedAlert.name,
+      description: updatedAlert.description ?? null,
+      triggered: true,
+      triggeredAt: updatedAlert.triggeredAt,
+      alertType: 'complex',
+      symbol,
+      pctChange: reportedPct,
+      baselinePrice: direction >= 0 ? stats.min : stats.max,
+      currentPrice: direction >= 0 ? stats.max : stats.min,
+      windowSeconds: alert.timeframeSec,
+    };
+
+    socketService.emitAlertTriggered(updatedAlert.userId, payload);
+    await sendAlertToTelegram(updatedAlert.userId, payload);
+    engineCounters.triggersComplex += 1;
+
+    logEngine('info', 'trigger.complex', {
+      alertId: updatedAlert.id,
+      userId: updatedAlert.userId,
+      symbol,
+      spanPct: Number(spanPct.toFixed(4)),
+      threshold: alert.threshold,
+      timeframeSec: alert.timeframeSec,
+    });
+    console.log(
+      `⚡⚡⚡ Complex alert ${alert.id} TRIGGERED: ${symbol} ` +
+      `span=${spanPct.toFixed(2)}% (threshold=${alert.threshold}%) in ${alert.timeframeSec}s | ` +
+      `oldest=${stats.oldest.toFixed(6)} current=${stats.current.toFixed(6)}`
+    );
+  } catch (err) {
+    logEngine('error', 'trigger.complex.fire.error', {
+      alertId: alert.id,
+      symbol,
+      message: err?.message || String(err),
+    });
+  }
+}
+
+/**
+ * Tick-driven complex alert handler — called on EVERY WS message from priceWatcher.
+ *
+ * Flow:
+ *   1. Append incoming prices to rolling 65-second history.
+ *   2. For every symbol in this tick, check each cached complex alert.
+ *   3. If price window span >= threshold → fire trigger immediately (setImmediate).
+ *
+ * This replaces the old 1-second cron evaluation, allowing sub-second detection.
  */
 let complexTickCount = 0;
 let complexTickLogTs = 0;
 
 function handlePriceTick({ exchange, market, prices: tickPrices }) {
-  // Accept ALL ticks when we have any active complex exchange+market combos,
-  // OR when activeComplexExchangeMarkets hasn't been initialized yet (first few seconds).
-  // After the first checkAlerts() cycle, this set gets populated properly.
   if (!tickPrices || typeof tickPrices !== 'object') return;
   const key = `${exchange}|${market}`;
-  // During startup (before first checkAlerts), record everything; after that filter.
-  if (activeComplexExchangeMarkets !== null && activeComplexExchangeMarkets.size > 0 && !activeComplexExchangeMarkets.has(key)) return;
-  const symbolCount = Object.keys(tickPrices).length;
-  if (symbolCount === 0) return;
-  appendComplexPricePoints(exchange, market, tickPrices, Date.now(), activeComplexMaxLookbackSec);
+
+  // Only store history if there are active complex alerts for this exchange+market
+  if (!activeComplexExchangeMarkets.has(key)) return;
+
+  const nowMs = Date.now();
+  appendComplexPricePoints(exchange, market, tickPrices, nowMs, COMPLEX_HISTORY_LOOKBACK_SEC);
+
   complexTickCount += 1;
-  // Log summary every 30 seconds
-  const now = Date.now();
-  if (now - complexTickLogTs >= 30000) {
+  if (nowMs - complexTickLogTs >= 30_000) {
     const historyMap = getHistoryMapForExchangeMarket(exchange, market);
-    const totalSymbols = historyMap ? historyMap.size : 0;
-    const sampleSym = historyMap ? historyMap.keys().next().value : null;
-    const samplePoints = sampleSym ? (historyMap.get(sampleSym)?.length || 0) : 0;
     console.log(
-      `[alertEngine] Complex ticks: ${complexTickCount} batches received since start | ` +
-      `${key}: ${totalSymbols} symbols tracked, sample ${sampleSym}: ${samplePoints} points`
+      `[alertEngine] Ticks: ${complexTickCount} | cache: ${complexAlertsCache.length} alerts | ` +
+      `${key}: ${historyMap?.size || 0} symbols tracked`
     );
-    complexTickLogTs = now;
+    complexTickLogTs = nowMs;
+  }
+
+  // Get alerts relevant to this exchange+market
+  const relevantAlerts = complexAlertsCache.filter(
+    (a) => a.exchange === exchange && a.market === market
+  );
+  if (relevantAlerts.length === 0) return;
+
+  const historyMap = getHistoryMapForExchangeMarket(exchange, market);
+
+  for (const rawSym of Object.keys(tickPrices)) {
+    const symbolUpper = String(rawSym || '').toUpperCase();
+    if (!symbolUpper) continue;
+
+    // Resolve symbol key as stored in history (with or without .P suffix)
+    let resolvedSymbol = symbolUpper;
+    if (!historyMap.has(symbolUpper)) {
+      if (market === 'futures' && symbolUpper.endsWith('USDT')) {
+        const withP = symbolUpper + '.P';
+        if (historyMap.has(withP)) resolvedSymbol = withP;
+      } else if (symbolUpper.endsWith('.P')) {
+        const noP = symbolUpper.slice(0, -2);
+        if (historyMap.has(noP)) resolvedSymbol = noP;
+      }
+    }
+
+    for (const alert of relevantAlerts) {
+      // Scope filter
+      if (alert.alertForMode === 'whitelist') {
+        if (!alert.symbolSet.has(resolvedSymbol) && !alert.symbolSet.has(symbolUpper)) continue;
+      } else {
+        // 'all' mode: only USDT pairs (skip .P suffixed and non-USDT)
+        if (!resolvedSymbol.endsWith('USDT') && !resolvedSymbol.replace(/\.P$/, '').endsWith('USDT')) continue;
+      }
+
+      // Quick cooldown check before expensive window stats
+      if (!canEmitComplexTrigger(alert.id, resolvedSymbol, nowMs)) continue;
+
+      const stats = getWindowStats(exchange, market, resolvedSymbol, nowMs, alert.timeframeSec);
+      if (!stats) continue;
+
+      const spanPct = ((stats.max - stats.min) / stats.min) * 100;
+      if (spanPct < alert.threshold) continue;
+
+      // Trigger — fire async to avoid blocking tick processing
+      const alertSnap = { ...alert };
+      const statsSnap = { ...stats };
+      setImmediate(() => fireTriggerAsync(alertSnap, resolvedSymbol, statsSnap, spanPct, nowMs));
+    }
   }
 }
 
@@ -223,8 +401,12 @@ function startWorkerLoops() {
   klinesSweepTimer = setInterval(() => {
     runKlinesSweep();
   }, KLINES_SWEEP_INTERVAL_MS);
-  // Register event-driven tick listener for complex alert history
+  // Register tick listener for instant complex alert evaluation
   priceWatcher.onTick(handlePriceTick);
+  // Load complex alert cache immediately, then refresh every 30s
+  refreshComplexAlertsCache();
+  complexCacheRefreshTimer = setInterval(() => refreshComplexAlertsCache(), COMPLEX_CACHE_REFRESH_MS);
+  // Cron only handles price alerts now; complex alerts are tick-driven
   complexCronTask = cron.schedule('* * * * * *', () => checkAlerts());
   checkPriceAlertsFast();
   checkAlerts();
@@ -244,7 +426,12 @@ function stopWorkerLoops(reason = 'manual') {
     klinesSweepTimer = null;
   }
   priceWatcher.offTick(handlePriceTick);
-  activeComplexExchangeMarkets = null; // Reset so next start buffers all ticks
+  if (complexCacheRefreshTimer) {
+    clearInterval(complexCacheRefreshTimer);
+    complexCacheRefreshTimer = null;
+  }
+  complexAlertsCache = [];
+  activeComplexExchangeMarkets = new Set();
   if (complexCronTask) {
     complexCronTask.stop();
     complexCronTask = null;
@@ -601,239 +788,8 @@ async function checkAlerts() {
       });
     }
 
-    // ---- Complex alerts: sharp movement in user timeframe ----
-    const complexAlerts = activeAlerts.filter((a) => a.alertType === 'complex');
-    
-    if (complexAlerts.length > 0) {
-      const nowMs = Date.now();
-      let maxLookbackSec = 60;
-      
-      // Step 1: Collect symbols per (exchange, market) and max timeframe.
-      const symbolsByExchangeMarket = new Map(); // key 'exchange|market' -> Set(symbol)
-      
-      for (const alert of complexAlerts) {
-        const ex = (alert.exchange || 'binance').toLowerCase();
-        const market = (alert.market || 'futures').toLowerCase() === 'spot' ? 'spot' : 'futures';
-        const notifOptions = parseNotificationOptions(alert.notificationOptions);
-        const alertForMode = notifOptions.alertForMode || 'all';
-        
-        const key = `${ex}|${market}`;
-        if (alertForMode === 'all') {
-          // "All coins" mode: just register the exchange+market combo.
-          // Don't enumerate symbols — we'll iterate WS history directly in Step 3.
-          if (!symbolsByExchangeMarket.has(key)) symbolsByExchangeMarket.set(key, new Set());
-        } else {
-          // Whitelist mode: collect specific symbols
-          let syms = parseSymbols(alert.symbols).map((s) => {
-            const sUpper = String(s || '').toUpperCase().trim();
-            if (!sUpper) return '';
-            if (!sUpper.endsWith('USDT') && !sUpper.endsWith('USD') && !sUpper.includes('/')) {
-              return sUpper + 'USDT';
-            }
-            return sUpper;
-          }).filter(Boolean);
-          if (!symbolsByExchangeMarket.has(key)) symbolsByExchangeMarket.set(key, new Set());
-          syms.forEach(s => symbolsByExchangeMarket.get(key).add(s));
-        }
-
-        const conds = parseConditions(alert.conditions);
-        for (const c of conds) {
-          if (c?.type !== 'pct_change') continue;
-          const sec = parseTimeframeSeconds(c.timeframe);
-          if (Number.isFinite(sec) && sec > maxLookbackSec) maxLookbackSec = sec;
-        }
-      }
-      
-      // Update the module-level set so the event-driven tick handler
-      // (handlePriceTick) knows which exchange+market combos to record.
-      activeComplexExchangeMarkets = new Set(symbolsByExchangeMarket.keys());
-      activeComplexMaxLookbackSec = maxLookbackSec;
-
-      // Step 2: History is now populated by the event-driven tick listener
-      // (handlePriceTick via priceWatcher.onTick). We only need a snapshot
-      // for the symbol-universe lookup in Step 3 ("all coins" mode).
-      // Also push one more sample per cycle as a safety net.
-      const pricesByKey = {};
-      for (const [key] of symbolsByExchangeMarket.entries()) {
-        const [exchange, market] = key.split('|');
-
-        // Read current WS snapshot for symbol-universe + safety append
-        let wsMap = priceWatcher.getPriceMap(exchange, market);
-        const wsFresh = priceWatcher.isFresh(exchange, market);
-
-        if (wsFresh && wsMap && Object.keys(wsMap).length > 0) {
-          pricesByKey[key] = wsMap;
-          // Safety: also append snapshot in case tick listener missed anything
-          appendComplexPricePoints(exchange, market, wsMap, nowMs, maxLookbackSec);
-        } else {
-          // WS stale or empty — fall back to REST
-          const needsAllCoins = complexAlerts.some(a => {
-            const ex2 = (a.exchange || 'binance').toLowerCase();
-            const alertMarket = (a.market || 'futures').toLowerCase() === 'spot' ? 'spot' : 'futures';
-            const notifOptions2 = parseNotificationOptions(a.notificationOptions);
-            return (notifOptions2.alertForMode || 'all') === 'all' && ex2 === exchange && alertMarket === market;
-          });
-
-          const exchangeType = market === 'spot' ? 'spot' : 'futures';
-          const getPrices =
-            exchange === 'bybit'
-              ? (symList) => bybitService.getLastPricesBySymbols(symList, exchangeType)
-              : exchange === 'okx'
-                ? (symList) => okxService.getLastPricesBySymbols(symList, exchangeType)
-                : exchange === 'gate'
-                  ? (symList) => gateService.getLastPricesBySymbols(symList, exchangeType)
-                  : exchange === 'mexc'
-                    ? (symList) => mexcService.getLastPricesBySymbols(symList, exchangeType)
-                    : exchange === 'bitget'
-                      ? (symList) => bitgetService.getLastPricesBySymbols(symList, exchangeType)
-                      : (symList) => binanceService.getLastPricesBySymbols(symList, exchangeType);
-          try {
-            const symbols = [...(symbolsByExchangeMarket.get(key) || [])];
-            const pricesResult = needsAllCoins ? await getPrices([]) : await getPrices(symbols);
-            pricesByKey[key] = pricesResult || {};
-          } catch (err) {
-            console.warn(`[alertEngine] Failed to fetch prices for ${key}:`, err.message);
-            pricesByKey[key] = {};
-          }
-          appendComplexPricePoints(exchange, market, pricesByKey[key], nowMs, maxLookbackSec);
-        }
-      }
-      
-      // Step 3: Evaluate each alert condition against window range stats.
-      for (const alert of complexAlerts) {
-        const ex = (alert.exchange || 'binance').toLowerCase();
-        const market = (alert.market || 'futures').toLowerCase() === 'spot' ? 'spot' : 'futures';
-        const key = `${ex}|${market}`;
-        const notifOptions = parseNotificationOptions(alert.notificationOptions);
-        const alertForMode = notifOptions.alertForMode || 'all';
-        const conditions = parseConditions(alert.conditions);
-        
-        if (conditions.length === 0) continue;
-        
-        let syms;
-        if (alertForMode === 'all') {
-          // "All coins" mode: iterate ALL symbols from WS history + current snapshot.
-          // Ignore any stored symbols — use live data directly.
-          const historyMap = getHistoryMapForExchangeMarket(ex, market);
-          const historySyms = historyMap ? Array.from(historyMap.keys()) : [];
-          const snapshotSyms = Object.keys(pricesByKey[key] || {}).map(s => s.toUpperCase());
-          const allSyms = new Set([...historySyms, ...snapshotSyms]);
-          syms = Array.from(allSyms).filter(s => s.endsWith('USDT'));
-        } else {
-          // Whitelist mode: use stored symbols
-          syms = parseSymbols(alert.symbols).map((s) => {
-            const sUpper = String(s || '').toUpperCase().trim();
-            if (!sUpper) return '';
-            if (!sUpper.endsWith('USDT') && !sUpper.endsWith('USD') && !sUpper.includes('/')) {
-              return sUpper + 'USDT';
-            }
-            return sUpper;
-          }).filter(Boolean);
-        }
-        
-        // Process each condition
-        for (const cond of conditions) {
-          if (cond.type !== 'pct_change' || cond.value == null) continue;
-          
-          const threshold = Math.abs(Number(cond.value));
-          const timeframeSec = parseTimeframeSeconds(cond.timeframe);
-          
-          if (!Number.isFinite(threshold) || threshold <= 0 || !Number.isFinite(timeframeSec) || timeframeSec <= 0) {
-            continue;
-          }
-          
-          // Check each symbol: trigger if span (max-min)/min in timeframe >= threshold.
-          // Continue checking ALL symbols - don't stop after first trigger (cooldown prevents duplicates)
-          for (const symbol of syms) {
-            const symbolUpper = symbol.toUpperCase();
-
-            // For symbol resolution, check the history map directly — it has
-            // every symbol that ever received a WS tick. No need to resolve
-            // against the potentially incomplete snapshot.
-            let resolvedSymbol = null;
-            const historyMap = getHistoryMapForExchangeMarket(ex, market);
-            if (historyMap.has(symbolUpper)) {
-              resolvedSymbol = symbolUpper;
-            } else if (market === 'futures' && symbolUpper.endsWith('USDT')) {
-              const withP = `${symbolUpper}.P`;
-              if (historyMap.has(withP)) resolvedSymbol = withP;
-            } else if (symbolUpper.endsWith('.P')) {
-              const noP = symbolUpper.slice(0, -2);
-              if (historyMap.has(noP)) resolvedSymbol = noP;
-            }
-            if (!resolvedSymbol) continue;
-
-            const stats = getWindowStats(ex, market, resolvedSymbol, nowMs, timeframeSec);
-            if (!stats) continue;
-
-            const spanPct = ((stats.max - stats.min) / stats.min) * 100;
-            if (spanPct >= threshold * 0.5) {
-              console.log(
-                `[alertEngine] Complex ${alert.id} ${resolvedSymbol}: ` +
-                `window ${timeframeSec}s min=${stats.min.toFixed(6)} max=${stats.max.toFixed(6)} ` +
-                `span=${spanPct.toFixed(2)}% need=${threshold}% points=${stats.points}`
-              );
-            }
-
-            // Trigger condition: sharp move happened anywhere inside timeframe window.
-            if (spanPct >= threshold) {
-              if (!canEmitComplexTrigger(alert.id, resolvedSymbol, nowMs)) {
-                continue; // Skip if cooldown active (60 seconds per symbol)
-              }
-
-              // Report the actual span move with direction based on current vs oldest.
-              // Previously used oldest→current which could be ~0% even when a 5% spike occurred.
-              const direction = stats.current >= stats.oldest ? 1 : -1;
-              const reportedPct = direction * spanPct;
-              // TRIGGER! Continue checking other symbols after this trigger
-              const updatedAlert = await prisma.alert.update({
-                where: { id: alert.id },
-                data: {
-                  triggered: true,
-                  triggeredAt: new Date(),
-                  isActive: true, // Keep active for continuous monitoring
-                },
-              });
-              markComplexTrigger(alert.id, resolvedSymbol, nowMs);
-              engineCounters.triggersComplex += 1;
-              
-              const payload = {
-                id: updatedAlert.id,
-                alertId: updatedAlert.id,
-                name: updatedAlert.name,
-                description: updatedAlert.description ?? null,
-                triggered: true,
-                triggeredAt: updatedAlert.triggeredAt,
-                alertType: 'complex',
-                symbol: resolvedSymbol,
-                pctChange: reportedPct,
-                baselinePrice: direction >= 0 ? stats.min : stats.max,
-                currentPrice: direction >= 0 ? stats.max : stats.min,
-                windowSeconds: timeframeSec,
-              };
-              
-              socketService.emitAlertTriggered(updatedAlert.userId, payload);
-              await sendAlertToTelegram(updatedAlert.userId, payload);
-              logEngine('info', 'trigger.complex', {
-                alertId: updatedAlert.id,
-                userId: updatedAlert.userId,
-                symbol: resolvedSymbol,
-                spanPct: Number(spanPct.toFixed(4)),
-                threshold,
-                timeframeSec,
-              });
-              console.log(
-                `⚡⚡⚡ Complex alert ${alert.id} TRIGGERED: ${resolvedSymbol} ` +
-                `span=${spanPct.toFixed(2)}% (threshold=${threshold}%) in ${timeframeSec}s. ` +
-                `oldest=${stats.oldest.toFixed(6)} current=${stats.current.toFixed(6)}`
-              );
-              
-              // Continue to next symbol - don't break! Alert should monitor all symbols continuously
-            }
-          }
-        }
-      }
-    }
+    // Complex alerts are now evaluated tick-by-tick in handlePriceTick().
+    // No cron-based complex evaluation here — this loop only handles price alerts.
   } catch (error) {
     engineCounters.transientErrors += 1;
     logEngine('error', 'evaluate.error', { message: error?.message || String(error) });
@@ -1047,4 +1003,5 @@ module.exports = {
   setInitialPrice,
   clearInitialPrice,
   getEngineStatus,
+  refreshComplexAlertsCache,
 };

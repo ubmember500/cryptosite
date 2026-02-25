@@ -2,7 +2,7 @@ const axios = require('axios');
 const prisma = require('../utils/prisma');
 const { createAlertSchema, updateAlertSchema } = require('../utils/validators');
 const priceService = require('../services/priceService');
-const { setInitialPrice, clearInitialPrice, getEngineStatus } = require('../services/alertEngine');
+const { setInitialPrice, clearInitialPrice, getEngineStatus, refreshComplexAlertsCache } = require('../services/alertEngine');
 const { fetchExchangePriceSnapshot } = require('../services/priceSourceResolver');
 const { processPriceAlerts } = require('../services/priceAlertEngine');
 const socketService = require('../services/socketService');
@@ -814,6 +814,11 @@ async function createAlert(req, res, next) {
     });
     console.log('[createAlert] Alert created successfully:', { id: alert.id, name: alert.name, alertType: alert.alertType });
 
+    // Refresh complex alert cache immediately so tick handler starts evaluating this alert
+    if (alert.alertType === 'complex') {
+      setImmediate(() => refreshComplexAlertsCache());
+    }
+
     console.log('[createAlert] ===== SUCCESS =====');
     res.status(201).json({
       alert,
@@ -918,6 +923,7 @@ async function updateAlert(req, res, next) {
       data,
     });
 
+    if (updatedAlert.alertType === 'complex') setImmediate(() => refreshComplexAlertsCache());
     res.json({ alert: updatedAlert });
   } catch (error) {
     if (error.name === 'ZodError') {
@@ -956,6 +962,7 @@ async function toggleAlert(req, res, next) {
       data: { isActive: !existingAlert.isActive },
     });
 
+    if (existingAlert.alertType === 'complex') setImmediate(() => refreshComplexAlertsCache());
     res.json({ alert: updatedAlert });
   } catch (error) {
     next(error);
@@ -992,6 +999,11 @@ async function deleteAlert(req, res, next) {
     // Clear initial price from memory if it was a pct_change alert
     if (existingAlert.condition === 'pct_change') {
       clearInitialPrice(id);
+    }
+
+    // Refresh complex alert cache when a complex alert is deleted
+    if (existingAlert.alertType === 'complex') {
+      setImmediate(() => refreshComplexAlertsCache());
     }
 
     res.json({ message: 'Alert deleted successfully' });
