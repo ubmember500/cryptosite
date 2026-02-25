@@ -178,17 +178,26 @@ function startWorkerLoops() {
   fastPriceTimer = setInterval(() => {
     checkPriceAlertsFast();
   }, FAST_PRICE_ALERT_INTERVAL_MS);
+  klinesSweepTimer = setInterval(() => {
+    runKlinesSweep();
+  }, KLINES_SWEEP_INTERVAL_MS);
   complexCronTask = cron.schedule('* * * * * *', () => checkAlerts());
   checkPriceAlertsFast();
   checkAlerts();
+  // First klines sweep after a 30s delay to let caches warm up
+  setTimeout(() => runKlinesSweep(), 30_000);
   engineWorkerActive = true;
-  logEngine('info', 'worker.start', { fastIntervalMs: FAST_PRICE_ALERT_INTERVAL_MS });
+  logEngine('info', 'worker.start', { fastIntervalMs: FAST_PRICE_ALERT_INTERVAL_MS, klinesSweepIntervalMs: KLINES_SWEEP_INTERVAL_MS });
 }
 
 function stopWorkerLoops(reason = 'manual') {
   if (fastPriceTimer) {
     clearInterval(fastPriceTimer);
     fastPriceTimer = null;
+  }
+  if (klinesSweepTimer) {
+    clearInterval(klinesSweepTimer);
+    klinesSweepTimer = null;
   }
   if (complexCronTask) {
     complexCronTask.stop();
@@ -780,6 +789,64 @@ async function checkAlerts() {
     logEngine('error', 'evaluate.error', { message: error?.message || String(error) });
   } finally {
     alertCheckInProgress = false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Periodic klines sweep — catches crossings that the 300ms live engine missed
+// (e.g. during a Render cold-start sleep, cache miss, or network outage).
+// Runs every 2 minutes, completely independent of checkPriceAlertsFast.
+// ---------------------------------------------------------------------------
+let klinesSweepInProgress = false;
+let klinesSweepTimer = null;
+const KLINES_SWEEP_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
+
+async function runKlinesSweep() {
+  if (!alertEngineRunning || alertEngineShuttingDown || (LEASE_ENABLED && !leaseOwner)) return;
+  if (klinesSweepInProgress) return;
+  klinesSweepInProgress = true;
+
+  try {
+    // Deferred require to break circular dependency (alertController → services → alertEngine)
+    const { checkAlertHistorically } = require('../controllers/alertController');
+
+    const priceAlerts = await prisma.alert.findMany({
+      where: { isActive: true, triggered: false, alertType: 'price' },
+    });
+
+    if (!priceAlerts.length) return;
+
+    logEngine('info', 'klines.sweep.start', { count: priceAlerts.length });
+
+    const results = await Promise.allSettled(
+      priceAlerts.map((alert) => checkAlertHistorically(alert)),
+    );
+
+    let triggeredCount = 0;
+    for (let i = 0; i < results.length; i++) {
+      const result = results[i];
+      if (result.status !== 'fulfilled' || !result.value) continue;
+
+      const payload = result.value;
+      const alert = priceAlerts[i];
+      triggeredCount++;
+
+      engineCounters.triggersPrice += 1;
+      logEngine('info', 'trigger.klines', {
+        alertId: alert.id,
+        userId: alert.userId,
+        symbol: payload?.symbol || payload?.coinSymbol || null,
+      });
+      socketService.emitAlertTriggered(alert.userId, payload);
+      await sendAlertToTelegram(alert.userId, payload);
+    }
+
+    logEngine('info', 'klines.sweep.done', { checked: priceAlerts.length, triggered: triggeredCount });
+  } catch (error) {
+    engineCounters.transientErrors += 1;
+    logEngine('error', 'klines.sweep.error', { message: error?.message || String(error) });
+  } finally {
+    klinesSweepInProgress = false;
   }
 }
 

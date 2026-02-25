@@ -186,11 +186,12 @@ async function checkAlertHistorically(alert) {
     if (condition === 'below' && initial <= targetValue) return null; // was already below — no crossing possible
   }
 
-  // Minimum age: 90 seconds.  This gives the 300ms real-time engine ~90 cycles
-  // to catch it first.  Short enough that a crossing in the first 2 minutes is
-  // caught quickly on the next HTTP poll (every 60s via App.jsx heartbeat).
+  // Minimum age: 15 seconds.  Gives the 300ms real-time engine ~50 cycles to
+  // catch it first.  The crossing guard above already prevents false positives,
+  // so we don't need a long blackout.  Keeping it at 15s avoids stale-kline
+  // issues immediately after alert creation.
   const createdAtMs = alert.createdAt ? new Date(alert.createdAt).getTime() : 0;
-  if (Date.now() - createdAtMs < 90_000) return null;
+  if (Date.now() - createdAtMs < 15_000) return null;
 
   // Fetch klines from alert creation time (not +60s — crossing guard handles false positives).
   const klines = await fetchKlinesForHistoricalCheck(exchange, market, symbol, createdAtMs);
@@ -1033,4 +1034,5 @@ module.exports = {
   deleteAlert,
   getHistory,
   getEngineStatus: (req, res) => res.json(getEngineStatus()),
+  checkAlertHistorically,
 };

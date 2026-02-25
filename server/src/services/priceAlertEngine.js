@@ -1,4 +1,29 @@
+/**
+ * Price Alert Engine v3 — parallel pre-fetched price evaluation.
+ *
+ * Previous versions called `priceResolver()` sequentially per alert, meaning
+ * each alert awaited its own network call.  With 5+ alerts the cycle took
+ * 5+ seconds; the 300 ms re-entry guard blocked every intermediate tick, so
+ * the engine was effectively blind for seconds at a time.
+ *
+ * This rewrite:
+ *   Phase 1 – validate & group alerts by exchange+market (pure CPU, <1 ms).
+ *   Phase 2 – pre-fetch ALL price maps in ONE parallel batch via
+ *             Promise.allSettled (one call per unique exchange+market pair).
+ *             Fallback markets are also pre-fetched in the same batch.
+ *             Total wall-clock time ≈ max(individual fetch) ≈ 1-2 s.
+ *   Phase 3 – evaluate every alert against the in-memory maps (zero I/O per
+ *             alert, microseconds each).
+ *
+ * Net result: a cycle with 20 alerts across 3 exchanges + fallback markets
+ * completes in ~2 s instead of 20+ s.
+ */
+
 const inFlightAlertIds = new Set();
+
+// ---------------------------------------------------------------------------
+// Pure helpers (no I/O)
+// ---------------------------------------------------------------------------
 
 function parseSymbols(symbols) {
   if (Array.isArray(symbols)) return symbols;
@@ -27,31 +52,22 @@ function resolveCondition(alert, targetValue) {
 }
 
 /**
- * TradingView-style crossing detection.
- * The alert must only fire when the price genuinely CROSSES the target level —
- * i.e. it was on the initial side and has now moved to the other side.
- *
- * We use `initialPrice` (captured at alert-creation time from the same exchange)
- * as proof that the price started on one side.  If the current price is already
- * on the SAME side as initialPrice (relative to target), we do NOT trigger,
- * even if ` current >= target`.  This prevents false triggers caused by price
- * source jitter, CoinGecko fallback, or stale cache values.
+ * Core crossing check.  Returns true only when:
+ *   1. currentPrice has reached/passed targetValue in the right direction, AND
+ *   2. initialPrice was on the OPPOSITE side (proves a genuine crossing occurred).
  */
 function shouldTriggerAtCurrentPrice(currentPrice, targetValue, condition, initialPrice) {
   const current = Number(currentPrice);
   const target = Number(targetValue);
   if (!Number.isFinite(current) || !Number.isFinite(target) || target <= 0) return false;
 
-  // Basic level check
   const pastTarget = condition === 'below' ? current <= target : current >= target;
   if (!pastTarget) return false;
 
-  // Crossing guard: verify initialPrice is on the OPPOSITE side of target.
-  // Without this, a momentary wrong price from cache/fallback could trigger.
   const initial = Number(initialPrice);
   if (Number.isFinite(initial) && initial > 0) {
-    if (condition === 'above' && initial >= target) return false; // was already above → no crossing
-    if (condition === 'below' && initial <= target) return false; // was already below → no crossing
+    if (condition === 'above' && initial >= target) return false;
+    if (condition === 'below' && initial <= target) return false;
   }
 
   return true;
@@ -69,11 +85,50 @@ function deriveCoinSymbol(alert, resolvedSymbol) {
     .trim();
 }
 
+// ---------------------------------------------------------------------------
+// Exchange service accessor
+// ---------------------------------------------------------------------------
+
+function getExchangeService(exchange) {
+  const key = String(exchange || '').toLowerCase();
+  if (key === 'bybit') return require('./bybitService');
+  if (key === 'okx') return require('./okxService');
+  if (key === 'gate') return require('./gateService');
+  if (key === 'mexc') return require('./mexcService');
+  if (key === 'bitget') return require('./bitgetService');
+  return require('./binanceService');
+}
+
+/**
+ * Case-insensitive price lookup in a full ticker map.
+ * Returns { price, symbol } or { price: null, symbol: '' }.
+ */
+function lookupPriceFromMap(priceMap, candidates) {
+  if (!priceMap || typeof priceMap !== 'object') return { price: null, symbol: '' };
+
+  // Build uppercase index once (ticker maps are typically uppercase already)
+  const upperIndex = {};
+  for (const [key, value] of Object.entries(priceMap)) {
+    const p = Number(value);
+    if (Number.isFinite(p) && p > 0) {
+      upperIndex[String(key).toUpperCase()] = { key, price: p };
+    }
+  }
+
+  for (const candidate of candidates) {
+    const entry = upperIndex[String(candidate).toUpperCase()];
+    if (entry) return { price: entry.price, symbol: entry.key };
+  }
+  return { price: null, symbol: '' };
+}
+
+// ---------------------------------------------------------------------------
+// Processor factory
+// ---------------------------------------------------------------------------
+
 function createPriceAlertProcessor(deps = {}) {
   const prismaClient = deps.prismaClient || require('../utils/prisma');
-  const priceResolver =
-    deps.priceResolver ||
-    require('./priceSourceResolver').fetchExchangePriceSnapshot;
+  const { buildCandidates } = require('./priceSourceResolver');
 
   return async function processPriceAlerts(priceAlerts, handlers = {}) {
     const {
@@ -82,113 +137,114 @@ function createPriceAlertProcessor(deps = {}) {
       logger = console,
     } = handlers;
 
-    for (const alert of priceAlerts || []) {
+    if (!Array.isArray(priceAlerts) || priceAlerts.length === 0) return;
+
+    // ── PHASE 1: validate & group ──────────────────────────────────────────
+    const validAlerts = [];
+    const neededMaps = new Set(); // "exchange|market"
+
+    for (const alert of priceAlerts) {
       if (!alert?.id || inFlightAlertIds.has(alert.id)) continue;
+
+      const alertAgeMs = alert.createdAt
+        ? Date.now() - new Date(alert.createdAt).getTime()
+        : Infinity;
+      if (alertAgeMs < 10_000) continue; // 10 s grace for brand-new alerts
+
+      const symbols = parseSymbols(alert.symbols);
+      const firstSymbol = symbols[0];
+      if (!firstSymbol) continue;
+
+      const targetValue = Number(alert.targetValue);
+      if (!Number.isFinite(targetValue) || targetValue <= 0) continue;
+
+      const exchange = String(alert.exchange || 'binance').toLowerCase();
+      const market = normalizeMarket(alert.market);
+
+      validAlerts.push({ alert, firstSymbol, exchange, market, targetValue });
+
+      // Register BOTH primary and fallback market for pre-fetching
+      neededMaps.add(`${exchange}|${market}`);
+      const fallback = market === 'futures' ? 'spot' : 'futures';
+      neededMaps.add(`${exchange}|${fallback}`);
+    }
+
+    if (validAlerts.length === 0) return;
+
+    // ── PHASE 2: parallel pre-fetch all price maps ─────────────────────────
+    const priceMaps = new Map(); // "exchange|market" -> { symbol: price }
+
+    await Promise.allSettled(
+      Array.from(neededMaps).map(async (key) => {
+        const [exchange, market] = key.split('|');
+        try {
+          const service = getExchangeService(exchange);
+          const exchangeType = market === 'spot' ? 'spot' : 'futures';
+          const map = await service.getLastPricesBySymbols(
+            [], // empty → returns the FULL cached ticker map
+            exchangeType,
+            { strict: false, exchangeOnly: true },
+          );
+          priceMaps.set(key, map || {});
+        } catch {
+          priceMaps.set(key, {});
+        }
+      }),
+    );
+
+    // ── PHASE 3: evaluate every alert (pure in-memory) ─────────────────────
+    for (const { alert, firstSymbol, exchange, market, targetValue } of validAlerts) {
+      if (inFlightAlertIds.has(alert.id)) continue;
       inFlightAlertIds.add(alert.id);
 
       try {
-        // Grace period: skip alerts younger than 10 seconds.
-        // Prevents the engine from acting on a brand-new alert before the
-        // exchange WS feed / REST cache has had time to settle to the same
-        // price that createAlert saw.  TradingView also has a brief settle
-        // window after alert creation.
-        const alertAgeMs = alert.createdAt ? Date.now() - new Date(alert.createdAt).getTime() : Infinity;
-        if (alertAgeMs < 10_000) continue;
+        const candidates = buildCandidates(exchange, firstSymbol, market);
+        if (candidates.length === 0) continue;
 
-        const symbols = parseSymbols(alert.symbols);
-        const firstSymbol = symbols[0];
-        if (!firstSymbol) {
-          logger.warn?.(`[priceAlertV2] alert=${alert.id} skipped: missing symbol`);
-          continue;
-        }
+        // Primary market lookup
+        const primaryMap = priceMaps.get(`${exchange}|${market}`) || {};
+        let resolved = lookupPriceFromMap(primaryMap, candidates);
+        let resolvedMarket = market;
+        let source = `${exchange}_exchange_map`;
 
-        const exchange = String(alert.exchange || 'binance').toLowerCase();
-        const market = normalizeMarket(alert.market);
-        const targetValue = Number(alert.targetValue);
-        if (!Number.isFinite(targetValue) || targetValue <= 0) {
-          logger.warn?.(`[priceAlertV2] alert=${alert.id} skipped: invalid target ${alert.targetValue}`);
-          continue;
-        }
-
-        // Use the efficient CACHED bulk ticker with exchangeOnly:true (no CoinGecko).
-        //
-        // Why NOT strict:true:
-        //   strict:true forces fetchCurrentPriceBySymbol (per-symbol REST) as the first
-        //   attempt, which makes a separate HTTP call to Binance every 300ms PER ALERT.
-        //   With 4+ alerts this can exceed Binance's IP rate limit (2400 weight/min),
-        //   causing 429 errors → 15-second error cooldown → ALL alerts silently skipped.
-        //   The efficient path is getLastPricesBySymbols whose 2s cache is shared across
-        //   ALL alerts in the same cycle (one bulk fetch for any number of alerts).
-        //
-        // Why strict:false:
-        //   On price-feed failure we want ok:false (skip this cycle gracefully), not throw.
-        //   The historical klines sweep acts as the safety net for missed cycles.
-        //
-        // Why exchangeOnly:true:
-        //   Prevents CoinGecko fallback when Binance API is temporarily unavailable.
-        //   CoinGecko returns a global average price that differs from exchange-specific
-        //   futures prices, which was the original cause of false triggers.
-        const snapshot = await priceResolver({
-          exchange,
-          market,
-          symbol: firstSymbol,
-          strict: false,
-          exchangeOnly: true,
-          logger,
-        });
-
-        const currentPrice = Number(snapshot?.price);
-        if (!snapshot?.ok || !Number.isFinite(currentPrice) || currentPrice <= 0) {
-          // Distinguish permanent failures (symbol doesn't exist on exchange) from
-          // transient ones (API timeout, cache miss) so they're easy to spot in logs.
-          const isPermanent = snapshot?.reasonCode === 'SYMBOL_UNRESOLVED'
-            || snapshot?.reasonCode === 'INVALID_SYMBOL';
-          const logLevel = isPermanent ? 'error' : 'warn';
-          logger[logLevel]?.(
-            `[priceAlertV2] alert=${alert.id} price unresolved ` +
-            `exchange=${exchange}/${market} symbol=${firstSymbol} ` +
-            `reason=${snapshot?.reasonCode || 'unknown'} source=${snapshot?.source || 'unknown'}` +
-            (isPermanent
-              ? ' ← symbol may not exist on this exchange on either market type'
-              : ' (transient — will retry next cycle)')
-          );
-          continue;
-        }
-
-        // If price was resolved via the fallback market type (e.g. futures alert
-        // but token only exists on spot), silently correct the market in the DB so
-        // subsequent engine cycles use the right market directly without the fallback
-        // overhead.  Non-fatal — next cycle will still work even if this fails.
-        if (snapshot?.resolvedMarket && snapshot.resolvedMarket !== market) {
-          try {
-            await prismaClient.alert.updateMany({
-              where: { id: alert.id, triggered: false, isActive: true },
-              data: { market: snapshot.resolvedMarket },
-            });
-            logger.warn?.(
-              `[priceAlertV2] alert=${alert.id} market auto-corrected ` +
-              `${market} → ${snapshot.resolvedMarket} (symbol only exists on ${snapshot.resolvedMarket})`
-            );
-          } catch {
-            // non-fatal
+        // Fallback to opposite market type (spot ↔ futures)
+        if (!Number.isFinite(resolved.price) || resolved.price <= 0) {
+          const fb = market === 'futures' ? 'spot' : 'futures';
+          const fbMap = priceMaps.get(`${exchange}|${fb}`) || {};
+          const fbResolved = lookupPriceFromMap(fbMap, candidates);
+          if (Number.isFinite(fbResolved.price) && fbResolved.price > 0) {
+            resolved = fbResolved;
+            resolvedMarket = fb;
+            source = `${exchange}_${fb}_map`;
           }
         }
 
-        const condition = resolveCondition(alert, targetValue);
-        const initialPrice = alert?.initialPrice != null ? Number(alert.initialPrice) : null;
-        const triggered = shouldTriggerAtCurrentPrice(currentPrice, targetValue, condition, initialPrice);
+        const currentPrice = resolved.price;
+        if (!Number.isFinite(currentPrice) || currentPrice <= 0) continue;
 
-        logger.log?.(
-          `[priceAlertV2] alert=${alert.id} symbol=${snapshot.symbol || firstSymbol} ` +
-          `target=${targetValue} current=${currentPrice} cond=${condition} source=${snapshot.source} ` +
-          `triggered=${triggered}`
+        // Self-heal: correct stored market if resolved via fallback (fire & forget)
+        if (resolvedMarket !== market) {
+          prismaClient.alert
+            .updateMany({
+              where: { id: alert.id, triggered: false, isActive: true },
+              data: { market: resolvedMarket },
+            })
+            .catch(() => {}); // non-fatal, fire-and-forget
+        }
+
+        const condition = resolveCondition(alert, targetValue);
+        const initialPrice =
+          alert?.initialPrice != null ? Number(alert.initialPrice) : null;
+        const triggered = shouldTriggerAtCurrentPrice(
+          currentPrice,
+          targetValue,
+          condition,
+          initialPrice,
         );
 
         if (!triggered) continue;
 
-        // Use ONE timestamp for both the DB write and the payload so the
-        // deduplication key (alertId:triggeredAt ISO) matches when pendingNotifications
-        // returns the same DB-stored value on the next fetchAlerts poll.
+        // ── Trigger the alert ──────────────────────────────────────────────
         const triggeredAt = new Date();
 
         const payload = {
@@ -201,42 +257,42 @@ function createPriceAlertProcessor(deps = {}) {
           currentPrice,
           targetValue: alert.targetValue,
           condition,
-          coinSymbol: deriveCoinSymbol(alert, snapshot.symbol || firstSymbol),
-          symbol: snapshot.symbol || firstSymbol,
+          coinSymbol: deriveCoinSymbol(alert, resolved.symbol || firstSymbol),
+          symbol: resolved.symbol || firstSymbol,
           alertType: 'price',
-          priceSource: snapshot.source,
-          ...(alert.initialPrice != null && Number.isFinite(Number(alert.initialPrice))
-            ? { initialPrice: Number(alert.initialPrice) }
+          priceSource: source,
+          ...(initialPrice != null && Number.isFinite(initialPrice)
+            ? { initialPrice }
             : {}),
         };
 
-        // Atomic update: only succeeds if THIS process is the first to mark it triggered.
-        // Using updateMany with triggered:false guard prevents double-firing when the
-        // engine and the sweep both race to the same alert.
-        // We intentionally keep the row in the DB (triggered=true, isActive=false) so
-        // that the client can retrieve it as a pendingNotification if the socket event
-        // was missed (race condition on page-load, disconnect, cold start, etc.).
+        // Atomic guard: only succeeds if no other process set triggered=true first.
         const updateResult = await prismaClient.alert.updateMany({
           where: { id: alert.id, triggered: false, isActive: true },
           data: { triggered: true, isActive: false, triggeredAt },
         });
 
-        if (updateResult.count === 0) {
-          logger.warn?.(`[priceAlertV2] alert=${alert.id} already triggered by another process, skipping`);
-          continue;
-        }
+        if (updateResult.count === 0) continue; // lost the race — already triggered
 
         await onDeleted(alert);
         await onTriggered(alert, payload);
-        logger.log?.(`[priceAlertV2] TRIGGERED alert=${alert.id} (marked triggered, kept in DB for notification delivery)`);
+        logger.log?.(
+          `[priceAlertV3] TRIGGERED alert=${alert.id} ` +
+            `${resolved.symbol || firstSymbol} ${condition} ` +
+            `target=${targetValue} current=${currentPrice} src=${source}`,
+        );
       } catch (error) {
-        logger.error?.(`[priceAlertV2] alert=${alert.id} unexpected error:`, error);
+        logger.error?.(`[priceAlertV3] alert=${alert.id} error:`, error);
       } finally {
         inFlightAlertIds.delete(alert.id);
       }
     }
   };
 }
+
+// ---------------------------------------------------------------------------
+// Default singleton
+// ---------------------------------------------------------------------------
 
 let defaultProcessor = null;
 
