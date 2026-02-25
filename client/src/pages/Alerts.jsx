@@ -19,8 +19,27 @@ const Alerts = () => {
 
   const editingAlert = editingAlertId ? (alerts.find((a) => a.id === editingAlertId) ?? null) : null;
 
+  // Initial load + re-fetch when filters change
   useEffect(() => {
     fetchAlerts(filters);
+  }, [filters, fetchAlerts]);
+
+  // Periodic refresh every 30s so the sweep catches any alerts the engine may have triggered
+  // while the user was on this page with a brief socket hiccup
+  useEffect(() => {
+    const id = setInterval(() => fetchAlerts(filters), 30000);
+    return () => clearInterval(id);
+  }, [filters, fetchAlerts]);
+
+  // Re-fetch immediately when the user returns to this browser tab
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        fetchAlerts(filters);
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
   }, [filters, fetchAlerts]);
 
   const handleFilterChange = (category, value) => {

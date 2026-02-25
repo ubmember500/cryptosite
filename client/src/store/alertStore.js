@@ -7,6 +7,10 @@ export const useAlertStore = create((set, get) => ({
   processedTriggerKeys: {},
   loading: false,
   error: null,
+  pendingTriggerAlert: null,
+
+  setPendingTriggerAlert: (alert) => set({ pendingTriggerAlert: alert }),
+  clearPendingTriggerAlert: () => set({ pendingTriggerAlert: null }),
 
   /**
    * Fetch alerts with filters. filters: { status, exchange, market, type }
@@ -14,8 +18,21 @@ export const useAlertStore = create((set, get) => ({
   fetchAlerts: async (filters = {}) => {
     set({ loading: true, error: null });
     try {
-      const alerts = await alertService.getAlerts(filters);
+      const { alerts, sweptTriggers } = await alertService.getAlerts(filters);
       set({ alerts: Array.isArray(alerts) ? alerts : [], loading: false });
+
+      // Process sweep-detected triggers that may have been missed by the socket
+      // (race condition: socket might not have joined the room yet when the sweep fired)
+      if (Array.isArray(sweptTriggers) && sweptTriggers.length > 0) {
+        for (const payload of sweptTriggers) {
+          const applied = get().applyTriggeredEvent(payload);
+          if (applied) {
+            set({ pendingTriggerAlert: payload });
+            // Only show the first one; user can dismiss and next fetch will show next if needed
+            break;
+          }
+        }
+      }
     } catch (error) {
       set({ error: error.message, loading: false });
     }

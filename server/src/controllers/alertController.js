@@ -30,7 +30,7 @@ async function sendAlertToTelegram(userId, payload) {
 }
 
 async function sweepUserPriceAlerts(userId) {
-  if (!userId) return;
+  if (!userId) return [];
 
   try {
     const priceAlerts = await prisma.alert.findMany({
@@ -43,8 +43,10 @@ async function sweepUserPriceAlerts(userId) {
     });
 
     if (!Array.isArray(priceAlerts) || priceAlerts.length === 0) {
-      return;
+      return [];
     }
+
+    const triggeredPayloads = [];
 
     await processPriceAlerts(priceAlerts, {
       logger: console,
@@ -54,10 +56,13 @@ async function sweepUserPriceAlerts(userId) {
         }
       },
       onTriggered: async (alert, payload) => {
+        triggeredPayloads.push(payload);
         socketService.emitAlertTriggered(alert.userId, payload);
         await sendAlertToTelegram(alert.userId, payload);
       },
     });
+
+    return triggeredPayloads;
   } catch (error) {
     console.warn('[alertController] sweepUserPriceAlerts failed:', error?.message);
   }
@@ -185,8 +190,9 @@ async function getAlerts(req, res, next) {
     const { status, exchange, market, type } = req.query;
     const userId = req.user.id;
 
+    let sweptTriggers = [];
     if (status !== 'triggered') {
-      await sweepUserPriceAlerts(userId);
+      sweptTriggers = await sweepUserPriceAlerts(userId) || [];
     }
 
     const where = { userId };
@@ -220,7 +226,7 @@ async function getAlerts(req, res, next) {
       orderBy: { createdAt: 'desc' },
     });
 
-    res.json({ alerts });
+    res.json({ alerts, sweptTriggers });
   } catch (error) {
     next(error);
   }

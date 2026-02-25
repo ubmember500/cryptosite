@@ -39,6 +39,8 @@ function App() {
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
   const initialize = useAuthStore((state) => state.initialize);
   const applyTriggeredEvent = useAlertStore((state) => state.applyTriggeredEvent);
+  const pendingTriggerAlert = useAlertStore((state) => state.pendingTriggerAlert);
+  const clearPendingTriggerAlert = useAlertStore((state) => state.clearPendingTriggerAlert);
   const addToast = useToastStore((state) => state.addToast);
   const [triggeredAlert, setTriggeredAlert] = useState(null);
 
@@ -46,6 +48,23 @@ function App() {
   useEffect(() => {
     initialize();
   }, [initialize]);
+
+  // Show modal when a sweep-detected trigger arrives via HTTP response
+  // (handles the race condition where socket hadn't joined the room yet when sweep fired)
+  useEffect(() => {
+    if (!pendingTriggerAlert) return;
+    playAlertSound().catch(() => {});
+    const symbol = pendingTriggerAlert?.symbol || pendingTriggerAlert?.coinSymbol || 'token';
+    const target = Number(pendingTriggerAlert?.targetValue);
+    const hasTarget = Number.isFinite(target);
+    addToast(
+      `Price alert hit: ${symbol}${hasTarget ? ` @ ${target}` : ''}`,
+      'warning',
+      8000
+    );
+    setTriggeredAlert(pendingTriggerAlert);
+    clearPendingTriggerAlert();
+  }, [pendingTriggerAlert, addToast, clearPendingTriggerAlert]);
 
   // Handle real-time alert triggers via Socket.IO
   useSocket({

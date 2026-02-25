@@ -15,9 +15,9 @@ export const alertService = {
     if (type != null && type !== '') query.type = type;
     const response = await api.get('/alerts', { params: query });
     const data = response.data;
-    if (Array.isArray(data?.alerts)) return data.alerts;
-    if (Array.isArray(data)) return data;
-    return [];
+    const alerts = Array.isArray(data?.alerts) ? data.alerts : (Array.isArray(data) ? data : []);
+    const sweptTriggers = Array.isArray(data?.sweptTriggers) ? data.sweptTriggers : [];
+    return { alerts, sweptTriggers };
   },
 
   /**
