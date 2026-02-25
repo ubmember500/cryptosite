@@ -393,6 +393,31 @@ function handlePriceTick({ exchange, market, prices: tickPrices }) {
   }
 }
 
+// ─── Complex alert loop (independent of lease system) ────────────────────
+let complexLoopActive = false;
+
+function startComplexLoop() {
+  if (complexLoopActive) return;
+  priceWatcher.onTick(handlePriceTick);
+  refreshComplexAlertsCache();
+  complexCacheRefreshTimer = setInterval(() => refreshComplexAlertsCache(), COMPLEX_CACHE_REFRESH_MS);
+  complexLoopActive = true;
+  logEngine('info', 'complex.loop.start');
+}
+
+function stopComplexLoop() {
+  if (!complexLoopActive) return;
+  priceWatcher.offTick(handlePriceTick);
+  if (complexCacheRefreshTimer) {
+    clearInterval(complexCacheRefreshTimer);
+    complexCacheRefreshTimer = null;
+  }
+  complexAlertsCache = [];
+  activeComplexExchangeMarkets = new Set();
+  complexLoopActive = false;
+  logEngine('info', 'complex.loop.stop');
+}
+
 function startWorkerLoops() {
   if (engineWorkerActive) return;
   fastPriceTimer = setInterval(() => {
@@ -401,12 +426,7 @@ function startWorkerLoops() {
   klinesSweepTimer = setInterval(() => {
     runKlinesSweep();
   }, KLINES_SWEEP_INTERVAL_MS);
-  // Register tick listener for instant complex alert evaluation
-  priceWatcher.onTick(handlePriceTick);
-  // Load complex alert cache immediately, then refresh every 30s
-  refreshComplexAlertsCache();
-  complexCacheRefreshTimer = setInterval(() => refreshComplexAlertsCache(), COMPLEX_CACHE_REFRESH_MS);
-  // Cron only handles price alerts now; complex alerts are tick-driven
+  // Cron handles price alerts only; complex alerts are tick-driven via startComplexLoop
   complexCronTask = cron.schedule('* * * * * *', () => checkAlerts());
   checkPriceAlertsFast();
   checkAlerts();
@@ -425,13 +445,6 @@ function stopWorkerLoops(reason = 'manual') {
     clearInterval(klinesSweepTimer);
     klinesSweepTimer = null;
   }
-  priceWatcher.offTick(handlePriceTick);
-  if (complexCacheRefreshTimer) {
-    clearInterval(complexCacheRefreshTimer);
-    complexCacheRefreshTimer = null;
-  }
-  complexAlertsCache = [];
-  activeComplexExchangeMarkets = new Set();
   if (complexCronTask) {
     complexCronTask.stop();
     complexCronTask = null;
@@ -440,6 +453,7 @@ function stopWorkerLoops(reason = 'manual') {
     logEngine('info', 'worker.stop', { reason });
   }
   engineWorkerActive = false;
+  // NOTE: Complex alert loop NOT stopped here — it runs independent of lease
 }
 
 async function waitForInFlightChecks(maxWaitMs = 5000) {
@@ -570,7 +584,7 @@ function getWindowStats(exchange, market, symbol, nowMs, lookbackSec) {
   return { min, max, oldest, current, points };
 }
 
-function canEmitComplexTrigger(alertId, symbol, nowMs, cooldownMs = 60000) {
+function canEmitComplexTrigger(alertId, symbol, nowMs, cooldownMs = 30000) {
   const bySymbol = complexLastTrigger.get(alertId);
   if (!bySymbol) return true;
   const lastTs = bySymbol.get(String(symbol || '').toUpperCase());
@@ -922,6 +936,10 @@ async function startAlertEngine() {
     retryMs: LEASE_RETRY_MS,
   });
 
+  // Complex alert loop runs independently of the lease system — start immediately.
+  // This ensures complex alerts are ALWAYS evaluated regardless of lease flapping.
+  startComplexLoop();
+
   try {
     await ensureLeaseTable();
     await runLeaseCoordinatorTick('startup');
@@ -967,6 +985,7 @@ async function stopAlertEngine() {
     leaseCoordinatorTimer = null;
   }
 
+  stopComplexLoop();
   stopWorkerLoops('shutdown');
   await waitForInFlightChecks(5000);
 

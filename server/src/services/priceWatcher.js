@@ -52,6 +52,10 @@ let refreshTimer = null;
 let mexcFuturesPollTimer = null;
 let mexcSpotPollTimer = null;
 
+// REST polling for per-symbol exchanges (Bybit/Bitget) in "all coins" mode
+const allCoinsRestPollers = new Map(); // 'exchange|market' -> intervalId
+const ALL_COINS_REST_POLL_MS = 2000; // 2 seconds
+
 // Symbols that need monitoring (set by refreshSubscriptions)
 const watchedSymbols = {
   bybit:  { futures: new Set(), spot: new Set() },
@@ -126,6 +130,10 @@ function stop() {
   if (mexcFuturesPollTimer) { clearInterval(mexcFuturesPollTimer); mexcFuturesPollTimer = null; }
   if (mexcSpotPollTimer) { clearInterval(mexcSpotPollTimer); mexcSpotPollTimer = null; }
 
+  // Clean up all-coins REST pollers (Bybit/Bitget)
+  for (const [, timer] of allCoinsRestPollers) { clearInterval(timer); }
+  allCoinsRestPollers.clear();
+
   for (const [key, conn] of connections.entries()) {
     closeConnection(key, conn, 'shutdown');
   }
@@ -191,7 +199,7 @@ async function refreshSubscriptions() {
           : (alert.notificationOptions || {});
       } catch { notifOpts = {}; }
 
-      const alertForMode = notifOpts.alertForMode || 'whitelist';
+      const alertForMode = notifOpts.alertForMode || 'all';
 
       let syms;
       try { syms = JSON.parse(alert.symbols || '[]'); } catch { syms = [alert.symbols]; }
@@ -261,6 +269,39 @@ async function refreshSubscriptions() {
     pollMexcREST('spot');
   } else if (!needMexcSpot && mexcSpotPollTimer) {
     clearInterval(mexcSpotPollTimer); mexcSpotPollTimer = null;
+  }
+
+  // Manage REST polling for per-symbol exchanges in "all coins" mode (Bybit/Bitget)
+  const needAllCoinsREST = new Set();
+  for (const alert of alerts) {
+    if (alert.alertType !== 'complex') continue;
+    const ex = String(alert.exchange || 'binance').toLowerCase();
+    const mkt = String(alert.market || 'futures').toLowerCase() === 'spot' ? 'spot' : 'futures';
+    if (ex !== 'bybit' && ex !== 'bitget') continue;
+    let nOpts = {};
+    try {
+      nOpts = typeof alert.notificationOptions === 'string'
+        ? JSON.parse(alert.notificationOptions || '{}')
+        : (alert.notificationOptions || {});
+    } catch { nOpts = {}; }
+    if ((nOpts.alertForMode || 'all') === 'all') {
+      needAllCoinsREST.add(`${ex}|${mkt}`);
+    }
+  }
+  for (const key of needAllCoinsREST) {
+    if (!allCoinsRestPollers.has(key)) {
+      const [ex, mkt] = key.split('|');
+      console.log(`[PriceWatcher] Starting REST poll for ${key} (all coins mode)`);
+      allCoinsRestPollers.set(key, setInterval(() => pollExchangeREST(ex, mkt), ALL_COINS_REST_POLL_MS));
+      pollExchangeREST(ex, mkt);
+    }
+  }
+  for (const [key, timer] of allCoinsRestPollers) {
+    if (!needAllCoinsREST.has(key)) {
+      clearInterval(timer);
+      allCoinsRestPollers.delete(key);
+      console.log(`[PriceWatcher] Stopped REST poll for ${key}`);
+    }
   }
 }
 
@@ -532,6 +573,40 @@ async function pollMexcREST(market) {
     }
   } catch (err) {
     console.warn(`[PriceWatcher] MEXC ${market} REST poll failed:`, err.message);
+  }
+}
+
+/**
+ * REST polling for per-symbol exchanges (Bybit, Bitget) in "all coins" mode.
+ * These exchanges require per-symbol WS subscriptions, so in "all coins" mode
+ * we use REST calls every 2s to get ALL tickers.
+ */
+async function pollExchangeREST(exchange, market) {
+  if (!running) return;
+  try {
+    const exchangeType = market === 'spot' ? 'spot' : 'futures';
+    let priceFn;
+    switch (exchange) {
+      case 'bybit':  priceFn = require('./bybitService').getLastPricesBySymbols; break;
+      case 'bitget': priceFn = require('./bitgetService').getLastPricesBySymbols; break;
+      default: return;
+    }
+    const map = await priceFn([], exchangeType);
+    if (map && typeof map === 'object') {
+      if (!prices[exchange]) prices[exchange] = { futures: {}, spot: {} };
+      const batch = {};
+      for (const [sym, val] of Object.entries(map)) {
+        const p = Number(val);
+        if (Number.isFinite(p) && p > 0) {
+          prices[exchange][market][sym] = p;
+          batch[sym] = p;
+        }
+      }
+      lastUpdated[exchange][market] = Date.now();
+      emitTick(exchange, market, batch);
+    }
+  } catch (err) {
+    console.warn(`[PriceWatcher] ${exchange}|${market} REST poll failed:`, err.message);
   }
 }
 
