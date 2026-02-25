@@ -1,14 +1,13 @@
 import React from 'react';
 import { cn } from '../../utils/cn';
 import Button from '../common/Button';
-import { DollarSign, Clock, LayoutGrid, Zap, Filter } from 'lucide-react';
+import { DollarSign, CheckCircle, Zap, Filter } from 'lucide-react';
 
 const filterOptions = {
   status: [
     { value: 'all', label: 'All', icon: Filter },
     { value: 'active', label: 'Active', icon: Zap },
-    { value: 'inactive', label: 'Inactive', icon: Clock },
-    { value: 'archived', label: 'Archived', icon: LayoutGrid },
+    { value: 'triggered', label: 'Triggered', icon: CheckCircle },
   ],
   exchange: [
     { value: 'all', label: 'All', icon: Filter },

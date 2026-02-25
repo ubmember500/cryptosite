@@ -8,7 +8,7 @@ import TokenSelector from './TokenSelector';
 import { useMarketStore } from '../../store/marketStore';
 import { useAlertStore } from '../../store/alertStore';
 import { fetchLivePrice } from '../../utils/fetchLivePrice';
-import { AlertCircle, Info, Lock, X } from 'lucide-react';
+import { AlertCircle, ArrowUp, ArrowDown, Info, Lock, X } from 'lucide-react';
 import { cn } from '../../utils/cn';
 
 const CreateAlertModal = ({ isOpen, onClose, onSuccess, editingAlertId, editingAlert, initialData = null }) => {
@@ -20,6 +20,7 @@ const CreateAlertModal = ({ isOpen, onClose, onSuccess, editingAlertId, editingA
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [complexTokenSearch, setComplexTokenSearch] = useState('');
+  const [livePricePreview, setLivePricePreview] = useState(null); // live price for direction indicator
   const [whitelistInput, setWhitelistInput] = useState(''); // For whitelist tag input
   const [alertForMode, setAlertForMode] = useState('all'); // 'all' | 'whitelist'
   
@@ -146,6 +147,30 @@ const CreateAlertModal = ({ isOpen, onClose, onSuccess, editingAlertId, editingA
       return full.includes(q) || sym.includes(q);
     });
   }, [binanceTokens, complexTokenSearch]);
+
+  // Live price fetch for direction preview in price alert Step 3
+  useEffect(() => {
+    if (step !== 3 || formData.alertType !== 'price' || !formData.symbols[0] || editingAlertId) {
+      setLivePricePreview(null);
+      return;
+    }
+    let cancelled = false;
+    const exchange = formData.exchanges[0] || 'binance';
+    const market = formData.market;
+    const symbol = formData.symbols[0];
+    (async () => {
+      const price = await fetchLivePrice(exchange, market, symbol);
+      if (!cancelled && price != null) {
+        setLivePricePreview(price);
+      } else if (!cancelled) {
+        // Fallback to cached token price from token list
+        const tk = binanceTokens.find((t) => (t.fullSymbol || t.symbol) === symbol);
+        const stale = tk?.lastPrice != null ? Number(tk.lastPrice) : null;
+        if (stale != null && Number.isFinite(stale) && stale > 0) setLivePricePreview(stale);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [step, formData.alertType, formData.symbols, formData.exchanges, formData.market, editingAlertId, binanceTokens]);
 
   const isStep1Valid = formData.alertType === 'price' || formData.alertType === 'complex';
   const isStep2Valid = formData.exchanges.length > 0 && formData.market;
@@ -427,11 +452,33 @@ const CreateAlertModal = ({ isOpen, onClose, onSuccess, editingAlertId, editingA
                     placeholder={t('e.g. 50000')}
                     disabled={!!editingAlertId}
                   />
-                  {!editingAlertId && (
-                    <p className="text-xs text-textSecondary mt-1">
-                      {t('Alert triggers the first time price crosses your target (up or down).')}
-                    </p>
-                  )}
+                  {!editingAlertId && (() => {
+                    const target = formData.targetValue !== '' ? Number(formData.targetValue) : null;
+                    const current = livePricePreview;
+                    const hasDirection = target != null && Number.isFinite(target) && target > 0 && current != null && Number.isFinite(current) && current > 0;
+                    if (hasDirection) {
+                      const isAbove = target > current;
+                      const isEqual = Math.abs(target - current) < 1e-8;
+                      const directionColor = isEqual ? 'text-yellow-400' : isAbove ? 'text-green-400' : 'text-red-400';
+                      const DirIcon = isAbove ? ArrowUp : ArrowDown;
+                      return (
+                        <div className={`flex items-center gap-1.5 mt-2 text-xs ${directionColor}`}>
+                          {!isEqual && <DirIcon size={12} />}
+                          {isEqual
+                            ? t('Current price is exactly {{price}} — will trigger immediately', { price: current.toLocaleString(undefined, { maximumFractionDigits: 8 }) })
+                            : isAbove
+                              ? t('Current price: {{current}} → triggers when ≥ {{target}}', { current: current.toLocaleString(undefined, { maximumFractionDigits: 8 }), target: target.toLocaleString(undefined, { maximumFractionDigits: 8 }) })
+                              : t('Current price: {{current}} → triggers when ≤ {{target}}', { current: current.toLocaleString(undefined, { maximumFractionDigits: 8 }), target: target.toLocaleString(undefined, { maximumFractionDigits: 8 }) })
+                          }
+                        </div>
+                      );
+                    }
+                    return (
+                      <p className="text-xs text-textSecondary mt-1">
+                        {t('Alert triggers the first time price crosses your target (up or down).')}
+                      </p>
+                    );
+                  })()}
                 </div>
               </>
             ) : (

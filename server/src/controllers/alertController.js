@@ -138,11 +138,10 @@ async function fetchKlinesForHistoricalCheck(exchange, market, symbol, startTime
  * TradingView-style crossing detection:
  *   • For 'above': initialPrice < target — we look for a candle whose HIGH >= target.
  *   • For 'below': initialPrice > target — we look for a candle whose LOW <= target.
- *   • We also verify initialPrice is genuinely on the expected side of target
- *     (crossing guard) to avoid false positives from stale/wrong snapshots.
- *   • We skip candles from the first minute after creation (the candle whose
- *     time range overlaps with the creation timestamp) because part of that
- *     candle's data predates the alert.
+ *   • Crossing guard: if initialPrice is already on the target side, skip immediately.
+ *     This makes the 60-second candle-offset UNNECESSARY — the crossing guard already
+ *     prevents false positives from any candle that includes pre-creation data.
+ *     We start from createdAtMs directly so crossings in the first minute are caught.
  */
 async function checkAlertHistorically(alert) {
   const symbols = parseAlertSymbols(alert.symbols);
@@ -156,27 +155,25 @@ async function checkAlertHistorically(alert) {
   const exchange = String(alert.exchange || 'binance').toLowerCase();
   const market = String(alert.market || 'futures').toLowerCase();
 
-  // Crossing guard: verify initialPrice is on the expected starting side.
-  // If it isn't, the condition might be wrong — skip to avoid false trigger.
+  // Crossing guard: verify initialPrice started on the correct side of target.
+  // This is the primary false-positive protection.  Because we validate this,
+  // we do NOT need to skip the first candle — even if the candle spans the
+  // creation timestamp, its high/low would only reflect pre-creation price
+  // which was already on the correct (non-triggered) side.
   const initial = Number(alert?.initialPrice);
   if (Number.isFinite(initial) && initial > 0) {
-    if (condition === 'above' && initial >= targetValue) return null; // already above — no crossing possible
-    if (condition === 'below' && initial <= targetValue) return null; // already below — no crossing possible
+    if (condition === 'above' && initial >= targetValue) return null; // was already above — no crossing possible
+    if (condition === 'below' && initial <= targetValue) return null; // was already below — no crossing possible
   }
 
-  // Skip recent alerts (< 5 min old). The real-time engine handles fresh
-  // alerts; the historical check is a safety net for server-sleep gaps.
-  // Using 5 min instead of 2 min to avoid false positives from creation-time
-  // price jitter and to let the real-time engine have first-pass priority.
+  // Minimum age: 90 seconds.  This gives the 300ms real-time engine ~90 cycles
+  // to catch it first.  Short enough that a crossing in the first 2 minutes is
+  // caught quickly on the next HTTP poll (every 60s via App.jsx heartbeat).
   const createdAtMs = alert.createdAt ? new Date(alert.createdAt).getTime() : 0;
-  if (Date.now() - createdAtMs < 300_000) return null;
+  if (Date.now() - createdAtMs < 90_000) return null;
 
-  // Fetch klines starting from 1 minute AFTER creation.
-  // 1-minute candles are aligned to minute boundaries, so the candle that
-  // contains createdAtMs partly covers time BEFORE the alert existed.
-  // Adding 60s ensures we only look at candles that fully postdate creation.
-  const klineStartMs = createdAtMs + 60_000;
-  const klines = await fetchKlinesForHistoricalCheck(exchange, market, symbol, klineStartMs);
+  // Fetch klines from alert creation time (not +60s — crossing guard handles false positives).
+  const klines = await fetchKlinesForHistoricalCheck(exchange, market, symbol, createdAtMs);
   if (!klines.length) return null;
 
   let crossed = false;

@@ -110,15 +110,30 @@ function createPriceAlertProcessor(deps = {}) {
           continue;
         }
 
-        // IMPORTANT: strict=true — only use the target exchange's own price.
-        // strict=false would allow CoinGecko fallback which returns a global
-        // average price that can differ significantly from the exchange price,
-        // causing false triggers.
+        // Use the efficient CACHED bulk ticker with exchangeOnly:true (no CoinGecko).
+        //
+        // Why NOT strict:true:
+        //   strict:true forces fetchCurrentPriceBySymbol (per-symbol REST) as the first
+        //   attempt, which makes a separate HTTP call to Binance every 300ms PER ALERT.
+        //   With 4+ alerts this can exceed Binance's IP rate limit (2400 weight/min),
+        //   causing 429 errors → 15-second error cooldown → ALL alerts silently skipped.
+        //   The efficient path is getLastPricesBySymbols whose 2s cache is shared across
+        //   ALL alerts in the same cycle (one bulk fetch for any number of alerts).
+        //
+        // Why strict:false:
+        //   On price-feed failure we want ok:false (skip this cycle gracefully), not throw.
+        //   The historical klines sweep acts as the safety net for missed cycles.
+        //
+        // Why exchangeOnly:true:
+        //   Prevents CoinGecko fallback when Binance API is temporarily unavailable.
+        //   CoinGecko returns a global average price that differs from exchange-specific
+        //   futures prices, which was the original cause of false triggers.
         const snapshot = await priceResolver({
           exchange,
           market,
           symbol: firstSymbol,
-          strict: true,
+          strict: false,
+          exchangeOnly: true,
           logger,
         });
 

@@ -88,11 +88,16 @@ function resolvePriceFromMap(priceMap, candidates) {
   return { price: null, symbol: '' };
 }
 
-async function fetchExchangePriceSnapshot({ exchange, market, symbol, strict = true, logger = console }) {
+async function fetchExchangePriceSnapshot({ exchange, market, symbol, strict = true, exchangeOnly, logger = console }) {
   const exchangeKey = String(exchange || '').toLowerCase();
   const service = getExchangeService(exchangeKey, { allowDefault: false });
   const normalizedMarket = String(market || 'futures').toLowerCase() === 'spot' ? 'spot' : 'futures';
   const exchangeType = normalizedMarket === 'spot' ? 'spot' : 'futures';
+
+  // exchangeOnly controls CoinGecko fallback independently from strict (error handling).
+  // Callers can set exchangeOnly:true + strict:false to use the efficient cached bulk
+  // ticker without CoinGecko, while still failing gracefully (ok:false) on errors.
+  const useExchangeOnly = typeof exchangeOnly === 'boolean' ? exchangeOnly : (strict === true);
 
   if (!service) {
     return {
@@ -125,11 +130,10 @@ async function fetchExchangePriceSnapshot({ exchange, market, symbol, strict = t
   if (typeof service.fetchCurrentPriceBySymbol === 'function') {
     for (const candidate of candidates) {
       try {
-        const exchangeOnlyMode = strict === true;
         const directPrice = Number(
           await service.fetchCurrentPriceBySymbol(candidate, exchangeType, {
             strict,
-            exchangeOnly: exchangeOnlyMode,
+            exchangeOnly: useExchangeOnly,
           })
         );
         if (Number.isFinite(directPrice) && directPrice > 0) {
@@ -154,10 +158,9 @@ async function fetchExchangePriceSnapshot({ exchange, market, symbol, strict = t
   }
 
   try {
-    const exchangeOnlyMode = strict === true;
     const priceMap = await service.getLastPricesBySymbols(candidates, exchangeType, {
       strict,
-      exchangeOnly: exchangeOnlyMode,
+      exchangeOnly: useExchangeOnly,
     });
 
     const resolved = resolvePriceFromMap(priceMap, candidates);
