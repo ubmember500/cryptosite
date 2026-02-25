@@ -82,24 +82,44 @@ async function fetchKlinesForHistoricalCheck(exchange, market, symbol, startTime
     }
 
     if (exchange === 'gate') {
-      const contract = `${sym.replace(/USDT$/i, '')}_USDT`;
-      const resp = await axios.get('https://fx-api.gateio.ws/api/v4/futures/usdt/candlesticks', {
-        params: { contract, interval: '1m', from: Math.floor(effectiveStartMs / 1000), to: Math.floor(endTimeMs / 1000), limit: 500 },
-        timeout: TIMEOUT,
-      });
-      // Gate candle: { h, l, ... }
-      return (Array.isArray(resp.data) ? resp.data : []).map((k) => ({ high: Number(k.h), low: Number(k.l) }));
+      if (isFutures) {
+        const contract = `${sym.replace(/USDT$/i, '')}_USDT`;
+        const resp = await axios.get('https://fx-api.gateio.ws/api/v4/futures/usdt/candlesticks', {
+          params: { contract, interval: '1m', from: Math.floor(effectiveStartMs / 1000), to: Math.floor(endTimeMs / 1000), limit: 500 },
+          timeout: TIMEOUT,
+        });
+        return (Array.isArray(resp.data) ? resp.data : []).map((k) => ({ high: Number(k.h), low: Number(k.l) }));
+      } else {
+        // Gate spot klines
+        const currencyPair = `${sym.replace(/USDT$/i, '')}_USDT`;
+        const resp = await axios.get('https://api.gateio.ws/api/v4/spot/candlesticks', {
+          params: { currency_pair: currencyPair, interval: '1m', from: Math.floor(effectiveStartMs / 1000), to: Math.floor(endTimeMs / 1000), limit: 500 },
+          timeout: TIMEOUT,
+        });
+        // Gate spot candle: [ts, volume, close, high, low, open, ...]
+        return (Array.isArray(resp.data) ? resp.data : []).map((k) => ({ high: Number(k[3]), low: Number(k[4]) }));
+      }
     }
 
     if (exchange === 'mexc') {
-      const contract = `${sym.replace(/USDT$/i, '')}_USDT`;
-      const resp = await axios.get(`https://futures.mexc.com/api/v1/contract/kline/${contract}`, {
-        params: { interval: 'Min1', start: Math.floor(effectiveStartMs / 1000), end: Math.floor(endTimeMs / 1000) },
-        timeout: TIMEOUT,
-      });
-      const highs = resp.data?.data?.highPrices || [];
-      const lows = resp.data?.data?.lowPrices || [];
-      return highs.map((h, i) => ({ high: Number(h), low: Number(lows[i] ?? h) }));
+      if (isFutures) {
+        const contract = `${sym.replace(/USDT$/i, '')}_USDT`;
+        const resp = await axios.get(`https://futures.mexc.com/api/v1/contract/kline/${contract}`, {
+          params: { interval: 'Min1', start: Math.floor(effectiveStartMs / 1000), end: Math.floor(endTimeMs / 1000) },
+          timeout: TIMEOUT,
+        });
+        const highs = resp.data?.data?.highPrices || [];
+        const lows = resp.data?.data?.lowPrices || [];
+        return highs.map((h, i) => ({ high: Number(h), low: Number(lows[i] ?? h) }));
+      } else {
+        // MEXC spot klines (standard REST v3)
+        const resp = await axios.get('https://api.mexc.com/api/v3/klines', {
+          params: { symbol: sym, interval: '1m', startTime: effectiveStartMs, endTime: endTimeMs, limit: 500 },
+          timeout: TIMEOUT,
+        });
+        // MEXC spot kline: [openTime, open, high, low, close, ...]
+        return (Array.isArray(resp.data) ? resp.data : []).map((k) => ({ high: Number(k[2]), low: Number(k[3]) }));
+      }
     }
 
     if (exchange === 'bitget') {
@@ -174,10 +194,30 @@ async function checkAlertHistorically(alert) {
 
   // Fetch klines from alert creation time (not +60s — crossing guard handles false positives).
   const klines = await fetchKlinesForHistoricalCheck(exchange, market, symbol, createdAtMs);
-  if (!klines.length) return null;
+  // Market-type fallback: if the stored market (e.g. 'futures') has no klines for
+  // this symbol, try the other market type.  Handles tokens that are spot-only.
+  let effectiveMarket = market;
+  let resolvedKlines = klines;
+  if (!klines.length) {
+    const altMarket = market === 'futures' ? 'spot' : 'futures';
+    const altKlines = await fetchKlinesForHistoricalCheck(exchange, altMarket, symbol, createdAtMs);
+    if (altKlines.length) {
+      resolvedKlines = altKlines;
+      effectiveMarket = altMarket;
+      // Self-heal: correct the stored market so future sweeps/engine cycles are direct.
+      try {
+        await prisma.alert.updateMany({
+          where: { id: alert.id, triggered: false, isActive: true },
+          data: { market: altMarket },
+        });
+        console.log(`[checkAlertHistorically] alert=${alert.id} market auto-corrected ${market} → ${altMarket}`);
+      } catch { /* non-fatal */ }
+    }
+  }
+  if (!resolvedKlines.length) return null;
 
   let crossed = false;
-  for (const { high, low } of klines) {
+  for (const { high, low } of resolvedKlines) {
     if (condition === 'above' && Number.isFinite(high) && high >= targetValue) { crossed = true; break; }
     if (condition === 'below' && Number.isFinite(low) && low <= targetValue) { crossed = true; break; }
   }
@@ -625,6 +665,13 @@ async function createAlert(req, res, next) {
             initialPrice,
             initialPriceSource,
           });
+          // If the price was found via the fallback market type (e.g. user picked
+          // 'futures' but ENSO only exists on spot), override the stored market so
+          // the engine polls the correct market from day one.
+          if (snapshot.resolvedMarket && snapshot.resolvedMarket !== market) {
+            console.warn(`[createAlert] market auto-corrected ${market} → ${snapshot.resolvedMarket} because symbol only exists on ${snapshot.resolvedMarket}`);
+            if (validatedData) validatedData.market = snapshot.resolvedMarket;
+          }
         } else {
           if (Number.isFinite(clientProvidedInitialPrice) && clientProvidedInitialPrice > 0) {
             initialPrice = clientProvidedInitialPrice;

@@ -214,6 +214,39 @@ async function fetchExchangePriceSnapshot({ exchange, market, symbol, strict = t
     }
   }
 
+  // ── Market-type fallback ──────────────────────────────────────────────────
+  // Many altcoins (e.g. ENSO, smaller tokens) are listed on SPOT only — they
+  // have no perpetual futures contract.  If the primary market (typically
+  // 'futures') returned no price, automatically try the other market type so
+  // spot-only tokens are never permanently silenced.
+  // This runs for BOTH the 300ms real-time engine (strict:false) AND the
+  // alert-creation snapshot (strict:true).
+  const fallbackMarket = normalizedMarket === 'futures' ? 'spot' : 'futures';
+  const fallbackExchangeType = fallbackMarket; // 'spot' | 'futures' — same string
+
+  try {
+    const fallbackMap = await service.getLastPricesBySymbols(candidates, fallbackExchangeType, {
+      strict,
+      exchangeOnly: useExchangeOnly,
+    });
+
+    const fallbackResolved = resolvePriceFromMap(fallbackMap, candidates);
+    if (Number.isFinite(fallbackResolved.price) && fallbackResolved.price > 0) {
+      logger.warn?.(`[priceSourceResolver] ${exchangeKey} ${normalizedMarket} returned no price for ${candidates[0]}; resolved via ${fallbackMarket} fallback`);
+      return {
+        ok: true,
+        status: 'resolved',
+        price: fallbackResolved.price,
+        symbol: fallbackResolved.symbol || candidates[0],
+        source: `${exchangeKey}_${fallbackMarket}_map`,
+        resolvedMarket: fallbackMarket, // caller can use this to update stored market
+        candidates,
+      };
+    }
+  } catch {
+    // Fallback errors are ignored — we proceed to the final SYMBOL_UNRESOLVED return.
+  }
+
   return {
     ok: false,
     status: 'unresolved',
@@ -222,7 +255,7 @@ async function fetchExchangePriceSnapshot({ exchange, market, symbol, strict = t
     symbol: candidates[0] || '',
     source: `${exchangeKey}_exchange_map_unavailable`,
     candidates,
-    error: 'Exchange map unavailable or symbol unresolved',
+    error: 'Exchange map unavailable or symbol unresolved on both market types',
   };
 }
 

@@ -149,10 +149,29 @@ function createPriceAlertProcessor(deps = {}) {
             `exchange=${exchange}/${market} symbol=${firstSymbol} ` +
             `reason=${snapshot?.reasonCode || 'unknown'} source=${snapshot?.source || 'unknown'}` +
             (isPermanent
-              ? ' ← symbol may not exist on this exchange; alert will never fire until fixed'
+              ? ' ← symbol may not exist on this exchange on either market type'
               : ' (transient — will retry next cycle)')
           );
           continue;
+        }
+
+        // If price was resolved via the fallback market type (e.g. futures alert
+        // but token only exists on spot), silently correct the market in the DB so
+        // subsequent engine cycles use the right market directly without the fallback
+        // overhead.  Non-fatal — next cycle will still work even if this fails.
+        if (snapshot?.resolvedMarket && snapshot.resolvedMarket !== market) {
+          try {
+            await prismaClient.alert.updateMany({
+              where: { id: alert.id, triggered: false, isActive: true },
+              data: { market: snapshot.resolvedMarket },
+            });
+            logger.warn?.(
+              `[priceAlertV2] alert=${alert.id} market auto-corrected ` +
+              `${market} → ${snapshot.resolvedMarket} (symbol only exists on ${snapshot.resolvedMarket})`
+            );
+          } catch {
+            // non-fatal
+          }
         }
 
         const condition = resolveCondition(alert, targetValue);
