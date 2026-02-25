@@ -139,9 +139,18 @@ function createPriceAlertProcessor(deps = {}) {
 
         const currentPrice = Number(snapshot?.price);
         if (!snapshot?.ok || !Number.isFinite(currentPrice) || currentPrice <= 0) {
-          logger.warn?.(
-            `[priceAlertV2] alert=${alert.id} unresolved price ` +
-            `exchange=${exchange}/${market} symbol=${firstSymbol} source=${snapshot?.source || 'unknown'}`
+          // Distinguish permanent failures (symbol doesn't exist on exchange) from
+          // transient ones (API timeout, cache miss) so they're easy to spot in logs.
+          const isPermanent = snapshot?.reasonCode === 'SYMBOL_UNRESOLVED'
+            || snapshot?.reasonCode === 'INVALID_SYMBOL';
+          const logLevel = isPermanent ? 'error' : 'warn';
+          logger[logLevel]?.(
+            `[priceAlertV2] alert=${alert.id} price unresolved ` +
+            `exchange=${exchange}/${market} symbol=${firstSymbol} ` +
+            `reason=${snapshot?.reasonCode || 'unknown'} source=${snapshot?.source || 'unknown'}` +
+            (isPermanent
+              ? ' ← symbol may not exist on this exchange; alert will never fire until fixed'
+              : ' (transient — will retry next cycle)')
           );
           continue;
         }

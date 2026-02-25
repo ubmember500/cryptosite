@@ -55,12 +55,16 @@ function buildCandidates(exchange, rawSymbol, market) {
 
   const hasQuote = /(USDT|USD)$/i.test(normalizedBase);
   if (!hasQuote) {
+    // Symbol has no quote suffix — try common quote currencies so 'BTC' → ['BTC','BTCUSDT','BTCUSD'].
     set.add(`${normalizedBase}USDT`);
     set.add(`${normalizedBase}USD`);
-  } else {
-    const withoutQuote = normalizedBase.replace(/USDT$|USD$/i, '');
-    if (withoutQuote) set.add(withoutQuote);
   }
+  // When symbol already ends in USDT/USD (e.g. 'XUSDT', 'BTCUSDT'), do NOT add the
+  // bare base ('X', 'BTC') as a candidate.  The bare string is often not a real
+  // symbol on the exchange, so Binance returns 400 for it — burning 2 weight units
+  // per call per alert per 300ms cycle, rapidly exhausting the IP rate limit
+  // (2400 weight/min), triggering 429 → 15-second error cooldown → all alerts
+  // silently skipped.
 
   return Array.from(set).filter(Boolean);
 }
@@ -127,7 +131,20 @@ async function fetchExchangePriceSnapshot({ exchange, market, symbol, strict = t
     };
   }
 
-  if (typeof service.fetchCurrentPriceBySymbol === 'function') {
+  // Per-symbol REST (fetchCurrentPriceBySymbol) is ONLY used in strict:true mode
+  // (alert creation — called once per alert).
+  //
+  // In strict:false mode (the 300ms engine polling path) this block is SKIPPED.
+  // Why: fetchCurrentPriceBySymbol makes one individual HTTP call to Binance per
+  // candidate symbol.  With N active alerts, that is N individual REST calls every
+  // 300ms → N × 3.3 calls/sec.  Binance weight: 2 per /ticker/price call.
+  // At just 6 active alerts: 6 × 3.3 × 2 = ~40 weight/sec = 2400 weight/min — the
+  // EXACT Binance IP rate limit.  Any additional traffic causes 429 → binanceService
+  // starts a 15-second error cooldown → ALL alerts are silently skipped for 15s →
+  // cycle repeats indefinitely.  The bulk cached ticker below (getLastPricesBySymbols)
+  // fetches prices for ALL symbols in ONE call cached for 2 seconds — zero per-alert
+  // overhead regardless of how many alerts are active.
+  if (strict && typeof service.fetchCurrentPriceBySymbol === 'function') {
     for (const candidate of candidates) {
       try {
         const directPrice = Number(

@@ -103,16 +103,19 @@ const COINGECKO_CACHE_TTL_MS = 60000;
 function filterPriceMapBySymbols(fullMap, symbols) {
   if (!symbols || symbols.length === 0) return fullMap;
 
+  // Build a single uppercase index of the full map so we can look up any casing.
+  // Binance returns uppercase symbols in all their API responses, but defensive
+  // code that merges per-symbol fallback results may store mixed-case keys.
+  const upperIndex = {};
+  for (const [k, v] of Object.entries(fullMap)) {
+    upperIndex[String(k).toUpperCase()] = v;
+  }
+
   const wanted = new Set(symbols);
   const out = {};
   for (const sym of wanted) {
     if (typeof sym !== 'string') continue;
-    const exact = sym;
-    let price = fullMap[exact];
-    if (price == null) {
-      const upper = exact.toUpperCase();
-      if (upper !== exact) price = fullMap[upper];
-    }
+    const price = upperIndex[sym.toUpperCase()];
     if (price != null) out[sym] = price;
   }
   return out;
