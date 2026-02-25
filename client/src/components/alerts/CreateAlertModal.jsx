@@ -7,6 +7,7 @@ import Select from '../common/Select';
 import TokenSelector from './TokenSelector';
 import { useMarketStore } from '../../store/marketStore';
 import { useAlertStore } from '../../store/alertStore';
+import { fetchLivePrice } from '../../utils/fetchLivePrice';
 import { AlertCircle, Info, Lock, X } from 'lucide-react';
 import { cn } from '../../utils/cn';
 
@@ -163,18 +164,29 @@ const CreateAlertModal = ({ isOpen, onClose, onSuccess, editingAlertId, editingA
     try {
       let payload;
       if (formData.alertType === 'price') {
-        const selectedToken = binanceTokens.find(
-          (t) => (t.fullSymbol || t.symbol) === formData.symbols[0]
-        );
-        const currentPrice =
-          selectedToken?.lastPrice != null && Number.isFinite(Number(selectedToken.lastPrice))
-            ? Number(selectedToken.lastPrice)
-            : undefined;
+        const exchange = formData.exchanges[0] || 'binance';
+        const market = formData.market;
+        const symbol = formData.symbols[0];
+
+        // 1. Try to fetch a fresh live price directly from the exchange API
+        let currentPrice = await fetchLivePrice(exchange, market, symbol);
+
+        // 2. Fall back to the cached lastPrice from the token list if live fetch fails
+        if (currentPrice == null) {
+          const selectedToken = binanceTokens.find(
+            (t) => (t.fullSymbol || t.symbol) === symbol
+          );
+          const stale = selectedToken?.lastPrice != null ? Number(selectedToken.lastPrice) : null;
+          if (stale != null && Number.isFinite(stale) && stale > 0) {
+            currentPrice = stale;
+          }
+        }
+
         payload = {
           alertType: 'price',
           name: formData.name || '',
-          exchange: formData.exchanges[0] || 'binance',
-          market: formData.market,
+          exchange,
+          market,
           symbols: formData.symbols,
           targetValue: Number(formData.targetValue),
           ...(currentPrice != null ? { currentPrice } : {}),
