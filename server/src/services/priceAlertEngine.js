@@ -26,12 +26,35 @@ function resolveCondition(alert, targetValue) {
   return String(alert?.condition || '').toLowerCase() === 'below' ? 'below' : 'above';
 }
 
-function shouldTriggerAtCurrentPrice(currentPrice, targetValue, condition) {
+/**
+ * TradingView-style crossing detection.
+ * The alert must only fire when the price genuinely CROSSES the target level —
+ * i.e. it was on the initial side and has now moved to the other side.
+ *
+ * We use `initialPrice` (captured at alert-creation time from the same exchange)
+ * as proof that the price started on one side.  If the current price is already
+ * on the SAME side as initialPrice (relative to target), we do NOT trigger,
+ * even if ` current >= target`.  This prevents false triggers caused by price
+ * source jitter, CoinGecko fallback, or stale cache values.
+ */
+function shouldTriggerAtCurrentPrice(currentPrice, targetValue, condition, initialPrice) {
   const current = Number(currentPrice);
   const target = Number(targetValue);
   if (!Number.isFinite(current) || !Number.isFinite(target) || target <= 0) return false;
-  if (condition === 'below') return current <= target;
-  return current >= target;
+
+  // Basic level check
+  const pastTarget = condition === 'below' ? current <= target : current >= target;
+  if (!pastTarget) return false;
+
+  // Crossing guard: verify initialPrice is on the OPPOSITE side of target.
+  // Without this, a momentary wrong price from cache/fallback could trigger.
+  const initial = Number(initialPrice);
+  if (Number.isFinite(initial) && initial > 0) {
+    if (condition === 'above' && initial >= target) return false; // was already above → no crossing
+    if (condition === 'below' && initial <= target) return false; // was already below → no crossing
+  }
+
+  return true;
 }
 
 function deriveCoinSymbol(alert, resolvedSymbol) {
@@ -64,6 +87,14 @@ function createPriceAlertProcessor(deps = {}) {
       inFlightAlertIds.add(alert.id);
 
       try {
+        // Grace period: skip alerts younger than 10 seconds.
+        // Prevents the engine from acting on a brand-new alert before the
+        // exchange WS feed / REST cache has had time to settle to the same
+        // price that createAlert saw.  TradingView also has a brief settle
+        // window after alert creation.
+        const alertAgeMs = alert.createdAt ? Date.now() - new Date(alert.createdAt).getTime() : Infinity;
+        if (alertAgeMs < 10_000) continue;
+
         const symbols = parseSymbols(alert.symbols);
         const firstSymbol = symbols[0];
         if (!firstSymbol) {
@@ -79,11 +110,15 @@ function createPriceAlertProcessor(deps = {}) {
           continue;
         }
 
+        // IMPORTANT: strict=true — only use the target exchange's own price.
+        // strict=false would allow CoinGecko fallback which returns a global
+        // average price that can differ significantly from the exchange price,
+        // causing false triggers.
         const snapshot = await priceResolver({
           exchange,
           market,
           symbol: firstSymbol,
-          strict: false,
+          strict: true,
           logger,
         });
 
@@ -97,7 +132,8 @@ function createPriceAlertProcessor(deps = {}) {
         }
 
         const condition = resolveCondition(alert, targetValue);
-        const triggered = shouldTriggerAtCurrentPrice(currentPrice, targetValue, condition);
+        const initialPrice = alert?.initialPrice != null ? Number(alert.initialPrice) : null;
+        const triggered = shouldTriggerAtCurrentPrice(currentPrice, targetValue, condition, initialPrice);
 
         logger.log?.(
           `[priceAlertV2] alert=${alert.id} symbol=${snapshot.symbol || firstSymbol} ` +

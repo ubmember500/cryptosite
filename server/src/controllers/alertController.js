@@ -134,6 +134,15 @@ async function fetchKlinesForHistoricalCheck(exchange, market, symbol, startTime
  * the alert was created and checks whether the price ever crossed the target.
  * If yes, atomically marks the alert as triggered in the DB and returns the
  * payload; returns null otherwise.
+ *
+ * TradingView-style crossing detection:
+ *   • For 'above': initialPrice < target — we look for a candle whose HIGH >= target.
+ *   • For 'below': initialPrice > target — we look for a candle whose LOW <= target.
+ *   • We also verify initialPrice is genuinely on the expected side of target
+ *     (crossing guard) to avoid false positives from stale/wrong snapshots.
+ *   • We skip candles from the first minute after creation (the candle whose
+ *     time range overlaps with the creation timestamp) because part of that
+ *     candle's data predates the alert.
  */
 async function checkAlertHistorically(alert) {
   const symbols = parseAlertSymbols(alert.symbols);
@@ -147,12 +156,27 @@ async function checkAlertHistorically(alert) {
   const exchange = String(alert.exchange || 'binance').toLowerCase();
   const market = String(alert.market || 'futures').toLowerCase();
 
-  // Skip very recent alerts (< 2 min old) to avoid false positives from
-  // creation-time price jitter before the engine first runs.
-  const createdAtMs = alert.createdAt ? new Date(alert.createdAt).getTime() : 0;
-  if (Date.now() - createdAtMs < 120_000) return null;
+  // Crossing guard: verify initialPrice is on the expected starting side.
+  // If it isn't, the condition might be wrong — skip to avoid false trigger.
+  const initial = Number(alert?.initialPrice);
+  if (Number.isFinite(initial) && initial > 0) {
+    if (condition === 'above' && initial >= targetValue) return null; // already above — no crossing possible
+    if (condition === 'below' && initial <= targetValue) return null; // already below — no crossing possible
+  }
 
-  const klines = await fetchKlinesForHistoricalCheck(exchange, market, symbol, createdAtMs);
+  // Skip recent alerts (< 5 min old). The real-time engine handles fresh
+  // alerts; the historical check is a safety net for server-sleep gaps.
+  // Using 5 min instead of 2 min to avoid false positives from creation-time
+  // price jitter and to let the real-time engine have first-pass priority.
+  const createdAtMs = alert.createdAt ? new Date(alert.createdAt).getTime() : 0;
+  if (Date.now() - createdAtMs < 300_000) return null;
+
+  // Fetch klines starting from 1 minute AFTER creation.
+  // 1-minute candles are aligned to minute boundaries, so the candle that
+  // contains createdAtMs partly covers time BEFORE the alert existed.
+  // Adding 60s ensures we only look at candles that fully postdate creation.
+  const klineStartMs = createdAtMs + 60_000;
+  const klines = await fetchKlinesForHistoricalCheck(exchange, market, symbol, klineStartMs);
   if (!klines.length) return null;
 
   let crossed = false;
