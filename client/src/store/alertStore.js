@@ -35,7 +35,7 @@ export const useAlertStore = create((set, get) => ({
         sweptTriggers.forEach(tryNotify);
       }
 
-      // pendingNotifications = already-triggered rows from the last hour in DB
+      // pendingNotifications = already-triggered rows from the last 4 hours in DB
       // (catches missed socket events from any previous trigger moment).
       if (Array.isArray(pendingNotifications) && pendingNotifications.length > 0) {
         for (const alert of pendingNotifications) {
@@ -50,6 +50,41 @@ export const useAlertStore = create((set, get) => ({
       }
     } catch (error) {
       set({ error: error.message, loading: false });
+    }
+  },
+
+  /**
+   * Silent background check for triggered alerts — used by the global heartbeat
+   * in App.jsx.  Does NOT update the `alerts` list or `loading` state so it
+   * never disturbs the Alerts page's filtered view or trigger loading spinners.
+   */
+  checkForTriggers: async () => {
+    try {
+      const { sweptTriggers, pendingNotifications } = await alertService.getAlerts({ status: 'active' });
+
+      const tryNotify = (payload) => {
+        const applied = get().applyTriggeredEvent(payload);
+        if (applied && !get().pendingTriggerAlert) {
+          set({ pendingTriggerAlert: payload });
+        }
+      };
+
+      if (Array.isArray(sweptTriggers) && sweptTriggers.length > 0) {
+        sweptTriggers.forEach(tryNotify);
+      }
+      if (Array.isArray(pendingNotifications) && pendingNotifications.length > 0) {
+        for (const alert of pendingNotifications) {
+          tryNotify({
+            ...alert,
+            id: alert.id,
+            alertId: alert.id,
+            triggered: true,
+            triggeredAt: alert.triggeredAt || new Date().toISOString(),
+          });
+        }
+      }
+    } catch {
+      // Silent — background check should never surface errors to the user
     }
   },
   

@@ -45,13 +45,19 @@ async function fetchKlinesForHistoricalCheck(exchange, market, symbol, startTime
   const isFutures = String(market || 'futures').toLowerCase() !== 'spot';
   const sym = String(symbol || '').toUpperCase();
   const endTimeMs = Date.now();
-  const TIMEOUT = 6000;
+  const TIMEOUT = 8000;
+
+  // Sliding window: always check the most recent 8 hours of 1-min candles (≤ 480 candles).
+  // For young alerts (< 8h old) we start from creation; for older alerts we use
+  // now - 8h so we never miss the Render free-tier sleep gap (max ~15 min).
+  const LOOKBACK_MS = 8 * 60 * 60 * 1000; // 8 hours
+  const effectiveStartMs = Math.max(startTimeMs, endTimeMs - LOOKBACK_MS);
 
   try {
     if (exchange === 'bybit') {
       const category = isFutures ? 'linear' : 'spot';
       const resp = await axios.get('https://api.bybit.com/v5/market/kline', {
-        params: { category, symbol: sym, interval: '1', start: startTimeMs, end: endTimeMs, limit: 500 },
+        params: { category, symbol: sym, interval: '1', start: effectiveStartMs, end: endTimeMs, limit: 500 },
         timeout: TIMEOUT,
       });
       const list = resp.data?.result?.list || [];
@@ -62,19 +68,23 @@ async function fetchKlinesForHistoricalCheck(exchange, market, symbol, startTime
     if (exchange === 'okx') {
       const base = sym.replace(/USDT$/i, '');
       const instId = isFutures ? `${base}-USDT-SWAP` : `${base}-USDT`;
-      const resp = await axios.get('https://www.okx.com/api/v5/market/history-candles', {
-        params: { instId, bar: '1m', before: String(startTimeMs), limit: 100 },
+      // OKX candles endpoint: `after` = return candles with ts < after (descending).
+      // We request limit=300 going back from endTimeMs which covers the last 5 hours at 1m.
+      const resp = await axios.get('https://www.okx.com/api/v5/market/candles', {
+        params: { instId, bar: '1m', after: String(endTimeMs), limit: '300' },
         timeout: TIMEOUT,
       });
       const data = resp.data?.data || [];
-      // OKX candle: [ts, open, high, low, close, ...]
-      return data.map((k) => ({ high: Number(k[2]), low: Number(k[3]) }));
+      // OKX candle: [ts, open, high, low, close, ...] — filter to effectiveStartMs window
+      return data
+        .filter((k) => Number(k[0]) >= effectiveStartMs)
+        .map((k) => ({ high: Number(k[2]), low: Number(k[3]) }));
     }
 
     if (exchange === 'gate') {
       const contract = `${sym.replace(/USDT$/i, '')}_USDT`;
       const resp = await axios.get('https://fx-api.gateio.ws/api/v4/futures/usdt/candlesticks', {
-        params: { contract, interval: '1m', from: Math.floor(startTimeMs / 1000), to: Math.floor(endTimeMs / 1000), limit: 500 },
+        params: { contract, interval: '1m', from: Math.floor(effectiveStartMs / 1000), to: Math.floor(endTimeMs / 1000), limit: 500 },
         timeout: TIMEOUT,
       });
       // Gate candle: { h, l, ... }
@@ -84,7 +94,7 @@ async function fetchKlinesForHistoricalCheck(exchange, market, symbol, startTime
     if (exchange === 'mexc') {
       const contract = `${sym.replace(/USDT$/i, '')}_USDT`;
       const resp = await axios.get(`https://futures.mexc.com/api/v1/contract/kline/${contract}`, {
-        params: { interval: 'Min1', start: Math.floor(startTimeMs / 1000), end: Math.floor(endTimeMs / 1000) },
+        params: { interval: 'Min1', start: Math.floor(effectiveStartMs / 1000), end: Math.floor(endTimeMs / 1000) },
         timeout: TIMEOUT,
       });
       const highs = resp.data?.data?.highPrices || [];
@@ -96,7 +106,7 @@ async function fetchKlinesForHistoricalCheck(exchange, market, symbol, startTime
       const productType = isFutures ? 'USDT-FUTURES' : 'SPOT';
       const bitgetSym = isFutures ? `${sym}` : sym; // POWERUSDT, BTCUSDT etc.
       const resp = await axios.get('https://api.bitget.com/api/v2/mix/market/history-candles', {
-        params: { symbol: bitgetSym, productType, granularity: '1m', startTime: String(startTimeMs), endTime: String(endTimeMs), limit: '500' },
+        params: { symbol: bitgetSym, productType, granularity: '1m', startTime: String(effectiveStartMs), endTime: String(endTimeMs), limit: '500' },
         timeout: TIMEOUT,
       });
       const list = Array.isArray(resp.data?.data) ? resp.data.data : [];
@@ -107,7 +117,7 @@ async function fetchKlinesForHistoricalCheck(exchange, market, symbol, startTime
     // Default: Binance
     const baseUrl = isFutures ? 'https://fapi.binance.com/fapi/v1' : 'https://api.binance.com/api/v3';
     const resp = await axios.get(`${baseUrl}/klines`, {
-      params: { symbol: sym, interval: '1m', startTime: startTimeMs, endTime: endTimeMs, limit: 500 },
+      params: { symbol: sym, interval: '1m', startTime: effectiveStartMs, endTime: endTimeMs, limit: 500 },
       timeout: TIMEOUT,
     });
     // Binance kline: [openTime, open, high, low, close, vol, closeTime, ...]
@@ -152,10 +162,15 @@ async function checkAlertHistorically(alert) {
   }
   if (!crossed) return null;
 
+  // Use ONE timestamp for both the DB write and the returned payload so that the
+  // deduplication key produced by applyTriggeredEvent matches across sweptTriggers
+  // and pendingNotifications (which returns the same DB-stored value).
+  const triggeredAt = new Date();
+
   // Atomically mark triggered — prevents double-fire with the background engine.
   const updateResult = await prisma.alert.updateMany({
     where: { id: alert.id, triggered: false, isActive: true },
-    data: { triggered: true, isActive: false, triggeredAt: new Date() },
+    data: { triggered: true, isActive: false, triggeredAt },
   });
   if (updateResult.count === 0) return null; // already handled elsewhere
 
@@ -171,7 +186,7 @@ async function checkAlertHistorically(alert) {
     name: alert.name,
     description: alert.description ?? null,
     triggered: true,
-    triggeredAt: new Date(),
+    triggeredAt,
     currentPrice: targetValue,
     targetValue: alert.targetValue,
     condition,
@@ -390,20 +405,18 @@ async function getAlerts(req, res, next) {
     const { status, exchange, market, type } = req.query;
     const userId = req.user.id;
 
-    // Run sweep WITH a 6-second timeout so:
-    //   a) The response is still fast (DB query takes ~50 ms; klines add ≤ 2 s per alert).
-    //   b) Any triggers detected (current price OR historical klines) come back to the
-    //      client synchronously as `sweptTriggers` — no need to wait for the next poll.
-    // This catches missed triggers when Render's server was sleeping during the price spike.
+    // Fire-and-forget sweep: runs async in the background.
+    // • Pass 1: live price check — if price is AT target right now, atom-mark triggered, emit socket.
+    // • Pass 2: historical klines check — catches spikes that happened while the server
+    //   was sleeping on Render free tier (max ~15 min gap).
+    // Results are delivered to the client via Socket.IO (`alert-triggered`) in real time.
+    // For the case where the socket event is missed, any newly triggered alerts will
+    // appear in `pendingNotifications` on the NEXT fetchAlerts call (global 60-second poll).
     let sweptTriggers = [];
     if (status !== 'triggered') {
-      try {
-        const sweepPromise = sweepUserPriceAlerts(userId);
-        const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve([]), 6000));
-        sweptTriggers = await Promise.race([sweepPromise, timeoutPromise]) || [];
-      } catch {
-        sweptTriggers = [];
-      }
+      sweepUserPriceAlerts(userId).catch((e) =>
+        console.warn('[getAlerts] background sweep error:', e?.message)
+      );
     }
 
     const where = { userId };
@@ -438,16 +451,18 @@ async function getAlerts(req, res, next) {
     });
 
     // Include recently-triggered price alerts so the client can show a notification even
-    // when the socket event was missed (race condition, disconnect, cold start).
+    // when the socket event was missed (race condition, disconnect, cold start, or
+    // server was sleeping when engine ran the historical klines check).
+    // 4-hour window covers Render sleep gaps plus time for user to return to app.
     // The client deduplicates using processedTriggerKeys, so this only fires once per session.
-    const ONE_HOUR_AGO = new Date(Date.now() - 60 * 60 * 1000);
+    const FOUR_HOURS_AGO = new Date(Date.now() - 4 * 60 * 60 * 1000);
     const pendingNotifications = await prisma.alert.findMany({
       where: {
         userId,
         alertType: 'price',
         triggered: true,
         isActive: false,
-        triggeredAt: { gte: ONE_HOUR_AGO },
+        triggeredAt: { gte: FOUR_HOURS_AGO },
       },
       orderBy: { triggeredAt: 'desc' },
       take: 20,

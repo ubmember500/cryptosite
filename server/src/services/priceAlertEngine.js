@@ -107,13 +107,18 @@ function createPriceAlertProcessor(deps = {}) {
 
         if (!triggered) continue;
 
+        // Use ONE timestamp for both the DB write and the payload so the
+        // deduplication key (alertId:triggeredAt ISO) matches when pendingNotifications
+        // returns the same DB-stored value on the next fetchAlerts poll.
+        const triggeredAt = new Date();
+
         const payload = {
           id: alert.id,
           alertId: alert.id,
           name: alert.name,
           description: alert.description ?? null,
           triggered: true,
-          triggeredAt: new Date(),
+          triggeredAt,
           currentPrice,
           targetValue: alert.targetValue,
           condition,
@@ -134,7 +139,7 @@ function createPriceAlertProcessor(deps = {}) {
         // was missed (race condition on page-load, disconnect, cold start, etc.).
         const updateResult = await prismaClient.alert.updateMany({
           where: { id: alert.id, triggered: false, isActive: true },
-          data: { triggered: true, isActive: false, triggeredAt: new Date() },
+          data: { triggered: true, isActive: false, triggeredAt },
         });
 
         if (updateResult.count === 0) {

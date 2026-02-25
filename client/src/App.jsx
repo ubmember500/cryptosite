@@ -41,6 +41,7 @@ function App() {
   const applyTriggeredEvent = useAlertStore((state) => state.applyTriggeredEvent);
   const pendingTriggerAlert = useAlertStore((state) => state.pendingTriggerAlert);
   const clearPendingTriggerAlert = useAlertStore((state) => state.clearPendingTriggerAlert);
+  const checkForTriggers = useAlertStore((state) => state.checkForTriggers);
   const addToast = useToastStore((state) => state.addToast);
   const [triggeredAlert, setTriggeredAlert] = useState(null);
 
@@ -48,6 +49,32 @@ function App() {
   useEffect(() => {
     initialize();
   }, [initialize]);
+
+  // Global sweep: runs every 60 s regardless of which page the user is on.
+  // • Keeps the Render free-tier server awake (HTTP requests prevent the 15-min sleep).
+  // • Runs sweepUserPriceAlerts on the server — live price check + historical klines
+  //   check — so missed triggers (e.g. price spike during server sleep) are detected
+  //   even when the user is on the Charts or any other non-Alerts page.
+  // Uses checkForTriggers (silent) so it does NOT touch the alerts list or loading state.
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    // Immediate check on login / page load
+    checkForTriggers();
+    const id = setInterval(() => checkForTriggers(), 60_000);
+    return () => clearInterval(id);
+  }, [isAuthenticated, checkForTriggers]);
+
+  // Re-fetch immediately when the user switches back to this browser tab
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        checkForTriggers();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  }, [isAuthenticated, checkForTriggers]);
 
   // Show modal when a sweep-detected trigger arrives via HTTP response
   // (handles the race condition where socket hadn't joined the room yet when sweep fired)
