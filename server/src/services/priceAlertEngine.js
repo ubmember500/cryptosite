@@ -61,14 +61,20 @@ function shouldTriggerAtCurrentPrice(currentPrice, targetValue, condition, initi
   const target = Number(targetValue);
   if (!Number.isFinite(current) || !Number.isFinite(target) || target <= 0) return false;
 
+  // REQUIRE a valid initialPrice to prove crossing.  Without it we cannot
+  // distinguish "price crossed target" from "price was always past target".
+  // Refusing to trigger is the safe default — the alert will remain active
+  // until the engine captures a valid initial via market auto-correction or
+  // the next HTTP sweep re-evaluates.
+  const initial = Number(initialPrice);
+  if (!Number.isFinite(initial) || initial <= 0) return false;
+
   const pastTarget = condition === 'below' ? current <= target : current >= target;
   if (!pastTarget) return false;
 
-  const initial = Number(initialPrice);
-  if (Number.isFinite(initial) && initial > 0) {
-    if (condition === 'above' && initial >= target) return false;
-    if (condition === 'below' && initial <= target) return false;
-  }
+  // Crossing guard: initialPrice must be on the OPPOSITE side of target.
+  if (condition === 'above' && initial >= target) return false; // was already above → no crossing
+  if (condition === 'below' && initial <= target) return false; // was already below → no crossing
 
   return true;
 }

@@ -50,8 +50,15 @@ async function fetchKlinesForHistoricalCheck(exchange, market, symbol, startTime
   // Sliding window: always check the most recent 8 hours of 1-min candles (≤ 480 candles).
   // For young alerts (< 8h old) we start from creation; for older alerts we use
   // now - 8h so we never miss the Render free-tier sleep gap (max ~15 min).
+  //
+  // IMPORTANT: Round UP to the next 1-minute boundary so we skip the partial
+  // candle that contains the alert-creation timestamp.  That candle's high/low
+  // can include pre-creation price data (e.g. a spike that already reverted by
+  // the time the user created the alert), which would cause a false trigger.
   const LOOKBACK_MS = 8 * 60 * 60 * 1000; // 8 hours
-  const effectiveStartMs = Math.max(startTimeMs, endTimeMs - LOOKBACK_MS);
+  const CANDLE_MS = 60_000; // 1-minute candles
+  const nextCandleBoundary = Math.ceil(startTimeMs / CANDLE_MS) * CANDLE_MS;
+  const effectiveStartMs = Math.max(nextCandleBoundary, endTimeMs - LOOKBACK_MS);
 
   try {
     if (exchange === 'bybit') {
@@ -175,16 +182,13 @@ async function checkAlertHistorically(alert) {
   const exchange = String(alert.exchange || 'binance').toLowerCase();
   const market = String(alert.market || 'futures').toLowerCase();
 
-  // Crossing guard: verify initialPrice started on the correct side of target.
-  // This is the primary false-positive protection.  Because we validate this,
-  // we do NOT need to skip the first candle — even if the candle spans the
-  // creation timestamp, its high/low would only reflect pre-creation price
-  // which was already on the correct (non-triggered) side.
+  // Crossing guard: require a valid initialPrice AND verify it started on
+  // the correct side of target.  Without initialPrice we cannot prove a
+  // crossing occurred, so we refuse to trigger (conservative approach).
   const initial = Number(alert?.initialPrice);
-  if (Number.isFinite(initial) && initial > 0) {
-    if (condition === 'above' && initial >= targetValue) return null; // was already above — no crossing possible
-    if (condition === 'below' && initial <= targetValue) return null; // was already below — no crossing possible
-  }
+  if (!Number.isFinite(initial) || initial <= 0) return null; // no proof of crossing
+  if (condition === 'above' && initial >= targetValue) return null; // was already above — no crossing possible
+  if (condition === 'below' && initial <= targetValue) return null; // was already below — no crossing possible
 
   // Minimum age: 15 seconds.  Gives the 300ms real-time engine ~50 cycles to
   // catch it first.  The crossing guard above already prevents false positives,
