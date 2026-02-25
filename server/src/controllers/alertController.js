@@ -405,18 +405,21 @@ async function getAlerts(req, res, next) {
     const { status, exchange, market, type } = req.query;
     const userId = req.user.id;
 
-    // Fire-and-forget sweep: runs async in the background.
+    // Synchronous sweep: await so the triggered payloads are included in THIS
+    // HTTP response.  The client gets swept triggers immediately instead of
+    // waiting for the next 30/60-second poll cycle.
     // • Pass 1: live price check — if price is AT target right now, atom-mark triggered, emit socket.
     // • Pass 2: historical klines check — catches spikes that happened while the server
     //   was sleeping on Render free tier (max ~15 min gap).
-    // Results are delivered to the client via Socket.IO (`alert-triggered`) in real time.
-    // For the case where the socket event is missed, any newly triggered alerts will
-    // appear in `pendingNotifications` on the NEXT fetchAlerts call (global 60-second poll).
+    // Socket events are ALSO emitted inside the sweep, so connected clients see them
+    // in real time even if this HTTP response is slower.
     let sweptTriggers = [];
     if (status !== 'triggered') {
-      sweepUserPriceAlerts(userId).catch((e) =>
-        console.warn('[getAlerts] background sweep error:', e?.message)
-      );
+      try {
+        sweptTriggers = await sweepUserPriceAlerts(userId);
+      } catch (e) {
+        console.warn('[getAlerts] sweep error:', e?.message);
+      }
     }
 
     const where = { userId };
@@ -745,15 +748,6 @@ async function createAlert(req, res, next) {
       data: createData,
     });
     console.log('[createAlert] Alert created successfully:', { id: alert.id, name: alert.name, alertType: alert.alertType });
-
-    if (validatedData.alertType === 'price' && condition === 'pct_change') {
-      try {
-        const coinData = await priceService.fetchCoinPrice(coinId);
-        setInitialPrice(alert.id, coinData.currentPrice);
-      } catch (error) {
-        console.error(`Failed to fetch initial price for alert ${alert.id}:`, error.message);
-      }
-    }
 
     console.log('[createAlert] ===== SUCCESS =====');
     res.status(201).json({
