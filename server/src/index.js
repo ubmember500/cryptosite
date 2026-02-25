@@ -5,6 +5,7 @@ const app = require('./app');
 const socketService = require('./services/socketService');
 const klineManager = require('./services/klineManager');
 const { startAlertEngine, stopAlertEngine } = require('./services/alertEngine');
+const priceWatcher = require('./services/priceWatcher');
 const telegramPolling = require('./services/telegramPolling');
 
 const PORT = process.env.PORT || 5000;
@@ -26,6 +27,9 @@ async function bootstrap() {
 
       await startAlertEngine();
       console.log('⏰ Alert engine started');
+
+      await priceWatcher.start();
+      console.log('📊 Price watcher started (WebSocket ticker streams)');
 
       const { logEmailStatus } = require('./utils/email');
       logEmailStatus();
@@ -66,6 +70,7 @@ async function shutdown(signal) {
   console.log(`${signal} signal received: closing HTTP server`);
 
   klineManager.shutdown();
+  priceWatcher.stop();
   telegramPolling.stopTelegramPolling();
   await stopAlertEngine();
 

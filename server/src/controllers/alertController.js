@@ -198,27 +198,9 @@ async function checkAlertHistorically(alert) {
   if (Date.now() - createdAtMs < 15_000) return null;
 
   // Fetch klines from alert creation time (not +60s — crossing guard handles false positives).
-  const klines = await fetchKlinesForHistoricalCheck(exchange, market, symbol, createdAtMs);
-  // Market-type fallback: if the stored market (e.g. 'futures') has no klines for
-  // this symbol, try the other market type.  Handles tokens that are spot-only.
-  let effectiveMarket = market;
-  let resolvedKlines = klines;
-  if (!klines.length) {
-    const altMarket = market === 'futures' ? 'spot' : 'futures';
-    const altKlines = await fetchKlinesForHistoricalCheck(exchange, altMarket, symbol, createdAtMs);
-    if (altKlines.length) {
-      resolvedKlines = altKlines;
-      effectiveMarket = altMarket;
-      // Self-heal: correct the stored market so future sweeps/engine cycles are direct.
-      try {
-        await prisma.alert.updateMany({
-          where: { id: alert.id, triggered: false, isActive: true },
-          data: { market: altMarket },
-        });
-        console.log(`[checkAlertHistorically] alert=${alert.id} market auto-corrected ${market} → ${altMarket}`);
-      } catch { /* non-fatal */ }
-    }
-  }
+  // Fetch klines for the EXACT market the alert was created for — NO cross-market fallback.
+  // If this market has no klines for this symbol, we simply return null (no trigger).
+  const resolvedKlines = await fetchKlinesForHistoricalCheck(exchange, market, symbol, createdAtMs);
   if (!resolvedKlines.length) return null;
 
   let crossed = false;

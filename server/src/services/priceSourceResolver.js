@@ -214,13 +214,30 @@ async function fetchExchangePriceSnapshot({ exchange, market, symbol, strict = t
     }
   }
 
-  // ── Market-type fallback ──────────────────────────────────────────────────
+  // ── Market-type fallback (strict mode ONLY — alert creation) ────────────
   // Many altcoins (e.g. ENSO, smaller tokens) are listed on SPOT only — they
-  // have no perpetual futures contract.  If the primary market (typically
-  // 'futures') returned no price, automatically try the other market type so
-  // spot-only tokens are never permanently silenced.
-  // This runs for BOTH the 300ms real-time engine (strict:false) AND the
-  // alert-creation snapshot (strict:true).
+  // have no perpetual futures contract.  When strict:true (alert creation
+  // snapshot), automatically try the other market type so the user gets a
+  // valid initialPrice.
+  //
+  // In strict:false mode (the real-time engine polling path), this block is
+  // SKIPPED entirely.  The engine must NEVER silently switch market types —
+  // that is the root cause of false triggers (e.g. checking spot price for a
+  // futures alert).
+  if (!strict) {
+    return {
+      ok: false,
+      status: 'unresolved',
+      reasonCode: 'SYMBOL_UNRESOLVED',
+      price: null,
+      symbol: candidates[0] || '',
+      source: `${exchangeKey}_exchange_map_unavailable`,
+      candidates,
+      error: `No price found on ${exchangeKey} ${normalizedMarket} (cross-market fallback disabled for engine path)`,
+    };
+  }
+
+  // strict:true (alert creation) — try the opposite market type
   const fallbackMarket = normalizedMarket === 'futures' ? 'spot' : 'futures';
   const fallbackExchangeType = fallbackMarket; // 'spot' | 'futures' — same string
 

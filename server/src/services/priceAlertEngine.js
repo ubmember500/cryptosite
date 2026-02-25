@@ -1,22 +1,15 @@
 /**
- * Price Alert Engine v3 — parallel pre-fetched price evaluation.
+ * Price Alert Engine v4 — WebSocket-driven price evaluation.
  *
- * Previous versions called `priceResolver()` sequentially per alert, meaning
- * each alert awaited its own network call.  With 5+ alerts the cycle took
- * 5+ seconds; the 300 ms re-entry guard blocked every intermediate tick, so
- * the engine was effectively blind for seconds at a time.
+ * Prices come from priceWatcher.js which maintains persistent WS connections
+ * to each exchange.  The engine reads in-memory price maps — zero network I/O
+ * per cycle.  When the WS map is stale/empty, falls back to one REST call per
+ * exchange+market pair (same market only — NO cross-market fallback).
  *
- * This rewrite:
  *   Phase 1 – validate & group alerts by exchange+market (pure CPU, <1 ms).
- *   Phase 2 – pre-fetch ALL price maps in ONE parallel batch via
- *             Promise.allSettled (one call per unique exchange+market pair).
- *             Fallback markets are also pre-fetched in the same batch.
- *             Total wall-clock time ≈ max(individual fetch) ≈ 1-2 s.
- *   Phase 3 – evaluate every alert against the in-memory maps (zero I/O per
- *             alert, microseconds each).
- *
- * Net result: a cycle with 20 alerts across 3 exchanges + fallback markets
- * completes in ~2 s instead of 20+ s.
+ *   Phase 2 – read priceWatcher maps; REST fallback only for stale maps.
+ *             NEVER crosses market types (futures stays futures).
+ *   Phase 3 – evaluate every alert against the in-memory maps.
  */
 
 const inFlightAlertIds = new Set();
@@ -169,34 +162,45 @@ function createPriceAlertProcessor(deps = {}) {
 
       validAlerts.push({ alert, firstSymbol, exchange, market, targetValue });
 
-      // Register BOTH primary and fallback market for pre-fetching
+      // Only register the EXACT market the alert was created for — NO cross-market fallback
       neededMaps.add(`${exchange}|${market}`);
-      const fallback = market === 'futures' ? 'spot' : 'futures';
-      neededMaps.add(`${exchange}|${fallback}`);
     }
 
     if (validAlerts.length === 0) return;
 
-    // ── PHASE 2: parallel pre-fetch all price maps ─────────────────────────
+    // ── PHASE 2: read priceWatcher WS maps; REST fallback for stale maps ───
+    const priceWatcher = require('./priceWatcher');
     const priceMaps = new Map(); // "exchange|market" -> { symbol: price }
 
-    await Promise.allSettled(
-      Array.from(neededMaps).map(async (key) => {
-        const [exchange, market] = key.split('|');
-        try {
-          const service = getExchangeService(exchange);
-          const exchangeType = market === 'spot' ? 'spot' : 'futures';
-          const map = await service.getLastPricesBySymbols(
-            [], // empty → returns the FULL cached ticker map
-            exchangeType,
-            { strict: false, exchangeOnly: true },
-          );
-          priceMaps.set(key, map || {});
-        } catch {
-          priceMaps.set(key, {});
-        }
-      }),
-    );
+    for (const key of neededMaps) {
+      const [exchange, market] = key.split('|');
+      const wsMap = priceWatcher.getPriceMap(exchange, market);
+      if (Object.keys(wsMap).length > 0 && priceWatcher.isFresh(exchange, market)) {
+        priceMaps.set(key, wsMap);
+      }
+    }
+
+    // REST fallback for any maps that weren't fresh from WS
+    const staleKeys = Array.from(neededMaps).filter(k => !priceMaps.has(k));
+    if (staleKeys.length > 0) {
+      await Promise.allSettled(
+        staleKeys.map(async (key) => {
+          const [exchange, market] = key.split('|');
+          try {
+            const service = getExchangeService(exchange);
+            const exchangeType = market === 'spot' ? 'spot' : 'futures';
+            const map = await service.getLastPricesBySymbols(
+              [], // empty → returns the FULL cached ticker map
+              exchangeType,
+              { strict: false, exchangeOnly: true },
+            );
+            priceMaps.set(key, map || {});
+          } catch {
+            priceMaps.set(key, {});
+          }
+        }),
+      );
+    }
 
     // ── PHASE 3: evaluate every alert (pure in-memory) ─────────────────────
     for (const { alert, firstSymbol, exchange, market, targetValue } of validAlerts) {
@@ -207,36 +211,13 @@ function createPriceAlertProcessor(deps = {}) {
         const candidates = buildCandidates(exchange, firstSymbol, market);
         if (candidates.length === 0) continue;
 
-        // Primary market lookup
+        // Lookup price in the EXACT market the alert was created for — NO cross-market fallback
         const primaryMap = priceMaps.get(`${exchange}|${market}`) || {};
-        let resolved = lookupPriceFromMap(primaryMap, candidates);
-        let resolvedMarket = market;
-        let source = `${exchange}_exchange_map`;
-
-        // Fallback to opposite market type (spot ↔ futures)
-        if (!Number.isFinite(resolved.price) || resolved.price <= 0) {
-          const fb = market === 'futures' ? 'spot' : 'futures';
-          const fbMap = priceMaps.get(`${exchange}|${fb}`) || {};
-          const fbResolved = lookupPriceFromMap(fbMap, candidates);
-          if (Number.isFinite(fbResolved.price) && fbResolved.price > 0) {
-            resolved = fbResolved;
-            resolvedMarket = fb;
-            source = `${exchange}_${fb}_map`;
-          }
-        }
+        const resolved = lookupPriceFromMap(primaryMap, candidates);
+        const source = `${exchange}_${market}_map`;
 
         const currentPrice = resolved.price;
         if (!Number.isFinite(currentPrice) || currentPrice <= 0) continue;
-
-        // Self-heal: correct stored market if resolved via fallback (fire & forget)
-        if (resolvedMarket !== market) {
-          prismaClient.alert
-            .updateMany({
-              where: { id: alert.id, triggered: false, isActive: true },
-              data: { market: resolvedMarket },
-            })
-            .catch(() => {}); // non-fatal, fire-and-forget
-        }
 
         const condition = resolveCondition(alert, targetValue);
         const initialPrice =
