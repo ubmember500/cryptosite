@@ -190,9 +190,13 @@ async function getAlerts(req, res, next) {
     const { status, exchange, market, type } = req.query;
     const userId = req.user.id;
 
-    let sweptTriggers = [];
+    // Run sweep in the background — do NOT await it.
+    // Awaiting it forces every live exchange price fetch to finish before we
+    // can reply, adding 1-5 s of latency per request.
+    // The sweep still fires socket events when done; the 30-s polling in the
+    // client provides the fallback for any race-condition misses.
     if (status !== 'triggered') {
-      sweptTriggers = await sweepUserPriceAlerts(userId) || [];
+      sweepUserPriceAlerts(userId).catch(() => {});
     }
 
     const where = { userId };
@@ -226,7 +230,7 @@ async function getAlerts(req, res, next) {
       orderBy: { createdAt: 'desc' },
     });
 
-    res.json({ alerts, sweptTriggers });
+    res.json({ alerts, sweptTriggers: [] });
   } catch (error) {
     next(error);
   }
