@@ -83,7 +83,7 @@ function createPriceAlertProcessor(deps = {}) {
           exchange,
           market,
           symbol: firstSymbol,
-          strict: true,
+          strict: false,
           logger,
         });
 

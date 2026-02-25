@@ -15,13 +15,17 @@ async function run() {
   assert(__test__.resolveCondition({ initialPrice: 110 }, 100) === 'below', 'condition derived below');
   assert(__test__.resolveCondition({ initialPrice: 90 }, 100) === 'above', 'condition derived above');
 
-  const deletedIds = [];
+  const markedTriggeredIds = [];
   const triggeredPayloads = [];
 
   const prismaClient = {
     alert: {
-      delete: async ({ where }) => {
-        deletedIds.push(where.id);
+      updateMany: async ({ where }) => {
+        if (where?.id) {
+          markedTriggeredIds.push(where.id);
+          return { count: 1 };
+        }
+        return { count: 0 };
       },
     },
   };
@@ -73,8 +77,8 @@ async function run() {
     },
   });
 
-  assert(deletedIds.length === 1, `expected 1 delete, got ${deletedIds.length}`);
-  assert(deletedIds[0] === 'a1', `expected a1 deleted, got ${deletedIds[0]}`);
+  assert(markedTriggeredIds.length === 1, `expected 1 trigger mark, got ${markedTriggeredIds.length}`);
+  assert(markedTriggeredIds[0] === 'a1', `expected a1 trigger mark, got ${markedTriggeredIds[0]}`);
   assert(triggeredPayloads.length === 1, `expected 1 triggered payload, got ${triggeredPayloads.length}`);
   assert(triggeredPayloads[0].id === 'a1', `expected triggered a1, got ${triggeredPayloads[0].id}`);
 
