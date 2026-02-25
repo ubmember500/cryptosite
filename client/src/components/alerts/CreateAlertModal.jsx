@@ -5,17 +5,13 @@ import Button from '../common/Button';
 import Input from '../common/Input';
 import Select from '../common/Select';
 import TokenSelector from './TokenSelector';
-import { useAlertStore } from '../../store/alertStore';
-import { useToastStore } from '../../store/toastStore';
 import { useMarketStore } from '../../store/marketStore';
-import { AlertCircle, Info, Search, X } from 'lucide-react';
+import { AlertCircle, Info, X } from 'lucide-react';
 import { cn } from '../../utils/cn';
 
 const CreateAlertModal = ({ isOpen, onClose, onSuccess, editingAlertId, editingAlert, initialData = null }) => {
   const { t } = useTranslation();
-  const { createAlert, updateAlert } = useAlertStore();
-  const addToast = useToastStore((state) => state.addToast);
-  const { fetchBinanceTokens, binanceTokens, exchangeType, loadingBinance, setExchange } = useMarketStore();
+  const { fetchBinanceTokens, binanceTokens, loadingBinance, setExchange } = useMarketStore();
 
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
@@ -159,149 +155,8 @@ const CreateAlertModal = ({ isOpen, onClose, onSuccess, editingAlertId, editingA
           return Number.isFinite(v) && v > 0 && c?.timeframe;
         })();
 
-  const generateAlertDescription = (alertData) => {
-    if (alertData.alertType === 'price') {
-      const symbol = alertData.symbols?.[0] || 'Token';
-      return `Price alert for ${symbol}: hits ${alertData.targetValue}`;
-    } else {
-      const mode = alertData.notificationOptions?.alertForMode || 'all';
-      if (mode === 'all') {
-        const conditions = (alertData.conditions || []).map(cond =>
-          `${cond.type === 'pct_change' ? '%' : cond.type} ${parseFloat(cond.value)}% over ${cond.timeframe}`
-        ).join(', ');
-        return `Complex alert for all tokens: ${conditions}`;
-      } else {
-        const symbols = (alertData.symbols || []).slice(0, 5).join(', ');
-        const more = (alertData.symbols || []).length > 5 ? '...' : '';
-        const conditions = (alertData.conditions || []).map(cond =>
-          `${cond.type === 'pct_change' ? '%' : cond.type} ${parseFloat(cond.value)}% over ${cond.timeframe}`
-        ).join(', ');
-        return `Complex alert for ${symbols}${more}: ${conditions}`;
-      }
-    }
-  };
-
-  const handleSubmit = async () => {
-    if (!isStep3Valid) {
-      setError(t('Please fill all required fields.'));
-      return;
-    }
-    setLoading(true);
-    setError('');
-    
-    // Validate symbol before submission
-    if (formData.alertType === 'price') {
-      if (!formData.symbols || formData.symbols.length === 0 || !formData.symbols[0]) {
-        setError(t('Please select a token.'));
-        setLoading(false);
-        return;
-      }
-      const symbol = formData.symbols[0];
-      if (typeof symbol !== 'string' || symbol.trim() === '') {
-        setError(t('Please select a token.'));
-        setLoading(false);
-        return;
-      }
-      
-      // Validate targetValue is a valid number > 0
-      const targetValueStr = String(formData.targetValue || '').trim();
-      if (!targetValueStr) {
-        setError(t('Please enter a target price.'));
-        setLoading(false);
-        return;
-      }
-      const targetValueNum = parseFloat(targetValueStr);
-      if (isNaN(targetValueNum) || !Number.isFinite(targetValueNum)) {
-        setError(t('Please enter a target price.'));
-        setLoading(false);
-        return;
-      }
-      if (targetValueNum <= 0) {
-        setError(t('Target price must be positive.'));
-        setLoading(false);
-        return;
-      }
-    }
-    
-    try {
-      const selectedSymbolRaw = formData.symbols?.[0];
-      const selectedSymbol = typeof selectedSymbolRaw === 'string' ? selectedSymbolRaw.toUpperCase() : '';
-      const selectedToken = binanceTokens.find((token) => {
-        const full = String(token?.fullSymbol || '').toUpperCase();
-        const base = String(token?.symbol || '').toUpperCase();
-        return full === selectedSymbol || `${base}USDT` === selectedSymbol || base === selectedSymbol;
-      });
-
-      const selectedTokenPrice = Number(selectedToken?.lastPrice);
-      const initialDataPrice = Number(initialData?.currentPrice);
-      const clientCurrentPrice = Number.isFinite(selectedTokenPrice) && selectedTokenPrice > 0
-        ? selectedTokenPrice
-        : Number.isFinite(initialDataPrice) && initialDataPrice > 0
-            ? initialDataPrice
-          : null;
-
-      const payload = {
-        alertType: formData.alertType,
-        name: formData.name || generateAlertDescription(formData),
-        exchange: formData.exchanges?.[0] || 'binance',
-        market: formData.market,
-        notificationOptions: {
-          ...formData.notificationOptions,
-          ...(formData.alertType === 'complex' ? { alertForMode } : {}),
-        },
-        symbols: formData.alertType === 'complex' && alertForMode === 'all' 
-          ? []
-          : formData.symbols,
-        description: generateAlertDescription(formData),
-      };
-
-      if (formData.alertType === 'price') {
-        payload.symbol = String(selectedSymbol || '').toUpperCase();
-        payload.symbols = [payload.symbol];
-        payload.targetValue = parseFloat(formData.targetValue);
-        if (clientCurrentPrice != null) {
-          payload.currentPrice = clientCurrentPrice;
-        }
-      } else if (formData.alertType === 'complex') {
-        const cond = formData.conditions?.[0] || { type: 'pct_change', value: '', timeframe: '1m' };
-        payload.conditions = [{
-          type: cond.type || 'pct_change',
-          value: parseFloat(cond.value),
-          timeframe: cond.timeframe || '1m',
-        }];
-      }
-
-      let resultAlert;
-      if (editingAlertId) {
-        resultAlert = await updateAlert(editingAlertId, payload);
-        addToast(t('Alert updated'), 'success');
-      } else {
-        resultAlert = await createAlert(payload);
-        const createdAlert = resultAlert?.alert ?? resultAlert;
-        if (resultAlert?.immediateTrigger && createdAlert?.alertType === 'price') {
-          addToast(t('Alert created and triggered immediately'), 'warning');
-        } else {
-          addToast(t('Alert created'), 'success');
-        }
-      }
-      
-      if (onSuccess) {
-        onSuccess(resultAlert);
-      }
-      onClose();
-    } catch (err) {
-      // Log full error details for debugging
-      console.error('Create alert error:', err);
-      console.error('Response data:', err.response?.data);
-      
-      // Extract specific error message from response if available
-      const errorMessage = err.response?.data?.error || err.message || t('Failed to save alert');
-      
-      setError(errorMessage);
-      addToast(errorMessage, 'error');
-    } finally {
-      setLoading(false);
-    }
+  const handleSubmit = () => {
+    onClose();
   };
 
   const title = editingAlertId ? t('Edit alert') : t('Create alert');
