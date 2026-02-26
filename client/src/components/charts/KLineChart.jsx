@@ -117,6 +117,11 @@ const KLineChart = ({
   const onLoadMoreHistoryRef = useRef(onLoadMoreHistory);
   const hasMoreHistoryRef = useRef(hasMoreHistory);
   const canLoadMoreHistoryRef = useRef(true);
+  // Holds the subscribeBar push callback provided by klinecharts.
+  // Pushing a single candle object through this callback updates the chart
+  // in-place WITHOUT resetting the viewport (unlike resetData() which snaps
+  // the view back to the latest candle every time).
+  const realtimeBarCallbackRef = useRef(null);
 
   // Drawing tools state management
   const [activeDrawingTool, setActiveDrawingTool] = useState(null);
@@ -1155,9 +1160,16 @@ const KLineChart = ({
       chartRef.current = chart;
 
       // Set up data loader (v10 API)
-      // Use ref so loader always has access to latest data
+      // Use ref so loader always has access to latest data.
+      // subscribeBar is called by klinecharts after the initial 'init' load.
+      // Storing its callback lets us push individual candle updates without
+      // triggering a full resetData() which would snap the viewport to the
+      // latest candle and undo any user scroll-left action.
       chart.setDataLoader({
         getBars: handleGetBars,
+        subscribeBar: ({ callback }) => {
+          realtimeBarCallbackRef.current = callback;
+        },
       });
 
 
@@ -1219,6 +1231,9 @@ const KLineChart = ({
           setIndicators([]);
           indicatorsRef.current = [];
 
+          // Clear realtime callback so stale pushes don't land on a new chart
+          realtimeBarCallbackRef.current = null;
+
           // Dispose chart
           dispose(chartId);
           chartRef.current = null;
@@ -1259,8 +1274,16 @@ const KLineChart = ({
   }, [data]);
 
   // Apply realtime updates: when the incoming data list changes (new candle or
-  // updated last candle), resetData() so the chart pulls fresh bars from loader.
-  // klinecharts v10 does not expose a public incremental update API in our setup.
+  // updated last candle), push the latest candle through the subscribeBar
+  // callback that klinecharts provides after the initial load.
+  //
+  // Using subscribeBar's callback calls _addData(candle, 'update') internally,
+  // which updates/appends only the last candle WITHOUT resetting the viewport.
+  // This means users can scroll left to review history and the chart will NOT
+  // snap back to the latest candle on every realtime tick.
+  //
+  // resetData() is intentionally avoided here because it triggers type='init'
+  // which calls setOffsetRightDistance() and always snaps the view rightward.
   useEffect(() => {
     if (!chartRef.current || !isInitialized) return;
     if (!Array.isArray(data) || data.length === 0) return;
@@ -1291,7 +1314,18 @@ const KLineChart = ({
       pendingResetRafRef.current = null;
       if (!chartRef.current) return;
       try {
-        chartRef.current.resetData();
+        const pushCallback = realtimeBarCallbackRef.current;
+        if (pushCallback) {
+          // Push only the latest candle — viewport stays where the user left it.
+          const transformed = transformDataForKLineChart(dataRef.current);
+          const latest = transformed[transformed.length - 1];
+          if (latest) pushCallback(latest);
+        } else {
+          // subscribeBar callback not yet available (race before first init load
+          // completes). Fall back to resetData() — acceptable on first render
+          // because the user hasn't had a chance to scroll anywhere yet.
+          chartRef.current.resetData();
+        }
       } catch (error) {
         console.error('[KLineChart] Error applying realtime update:', error);
       }
@@ -1303,7 +1337,7 @@ const KLineChart = ({
         pendingResetRafRef.current = null;
       }
     };
-  }, [data, isInitialized]);
+  }, [data, isInitialized, transformDataForKLineChart]);
 
   // When chart initialized before first API response, trigger one initial load.
   // Also recover from race where a realtime candle arrives before history and chart gets stuck on 1 candle.
