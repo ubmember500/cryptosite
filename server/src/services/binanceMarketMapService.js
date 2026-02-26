@@ -164,7 +164,35 @@ class BinanceMarketMapService {
         klineResults.push(...results.filter(Boolean));
       }
 
-      if (klineResults.length === 0) throw new Error('No 5m kline data returned');
+      // Fallback: if ALL kline fetches failed (e.g. Render rate-limited by Binance /klines),
+      // use 24h NATR (high24h - low24h) / lastPrice from the ticker data.
+      // This is already computed in allTokens.natr and is always available.
+      // We mark it natr24h_warmup so the client shows a 'Warmup' badge.
+      if (klineResults.length === 0) {
+        console.warn('[BinanceMarketMap] All kline fetches failed, falling back to 24h NATR from ticker data');
+        const fallbackRows = candidates
+          .filter((t) => Number.isFinite(Number(t.natr)) && Number(t.natr) > 0)
+          .map((t) => ({
+            symbol: t.fullSymbol,
+            activityScore: Number(Number(t.natr).toFixed(6)),
+            activityMetric: 'natr24h_warmup',
+            volume24h: Number(t.volume24h) || 0,
+            warmup: true,
+          }));
+        if (fallbackRows.length === 0) throw new Error('No 5m kline data and no 24h NATR fallback available');
+        const fallbackCache = {
+          rows: fallbackRows, totalCount: fallbackRows.length, scoredCount: 0,
+          warmupRatio: 0, computedAt: Date.now(), isStale: false,
+          updatedAt: new Date().toISOString(), lastError: 'klines unavailable, using 24h NATR',
+          contract: { type: '5m-natr', formula: '(high24h - low24h) / lastPrice * 100 (fallback)', windowMinutes: 1440, sampleIntervalMs: SNAPSHOT_INTERVAL_MS, minPointsInWindow: MIN_POINTS_IN_WINDOW },
+        };
+        console.log(
+          '[BinanceMarketMap] 24h NATR fallback -> top: ' +
+          fallbackRows.slice(0, 5).map((r) => `${r.symbol}=${r.activityScore.toFixed(3)}%`).join(', ')
+        );
+        this.onDemandCache = fallbackCache;
+        return fallbackCache;
+      }
 
       klineResults.sort((a, b) => {
         if (b.natr5m !== a.natr5m) return b.natr5m - a.natr5m;
