@@ -334,17 +334,17 @@ const Market = () => {
       />
       <div className="flex flex-col h-screen bg-background overflow-hidden font-sans">
         {/* Page Global Header */}
-        <header className="flex items-center justify-between px-4 h-14 border-b border-border bg-surface shrink-0 z-20">
+        <header className="flex items-center justify-between px-4 h-14 shrink-0 z-20" style={{ background: 'linear-gradient(90deg, #0d1320 0%, #0a1528 100%)', borderBottom: '1px solid #1c2843' }}>
           <button
             type="button"
             onClick={() => navigate(ROUTES.MARKET_MAP)}
             className="group flex items-center gap-2.5 transition-all"
             title="Switch to Market Map"
           >
-            <div className="bg-accent/10 p-1.5 rounded-lg border border-accent/20 group-hover:bg-accent/20 transition-colors">
+            <div className="p-1.5 rounded-lg border transition-colors" style={{ background: 'rgba(14,165,233,0.1)', borderColor: 'rgba(14,165,233,0.25)' }}>
               <TrendingUp className="h-5 w-5 text-accent" />
             </div>
-            <span className="text-xl font-bold bg-gradient-to-r from-blue-400 to-indigo-500 bg-clip-text text-transparent">
+            <span className="text-xl font-bold bg-gradient-to-r from-sky-400 via-cyan-300 to-teal-400 bg-clip-text text-transparent">
               CryptoAlerts
             </span>
           </button>
@@ -356,8 +356,8 @@ const Market = () => {
           {/* Left Panel - Chart */}
           <div
             ref={chartPanelRef}
-            className="bg-surface flex flex-col h-full overflow-hidden min-w-0"
-            style={{ width: `${100 - rightPanelPercent}%` }}
+            className="flex flex-col h-full overflow-hidden min-w-0"
+            style={{ width: `${100 - rightPanelPercent}%`, background: '#070b14' }}
           >
             {/* Multi-chart: global header with symbol, Live, timeframes, layout */}
             {isMultiChart && (
@@ -550,8 +550,8 @@ const Market = () => {
         aria-orientation="vertical"
         aria-label="Resize chart and token list panels"
         className={cn(
-          'w-1 bg-border relative shrink-0 cursor-col-resize hover:bg-accent/70 transition-colors',
-          isResizingPanels && 'bg-accent'
+          'w-px relative shrink-0 cursor-col-resize transition-colors',
+          isResizingPanels ? 'bg-accent' : 'bg-border hover:bg-accent/50'
         )}
         onMouseDown={handleResizeStart}
       >
@@ -564,7 +564,7 @@ const Market = () => {
         style={{ width: `${rightPanelPercent}%` }}
       >
         {/* Header */}
-        <div className="p-4 border-b border-border bg-surface">
+        <div className="p-4" style={{ borderBottom: '1px solid #1c2843', background: 'linear-gradient(180deg, #0d1320 0%, #0a1118 100%)' }}>
           <div className="flex items-center gap-4">
             <ExchangeSelector />
             <div className="flex-1 relative">
@@ -589,8 +589,9 @@ const Market = () => {
           
           {/* Result count */}
           {!loadingBinance && (
-            <div className="mt-2 text-sm text-textSecondary">
-              {binanceTokens.length} {binanceTokens.length === 1 ? 'token' : 'tokens'} found
+            <div className="mt-2 text-xs font-medium" style={{ color: '#3a5278', letterSpacing: '0.03em' }}>
+              <span style={{ color: '#0ea5e9' }}>{binanceTokens.length}</span>
+              {' '}{binanceTokens.length === 1 ? 'token' : 'tokens'} found
             </div>
           )}
         </div>

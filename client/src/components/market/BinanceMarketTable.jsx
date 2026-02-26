@@ -231,7 +231,7 @@ const BinanceMarketTable = ({ onTokenSelect, highlightToken }) => {
     <>
       <div className="w-full">
         <table className="w-full text-sm">
-        <thead className="bg-surface border-b border-border sticky top-0 z-10">
+        <thead className="sticky top-0 z-10" style={{ background: 'linear-gradient(180deg, #0d1320 0%, rgba(13,19,32,0.97) 100%)', borderBottom: '1px solid #1c2843', backdropFilter: 'blur(8px)' }}>
           <tr>
             <th className="w-10 px-2 py-3 text-left">
               <button
@@ -292,7 +292,7 @@ const BinanceMarketTable = ({ onTokenSelect, highlightToken }) => {
             </th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-border">
+        <tbody className="divide-y" style={{ borderColor: 'rgba(28,40,67,0.6)' }}>
           {sortedTokens.map((token) => {
             const flagged = isFlagged(exchange, exchangeType, token.fullSymbol);
             const flagColor = getFlag(exchange, exchangeType, token.fullSymbol);
@@ -303,8 +303,10 @@ const BinanceMarketTable = ({ onTokenSelect, highlightToken }) => {
               <tr
                 key={token.fullSymbol}
                 className={cn(
-                  'hover:bg-surfaceHover/50 cursor-pointer transition-colors group',
-                  tokenToHighlight?.fullSymbol === token.fullSymbol && 'bg-surfaceHover/30'
+                  'cursor-pointer transition-all duration-150 group',
+                  tokenToHighlight?.fullSymbol === token.fullSymbol
+                    ? 'bg-accent/[0.07] border-l-2 border-accent'
+                    : 'hover:bg-surfaceHover/60 border-l-2 border-transparent'
                 )}
                 onClick={() => handleRowClick(token)}
                 onContextMenu={(e) => handleContextMenu(e, token)}
@@ -368,16 +370,16 @@ const BinanceMarketTable = ({ onTokenSelect, highlightToken }) => {
                   </div>
                 </td>
                 <td className="px-4 py-3 whitespace-nowrap">
-                  <div className="text-textPrimary font-medium">{token.symbol}</div>
-                  <div className="text-xs text-textSecondary">{token.fullSymbol}</div>
+                  <div className="text-textPrimary font-semibold tracking-wide">{token.symbol}</div>
+                  <div className="text-xs mt-0.5" style={{ color: '#3a5278' }}>{token.fullSymbol}</div>
                 </td>
                 <td className="px-4 py-3 whitespace-nowrap text-right">
                   {formatPercent(token.priceChangePercent24h)}
                 </td>
                 <td className="px-4 py-3 whitespace-nowrap text-right">
                   <span
-                    className="font-medium text-[#CCFF00]"
-                    style={{ textShadow: '0 0 10px rgba(204, 255, 0, 0.6)' }}
+                    className="font-semibold"
+                    style={{ color: '#f59e0b', textShadow: '0 0 8px rgba(245,158,11,0.45)' }}
                   >
                     {token.natr?.toFixed(2) || '0.00'}%
                   </span>
@@ -386,12 +388,12 @@ const BinanceMarketTable = ({ onTokenSelect, highlightToken }) => {
                   <span
                     className={cn(
                       (token.volume24h != null && Number(token.volume24h) >= VOLUME_HIGH_THRESHOLD)
-                        ? 'font-semibold text-[#e879f9]'
+                        ? 'font-semibold'
                         : 'text-textPrimary'
                     )}
                     style={
                       token.volume24h != null && Number(token.volume24h) >= VOLUME_HIGH_THRESHOLD
-                        ? { textShadow: '0 0 12px rgba(232, 121, 249, 0.8)' }
+                        ? { color: '#0ea5e9', textShadow: '0 0 10px rgba(14,165,233,0.55)' }
                         : undefined
                     }
                   >

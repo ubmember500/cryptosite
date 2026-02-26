@@ -5,17 +5,17 @@
 
 /* Theme: dark (default) and light */
 :root {
-  --color-background: #0f1117;
-  --color-surface: #1a1d29;
-  --color-surface-hover: #252836;
-  --color-surface-dark: #141721;
-  --color-border: #2a2d3a;
-  --color-text-primary: #e1e4e8;
-  --color-text-secondary: #8b949e;
-  --color-accent: #2962ff;
-  --color-success: #00c853;
-  --color-danger: #ff1744;
-  --color-warning: #ffa726;
+  --color-background: #060912;
+  --color-surface: #0d1320;
+  --color-surface-hover: #14213a;
+  --color-surface-dark: #080c18;
+  --color-border: #1c2843;
+  --color-text-primary: #e2e8f2;
+  --color-text-secondary: #5a7199;
+  --color-accent: #0ea5e9;
+  --color-success: #10d9a0;
+  --color-danger: #f43f5e;
+  --color-warning: #f59e0b;
 }
 
 [data-theme="light"] {
@@ -44,15 +44,17 @@
   }
   
   ::-webkit-scrollbar-track {
-    @apply bg-surface;
+    background: #080c18;
   }
   
   ::-webkit-scrollbar-thumb {
-    @apply bg-border rounded-full;
+    background: #1c2e4a;
+    border-radius: 9999px;
+    border: 2px solid #080c18;
   }
   
   ::-webkit-scrollbar-thumb:hover {
-    @apply bg-textSecondary;
+    background: #2a4470;
   }
   
   /* Selection */

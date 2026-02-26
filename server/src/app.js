@@ -1,8 +1,6 @@
 const express = require('express');
 const cors = require('cors');
 const errorHandler = require('./middleware/errorHandler');
-const authMiddleware = require('./middleware/auth');
-const subscriptionController = require('./controllers/subscriptionController');
 const marketController = require('./controllers/marketController');
 
 const app = express();
@@ -53,9 +51,6 @@ app.use('/api/auth', require('./routes/auth'));
 app.use('/api/alerts', require('./routes/alerts'));
 app.use('/api/telegram', require('./routes/telegram'));
 app.use('/api/subscription', require('./routes/subscription'));
-// Subscription routes (direct mount so they are always available)
-app.get('/api/subscription/currencies', authMiddleware, subscriptionController.getCurrencies);
-app.post('/api/subscription/create-pro-payment', authMiddleware, subscriptionController.createProPayment);
 
 // Error handler (must be last)
 app.use(errorHandler);
