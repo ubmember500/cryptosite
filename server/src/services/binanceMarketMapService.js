@@ -5,12 +5,19 @@ const WebSocket = require('ws');
 const SNAPSHOT_INTERVAL_MS = 3000;
 const WINDOW_MS = 5 * 60 * 1000;
 const RECENT_WINDOW_MS = 60 * 1000;
+const RECENT_MICRO_WINDOW_MS = 20 * 1000;
 const RETENTION_MS = 7 * 60 * 1000;
 const STALE_AFTER_MS = 45000;
 const MAX_POINTS_PER_SYMBOL = 180;
 const MIN_POINTS_IN_WINDOW = 8;
 const MAX_LAST_POINT_AGE_MS = 12000;
 const MIN_VOLUME_24H_USDT = 0;
+const MIN_RANK_VOLUME_24H_USDT = 500000;
+const MIN_RECENT_ACTIVITY_PERCENT = 0.12;
+const MIN_MICRO_ACTIVITY_PERCENT = 0.04;
+const MIN_DISTINCT_PRICE_CHANGES = 3;
+const MAX_LAST_MOVE_AGE_MS = 18000;
+const MIN_ACTIVE_ROWS_FOR_STRICT_MODE = 40;
 const FULL_SNAPSHOT_REFRESH_MS = 10000;
 
 // On-demand kline ranking config
@@ -274,6 +281,37 @@ class BinanceMarketMapService {
     return ((high - low) / last) * 100;
   }
 
+  computeDistinctPriceChanges(history, nowTs, windowMs) {
+    const safe = Array.isArray(history) ? history : [];
+    const inWindow = safe.filter((p) => Number(p?.ts) >= nowTs - windowMs);
+    if (inWindow.length < 2) return 0;
+
+    let changes = 0;
+    for (let i = 1; i < inWindow.length; i += 1) {
+      const prev = Number(inWindow[i - 1]?.price);
+      const current = Number(inWindow[i]?.price);
+      if (!Number.isFinite(prev) || !Number.isFinite(current)) continue;
+      if (current !== prev) changes += 1;
+    }
+    return changes;
+  }
+
+  computeLastMoveAgeMs(history, nowTs, windowMs) {
+    const safe = Array.isArray(history) ? history : [];
+    const inWindow = safe.filter((p) => Number(p?.ts) >= nowTs - windowMs);
+    if (inWindow.length < 2) return Number.POSITIVE_INFINITY;
+
+    for (let i = inWindow.length - 1; i >= 1; i -= 1) {
+      const prev = Number(inWindow[i - 1]?.price);
+      const current = Number(inWindow[i]?.price);
+      const ts = Number(inWindow[i]?.ts);
+      if (!Number.isFinite(prev) || !Number.isFinite(current) || !Number.isFinite(ts)) continue;
+      if (current !== prev) return Math.max(0, nowTs - ts);
+    }
+
+    return Number.POSITIVE_INFINITY;
+  }
+
   // Computes 5m NATR on-demand from real kline data.
   // Uses top-CANDIDATE_COUNT symbols by 24h NATR as candidates, then fetches
   // their 3x5m klines and computes (max_high - min_low) / last_close * 100.
@@ -402,25 +440,56 @@ class BinanceMarketMapService {
 
   getRankingFromBuffer() {
     const nowTs = Date.now();
-    const scoredRows = [];
+    const allScoredRows = [];
     for (const [symbol, history] of this.priceHistoryBySymbol.entries()) {
       const volume24h = Number(this.volumeBySymbol.get(symbol) || 0);
       if (!Number.isFinite(volume24h) || volume24h < MIN_VOLUME_24H_USDT) continue;
+      if (volume24h < MIN_RANK_VOLUME_24H_USDT) continue;
+
       const natr = this.computeFiveMinuteNATR(history, nowTs);
       if (!Number.isFinite(natr)) continue;
+
       const recentRange = this.computeWindowRangePercent(history, nowTs, RECENT_WINDOW_MS);
-      scoredRows.push({
+      const microRange = this.computeWindowRangePercent(history, nowTs, RECENT_MICRO_WINDOW_MS);
+      const distinctChanges = this.computeDistinctPriceChanges(history, nowTs, WINDOW_MS);
+      const lastMoveAgeMs = this.computeLastMoveAgeMs(history, nowTs, WINDOW_MS);
+
+      const recentActivityScore = Number.isFinite(recentRange) ? Number(recentRange.toFixed(6)) : 0;
+      const microActivityScore = Number.isFinite(microRange) ? Number(microRange.toFixed(6)) : 0;
+      const activityScore = Number(natr.toFixed(6));
+
+      const isActiveNow =
+        recentActivityScore >= MIN_RECENT_ACTIVITY_PERCENT ||
+        microActivityScore >= MIN_MICRO_ACTIVITY_PERCENT ||
+        (distinctChanges >= MIN_DISTINCT_PRICE_CHANGES && lastMoveAgeMs <= MAX_LAST_MOVE_AGE_MS);
+
+      // Blend emphasizes current motion while preserving 5m volatility context.
+      const blendedScore = Number((activityScore * 0.55 + recentActivityScore * 0.35 + microActivityScore * 0.10).toFixed(6));
+
+      allScoredRows.push({
         symbol,
-        activityScore: Number(natr.toFixed(6)),
-        recentActivityScore: Number.isFinite(recentRange) ? Number(recentRange.toFixed(6)) : 0,
+        activityScore,
+        recentActivityScore,
+        microActivityScore,
+        blendedScore,
+        distinctChanges,
+        lastMoveAgeMs,
+        isActiveNow,
         activityMetric: 'natr5m',
         volume24h,
         warmup: false,
       });
     }
+
+    const activeNowRows = allScoredRows.filter((row) => row.isActiveNow);
+    const scoredRows = activeNowRows.length >= MIN_ACTIVE_ROWS_FOR_STRICT_MODE ? activeNowRows : allScoredRows;
+
     scoredRows.sort((a, b) => {
+      if (b.blendedScore !== a.blendedScore) return b.blendedScore - a.blendedScore;
       if (b.activityScore !== a.activityScore) return b.activityScore - a.activityScore;
       if (b.recentActivityScore !== a.recentActivityScore) return b.recentActivityScore - a.recentActivityScore;
+      if (b.microActivityScore !== a.microActivityScore) return b.microActivityScore - a.microActivityScore;
+      if (a.lastMoveAgeMs !== b.lastMoveAgeMs) return a.lastMoveAgeMs - b.lastMoveAgeMs;
       if (b.volume24h !== a.volume24h) return b.volume24h - a.volume24h;
       return a.symbol.localeCompare(b.symbol);
     });
