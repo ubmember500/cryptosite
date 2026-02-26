@@ -146,7 +146,7 @@ class BinanceMarketMapService {
         const batch = candidates.slice(i, i + KLINE_CONCURRENCY);
         const results = await Promise.all(batch.map(async (token) => {
           try {
-            const klines = await binanceService.fetchKlines(token.fullSymbol, 'futures', '5m', KLINE_CANDLES);
+            const klines = await binanceService.fetchKlines(token.fullSymbol, 'futures', '5m', KLINE_CANDLES, { maxAge: 45000 });
             if (!Array.isArray(klines) || klines.length < 1) return null;
             let maxHigh = -Infinity, minLow = Infinity, lastClose = null;
             for (const k of klines) {
@@ -236,40 +236,30 @@ class BinanceMarketMapService {
   }
 
   async getRanking({ limit } = {}) {
-    this.start();
-    const nowTs = Date.now();
-    const { scoredRows, scoredCount } = this.getRankingFromBuffer();
+    // Always use on-demand kline-based ranking.
+    // The ring buffer approach is fundamentally flawed: discrete lastPrice snapshots
+    // at 10s intervals miss intra-candle high/low swings, producing NATR ≈ 0 for most
+    // tokens. This causes a volume-based tiebreaker where BTC/ETH/SOL always win.
+    // Real OHLC kline data always has high >= low, giving true 5m volatility.
+    this.start(); // keep background tick for diagnostics only
 
-    let rows, totalCount, warmupRatio, isStale, updatedAt, lastError, contract;
-
-    if (scoredCount >= MIN_LIVE_SCORED) {
-      rows = scoredRows;
-      totalCount = scoredRows.length;
-      warmupRatio = 1;
-      isStale = !this.lastTickAt || nowTs - this.lastTickAt > STALE_AFTER_MS;
-      updatedAt = this.lastTickAt ? new Date(this.lastTickAt).toISOString() : null;
-      lastError = this.lastError;
-      contract = {
-        type: '5m-natr',
-        formula: '(highest_5m - lowest_5m) / last_price * 100',
-        windowMinutes: 5,
-        sampleIntervalMs: SNAPSHOT_INTERVAL_MS,
-        minPointsInWindow: MIN_POINTS_IN_WINDOW,
+    const computed = await this.computeOnDemandRanking();
+    if (!computed) {
+      return {
+        rows: [], totalCount: 0, scoredCount: 0, warmupRatio: 0, isStale: true,
+        updatedAt: null, lastError: this.onDemandError || 'No data available',
+        contract: { type: '5m-natr', formula: '(max_high - min_low) / last_close * 100', windowMinutes: 5, sampleIntervalMs: SNAPSHOT_INTERVAL_MS, minPointsInWindow: MIN_POINTS_IN_WINDOW },
       };
-    } else {
-      const computed = await this.computeOnDemandRanking();
-      if (!computed) {
-        return {
-          rows: [], totalCount: 0, scoredCount: 0, warmupRatio: 0, isStale: true,
-          updatedAt: null, lastError: this.onDemandError || 'No data available',
-          contract: { type: '5m-natr', formula: '(max_high - min_low) / last_close * 100', windowMinutes: 5, sampleIntervalMs: SNAPSHOT_INTERVAL_MS, minPointsInWindow: MIN_POINTS_IN_WINDOW },
-        };
-      }
-      rows = computed.rows; totalCount = computed.totalCount; warmupRatio = computed.warmupRatio;
-      isStale = computed.isStale; updatedAt = computed.updatedAt; lastError = computed.lastError; contract = computed.contract;
     }
 
+    const { rows, totalCount, warmupRatio, isStale, updatedAt, lastError, contract } = computed;
     const max = Number.isFinite(Number(limit)) && Number(limit) > 0 ? Number(limit) : rows.length;
+
+    console.log(
+      `[BinanceMarketMap] getRanking -> on-demand path, ${rows.length} scored, top: ` +
+      rows.slice(0, 3).map((r) => `${r.symbol}=${r.activityScore.toFixed(3)}%`).join(', ')
+    );
+
     return { rows: rows.slice(0, max), totalCount, scoredCount: rows.length, warmupRatio, isStale, updatedAt, lastError, contract };
   }
 }

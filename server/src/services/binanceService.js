@@ -1190,7 +1190,10 @@ async function fetchKlines(
   limit = 500,
   options = {}
 ) {
-  const { retries = 1, before = null } = options || {};
+  const { retries = 1, before = null, maxAge = null } = options || {};
+  // maxAge: optional override for kline cache TTL (ms). Default uses KLINES_CACHE_TTL (5min).
+  // Market-map ranking passes a shorter maxAge (45s) for fresher volatility data.
+  const effectiveCacheTTL = (Number.isFinite(maxAge) && maxAge > 0) ? maxAge : KLINES_CACHE_TTL;
   // Validate interval (1s, 5s, 15s may not be supported by all Binance endpoints)
   const validIntervals = ['1s', '5s', '15s', '1m', '5m', '15m', '30m', '1h', '4h', '1d'];
   if (!validIntervals.includes(interval)) {
@@ -1221,11 +1224,11 @@ async function fetchKlines(
     ? { '1s': 50, '5s': 84, '15s': 125 }[interval]
     : limit;
 
-  // Check cache
+  // Check cache (uses effectiveCacheTTL which may be shorter for market-map calls)
   if (
     klinesCache[cacheKey] &&
     klinesCache[cacheKey].timestamp &&
-    now - klinesCache[cacheKey].timestamp < KLINES_CACHE_TTL
+    now - klinesCache[cacheKey].timestamp < effectiveCacheTTL
   ) {
     console.log(
       `[${exchangeType.toUpperCase()}] Returning cached klines for ${symbol} (${interval})`

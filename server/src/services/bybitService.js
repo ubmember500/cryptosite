@@ -458,7 +458,9 @@ function resample1mToSeconds(klines1m, secondInterval) {
  * Bybit returns list of [startTimeMs, open, high, low, close, volume, turnover], newest first
  */
 async function fetchKlines(symbol, exchangeType, interval = '15m', limit = 500, options = {}) {
-  const { retries = 1, before = null } = options || {};
+  const { retries = 1, before = null, maxAge = null } = options || {};
+  // maxAge: optional override for kline cache TTL (ms). Default uses KLINES_CACHE_TTL (5min).
+  const effectiveCacheTTL = (Number.isFinite(maxAge) && maxAge > 0) ? maxAge : KLINES_CACHE_TTL;
   const validIntervals = ['1s', '5s', '15s', '1m', '5m', '15m', '30m', '1h', '4h', '1d'];
   if (!validIntervals.includes(interval)) {
     throw new Error(`Invalid interval. Must be one of: ${validIntervals.join(', ')}`);
@@ -475,7 +477,7 @@ async function fetchKlines(symbol, exchangeType, interval = '15m', limit = 500, 
   const beforeKey = hasBefore ? String(Math.floor(Number(before))) : 'latest';
   const cacheKey = `bybit_${symbol}_${exchangeType}_${interval}_${limit}_${beforeKey}`;
   const now = Date.now();
-  if (klinesCache[cacheKey]?.timestamp && now - klinesCache[cacheKey].timestamp < KLINES_CACHE_TTL) {
+  if (klinesCache[cacheKey]?.timestamp && now - klinesCache[cacheKey].timestamp < effectiveCacheTTL) {
     return klinesCache[cacheKey].data;
   }
 

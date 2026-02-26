@@ -129,7 +129,7 @@ class BybitMarketMapService {
         const batch = candidates.slice(i, i + KLINE_CONCURRENCY);
         const results = await Promise.all(batch.map(async (token) => {
           try {
-            const klines = await bybitService.fetchKlines(token.fullSymbol, 'futures', '5m', KLINE_CANDLES);
+            const klines = await bybitService.fetchKlines(token.fullSymbol, 'futures', '5m', KLINE_CANDLES, { maxAge: 45000 });
             if (!Array.isArray(klines) || klines.length < 1) return null;
             let maxHigh = -Infinity, minLow = Infinity, lastClose = null;
             for (const k of klines) {
@@ -208,32 +208,26 @@ class BybitMarketMapService {
   }
 
   async getRanking({ limit } = {}) {
-    this.start();
-    const nowTs = Date.now();
-    const { scoredRows, scoredCount } = this.getRankingFromBuffer();
+    // Always use on-demand kline-based ranking (see binanceMarketMapService for rationale).
+    this.start(); // keep background tick for diagnostics only
 
-    let rows, totalCount, warmupRatio, isStale, updatedAt, lastError, contract;
-
-    if (scoredCount >= MIN_LIVE_SCORED) {
-      rows = scoredRows; totalCount = scoredRows.length; warmupRatio = 1;
-      isStale = !this.lastTickAt || nowTs - this.lastTickAt > STALE_AFTER_MS;
-      updatedAt = this.lastTickAt ? new Date(this.lastTickAt).toISOString() : null;
-      lastError = this.lastError;
-      contract = { type: '5m-natr', formula: '(highest_5m - lowest_5m) / last_price * 100', windowMinutes: 5, sampleIntervalMs: SNAPSHOT_INTERVAL_MS, minPointsInWindow: MIN_POINTS_IN_WINDOW };
-    } else {
-      const computed = await this.computeOnDemandRanking();
-      if (!computed) {
-        return {
-          rows: [], totalCount: 0, scoredCount: 0, warmupRatio: 0, isStale: true,
-          updatedAt: null, lastError: this.onDemandError || 'No data available',
-          contract: { type: '5m-natr', formula: '(max_high - min_low) / last_close * 100', windowMinutes: 5, sampleIntervalMs: SNAPSHOT_INTERVAL_MS, minPointsInWindow: MIN_POINTS_IN_WINDOW },
-        };
-      }
-      rows = computed.rows; totalCount = computed.totalCount; warmupRatio = computed.warmupRatio;
-      isStale = computed.isStale; updatedAt = computed.updatedAt; lastError = computed.lastError; contract = computed.contract;
+    const computed = await this.computeOnDemandRanking();
+    if (!computed) {
+      return {
+        rows: [], totalCount: 0, scoredCount: 0, warmupRatio: 0, isStale: true,
+        updatedAt: null, lastError: this.onDemandError || 'No data available',
+        contract: { type: '5m-natr', formula: '(max_high - min_low) / last_close * 100', windowMinutes: 5, sampleIntervalMs: SNAPSHOT_INTERVAL_MS, minPointsInWindow: MIN_POINTS_IN_WINDOW },
+      };
     }
 
+    const { rows, totalCount, warmupRatio, isStale, updatedAt, lastError, contract } = computed;
     const max = Number.isFinite(Number(limit)) && Number(limit) > 0 ? Number(limit) : rows.length;
+
+    console.log(
+      `[BybitMarketMap] getRanking -> on-demand path, ${rows.length} scored, top: ` +
+      rows.slice(0, 3).map((r) => `${r.symbol}=${r.activityScore.toFixed(3)}%`).join(', ')
+    );
+
     return { rows: rows.slice(0, max), totalCount, scoredCount: rows.length, warmupRatio, isStale, updatedAt, lastError, contract };
   }
 }
