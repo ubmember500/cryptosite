@@ -473,7 +473,7 @@ async function getBinanceFuturesKlinesProxy(req, res) {
 async function getBinanceMarketMapRanking(req, res, next) {
   try {
     const { limit } = req.query;
-    const result = binanceMarketMapService.getRanking({ limit });
+    const result = await binanceMarketMapService.getRanking({ limit });
 
     res.json({
       exchange: 'binance',
@@ -493,7 +493,7 @@ async function getBinanceMarketMapRanking(req, res, next) {
 async function getBybitMarketMapRanking(req, res, next) {
   try {
     const { limit } = req.query;
-    const result = bybitMarketMapService.getRanking({ limit });
+    const result = await bybitMarketMapService.getRanking({ limit });
 
     res.json({
       exchange: 'bybit',
