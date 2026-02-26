@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import api from '../services/api';
+import { API_BASE_URL } from '../utils/constants';
 
 const ALLOWED_COUNTS = [3, 6, 8, 9, 12, 16];
 const DEFAULT_COUNT = 8;
@@ -7,7 +8,7 @@ const SUPPORTED_MARKET_MAP_EXCHANGES = ['binance', 'bybit'];
 const DEFAULT_MARKET_MAP_EXCHANGE = 'binance';
 const DEFAULT_EXCHANGE_TYPE = 'futures';
 const DEFAULT_INTERVAL = '5m';
-const DEFAULT_VISIBLE_KLINE_LIMIT = 50;
+const DEFAULT_VISIBLE_KLINE_LIMIT = 1000;
 const MIN_VISIBLE_KLINE_POINTS = 20;
 const VISIBLE_FETCH_CONCURRENCY = 4;
 const CARD_CHANGE_HIGHLIGHT_MS = 12000;
@@ -15,6 +16,10 @@ const VALID_SYMBOL_REGEX = /^[A-Z0-9]+$/;
 const DEFAULT_RANK_REFRESH_MS = 5000;
 const DEFAULT_CHART_REFRESH_MS = 6000;
 const RANKING_STALE_AFTER_MS = 60000;
+const BINANCE_FUTURES_BASE_URLS = [
+  'https://fapi.binance.com/fapi/v1',
+  'https://www.binance.com/fapi/v1',
+];
 
 const toFiniteNumber = (value) => {
   const parsed = Number(value);
@@ -63,6 +68,86 @@ const areKlinesEquivalent = (prevKlines, nextKlines) => {
   );
 };
 
+const mergeCandlesByTime = (olderCandles, currentCandles) => {
+  const mergedMap = new Map();
+  [...(olderCandles || []), ...(currentCandles || [])].forEach((candle) => {
+    if (!candle || !Number.isFinite(Number(candle.time))) return;
+    mergedMap.set(Number(candle.time), candle);
+  });
+  return Array.from(mergedMap.values()).sort((left, right) => Number(left.time) - Number(right.time));
+};
+
+const transformRawBinanceKlines = (rawKlines) => {
+  if (!Array.isArray(rawKlines)) return [];
+  return rawKlines
+    .map((kline) => {
+      if (!Array.isArray(kline) || kline.length < 6) return null;
+      const openTimeMs = Number(kline[0]);
+      const time = Math.floor(openTimeMs / 1000);
+      const open = Number(kline[1]);
+      const high = Number(kline[2]);
+      const low = Number(kline[3]);
+      const close = Number(kline[4]);
+      const volume = Number(kline[5]);
+      if (!Number.isFinite(time) || !Number.isFinite(open) || !Number.isFinite(high) || !Number.isFinite(low) || !Number.isFinite(close)) {
+        return null;
+      }
+      return { time, open, high, low, close, volume: Number.isFinite(volume) ? volume : 0 };
+    })
+    .filter(Boolean);
+};
+
+const getBinanceProxyUrls = () => {
+  const urls = [];
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    urls.push(`${window.location.origin}/api/binance-klines`);
+  }
+  urls.push(`${API_BASE_URL.replace(/\/$/, '')}/binance-klines`);
+  return Array.from(new Set(urls));
+};
+
+const fetchBinanceFuturesKlinesDirect = async (symbol, interval = '5m', limit = DEFAULT_VISIBLE_KLINE_LIMIT, before = null) => {
+  const query = new URLSearchParams({
+    symbol: String(symbol || '').toUpperCase(),
+    interval,
+    limit: String(limit),
+    ...(before ? { endTime: String(Math.floor(Number(before)) - 1) } : {}),
+  });
+
+  let lastError = null;
+
+  for (const proxyUrl of getBinanceProxyUrls()) {
+    try {
+      const response = await fetch(`${proxyUrl}?${query.toString()}`);
+      if (!response.ok) {
+        throw new Error(`Proxy HTTP ${response.status}`);
+      }
+      const data = await response.json();
+      const raw = Array.isArray(data?.klines) ? data.klines : (Array.isArray(data) ? data : []);
+      const transformed = transformRawBinanceKlines(raw);
+      if (transformed.length > 0) return transformed;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  for (const baseUrl of BINANCE_FUTURES_BASE_URLS) {
+    try {
+      const response = await fetch(`${baseUrl}/klines?${query.toString()}`);
+      if (!response.ok) {
+        throw new Error(`Direct HTTP ${response.status}`);
+      }
+      const raw = await response.json();
+      const transformed = transformRawBinanceKlines(raw);
+      if (transformed.length > 0) return transformed;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError || new Error('Failed to fetch Binance futures klines directly');
+};
+
 export const useMarketMapStore = create((set, get) => ({
   selectedExchange: DEFAULT_MARKET_MAP_EXCHANGE,
   cadence: {
@@ -78,6 +163,7 @@ export const useMarketMapStore = create((set, get) => ({
   rankedSymbols: [],
   visibleSymbols: [],
   klinesBySymbol: {},
+  chartHistoryBySymbol: {},
   cardLoadingBySymbol: {},
   cardErrorBySymbol: {},
   dataUpdatedAtBySymbol: {},
@@ -308,6 +394,7 @@ export const useMarketMapStore = create((set, get) => ({
       rankedSymbols: [],
       visibleSymbols: [],
       klinesBySymbol: {},
+      chartHistoryBySymbol: {},
       cardLoadingBySymbol: {},
       cardErrorBySymbol: {},
       dataUpdatedAtBySymbol: {},
@@ -382,6 +469,7 @@ export const useMarketMapStore = create((set, get) => ({
         rankedSymbols: [],
         visibleSymbols: [],
         klinesBySymbol: {},
+        chartHistoryBySymbol: {},
         cardLoadingBySymbol: {},
         cardErrorBySymbol: {},
         dataUpdatedAtBySymbol: {},
@@ -467,6 +555,7 @@ export const useMarketMapStore = create((set, get) => ({
     const selectedExchange = SUPPORTED_MARKET_MAP_EXCHANGES.includes(get().selectedExchange)
       ? get().selectedExchange
       : DEFAULT_MARKET_MAP_EXCHANGE;
+    const isBinance = selectedExchange === 'binance';
 
     set((state) => {
       const nextLoading = { ...state.cardLoadingBySymbol };
@@ -494,7 +583,22 @@ export const useMarketMapStore = create((set, get) => ({
             },
           });
 
-          const klines = Array.isArray(response?.data?.klines) ? response.data.klines : [];
+          let klines = Array.isArray(response?.data?.klines) ? response.data.klines : [];
+
+          if (isBinance && klines.length < MIN_VISIBLE_KLINE_POINTS) {
+            try {
+              const directKlines = await fetchBinanceFuturesKlinesDirect(
+                row.symbol,
+                DEFAULT_INTERVAL,
+                DEFAULT_VISIBLE_KLINE_LIMIT
+              );
+              if (Array.isArray(directKlines) && directKlines.length > klines.length) {
+                klines = directKlines;
+              }
+            } catch {
+              // Keep backend result/error path
+            }
+          }
 
           if (klines.length < MIN_VISIBLE_KLINE_POINTS) {
             return {
@@ -518,6 +622,7 @@ export const useMarketMapStore = create((set, get) => ({
 
     set((state) => {
       const nextMap = { ...state.klinesBySymbol };
+      const nextHistory = { ...state.chartHistoryBySymbol };
       const nextLoading = { ...state.cardLoadingBySymbol };
       const nextErrors = { ...state.cardErrorBySymbol };
       const nextUpdatedAt = { ...state.dataUpdatedAtBySymbol };
@@ -528,20 +633,138 @@ export const useMarketMapStore = create((set, get) => ({
           nextMap[item.symbol] = areKlinesEquivalent(prevKlines, item.klines)
             ? prevKlines
             : item.klines;
+
+          const effectiveKlines = nextMap[item.symbol] || [];
+          const earliestTime = effectiveKlines.length > 0 ? Number(effectiveKlines[0].time) : null;
+          nextHistory[item.symbol] = {
+            earliestTime,
+            hasMoreHistory: effectiveKlines.length > 0,
+            loadingOlder: false,
+          };
+
           nextErrors[item.symbol] = null;
           nextUpdatedAt[item.symbol] = Date.now();
         } else {
           nextErrors[item.symbol] = item.error;
+          nextHistory[item.symbol] = {
+            ...(nextHistory[item.symbol] || {}),
+            loadingOlder: false,
+          };
         }
         nextLoading[item.symbol] = false;
       });
 
       return {
         klinesBySymbol: nextMap,
+        chartHistoryBySymbol: nextHistory,
         cardLoadingBySymbol: nextLoading,
         cardErrorBySymbol: nextErrors,
         dataUpdatedAtBySymbol: nextUpdatedAt,
       };
     });
+  },
+
+  loadOlderVisibleHistory: async (symbol, beforeTimestampMs) => {
+    const safeSymbol = String(symbol || '').toUpperCase();
+    if (!safeSymbol) return [];
+
+    const beforeTimestamp = Number(beforeTimestampMs);
+    if (!Number.isFinite(beforeTimestamp) || beforeTimestamp <= 0) return [];
+
+    const selectedExchange = SUPPORTED_MARKET_MAP_EXCHANGES.includes(get().selectedExchange)
+      ? get().selectedExchange
+      : DEFAULT_MARKET_MAP_EXCHANGE;
+
+    const historyMeta = get().chartHistoryBySymbol[safeSymbol] || {
+      earliestTime: null,
+      hasMoreHistory: true,
+      loadingOlder: false,
+    };
+
+    if (historyMeta.loadingOlder || historyMeta.hasMoreHistory === false) {
+      return [];
+    }
+
+    set((state) => ({
+      chartHistoryBySymbol: {
+        ...state.chartHistoryBySymbol,
+        [safeSymbol]: {
+          ...(state.chartHistoryBySymbol[safeSymbol] || historyMeta),
+          loadingOlder: true,
+        },
+      },
+    }));
+
+    try {
+      const beforeSeconds = Math.floor(beforeTimestamp / 1000);
+
+      let fetched = [];
+      try {
+        const response = await api.get(`/market/${selectedExchange}/klines`, {
+          params: {
+            symbol: safeSymbol,
+            exchangeType: DEFAULT_EXCHANGE_TYPE,
+            interval: DEFAULT_INTERVAL,
+            limit: DEFAULT_VISIBLE_KLINE_LIMIT,
+            before: String(Math.floor(beforeTimestamp)),
+          },
+        });
+        fetched = Array.isArray(response?.data?.klines) ? response.data.klines : [];
+      } catch {
+        fetched = [];
+      }
+
+      let older = fetched.filter((kline) => Number(kline.time) < beforeSeconds);
+
+      if (selectedExchange === 'binance' && older.length === 0) {
+        try {
+          const directFetched = await fetchBinanceFuturesKlinesDirect(
+            safeSymbol,
+            DEFAULT_INTERVAL,
+            DEFAULT_VISIBLE_KLINE_LIMIT,
+            beforeTimestamp
+          );
+          const directOlder = directFetched.filter((kline) => Number(kline.time) < beforeSeconds);
+          if (directOlder.length > older.length) {
+            older = directOlder;
+          }
+        } catch {
+          // Keep backend older candles if any
+        }
+      }
+
+      set((state) => {
+        const current = state.klinesBySymbol[safeSymbol] || [];
+        const merged = mergeCandlesByTime(older, current);
+        const earliestTime = merged.length > 0 ? Number(merged[0].time) : null;
+        return {
+          klinesBySymbol: {
+            ...state.klinesBySymbol,
+            [safeSymbol]: merged,
+          },
+          chartHistoryBySymbol: {
+            ...state.chartHistoryBySymbol,
+            [safeSymbol]: {
+              earliestTime,
+              hasMoreHistory: older.length > 0,
+              loadingOlder: false,
+            },
+          },
+        };
+      });
+
+      return older;
+    } catch {
+      set((state) => ({
+        chartHistoryBySymbol: {
+          ...state.chartHistoryBySymbol,
+          [safeSymbol]: {
+            ...(state.chartHistoryBySymbol[safeSymbol] || historyMeta),
+            loadingOlder: false,
+          },
+        },
+      }));
+      return [];
+    }
   },
 }));

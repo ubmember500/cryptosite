@@ -30,6 +30,7 @@ const MarketMap = () => {
     rankedSymbols,
     visibleSymbols,
     klinesBySymbol,
+    chartHistoryBySymbol,
     cardLoadingBySymbol,
     cardErrorBySymbol,
     dataUpdatedAtBySymbol,
@@ -52,6 +53,7 @@ const MarketMap = () => {
     syncRealtimeSubscriptions,
     clearRealtimeSubscriptions,
     handleRealtimeKlineUpdate,
+    loadOlderVisibleHistory,
     setRealtimeConnected,
     setSelectedExchange,
     setChartCount,
@@ -217,6 +219,7 @@ const MarketMap = () => {
             (() => {
               const symbolData = klinesBySymbol[row.symbol] || [];
               const hasData = symbolData.length > 0;
+              const historyMeta = chartHistoryBySymbol[row.symbol] || {};
               const cardError = !hasData ? (cardErrorBySymbol[row.symbol] || null) : null;
               const changedAt = Number(changedAtBySymbol[row.symbol] || 0);
               const isRecentlyChanged = changedAt > 0 && Date.now() - changedAt < CARD_HIGHLIGHT_MS;
@@ -274,6 +277,10 @@ const MarketMap = () => {
                       instanceId={`market-map-${row.symbol}`}
                       isRealtimeConnected={isRealtimeConnected}
                       isRealtimeSubscribed={Array.isArray(activeRealtimeSymbols) && activeRealtimeSymbols.includes(row.symbol)}
+                      hasMoreHistory={!!historyMeta.hasMoreHistory}
+                      onLoadMoreHistory={async ({ timestamp }) => {
+                        return loadOlderVisibleHistory(row.symbol, timestamp);
+                      }}
                     />
                   </div>
 
