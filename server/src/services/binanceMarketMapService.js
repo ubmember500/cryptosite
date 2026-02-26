@@ -1,13 +1,15 @@
 ﻿const binanceService = require('./binanceService');
 const WebSocket = require('ws');
 
-// Ring-buffer config (live 10-second snapshots for intra-candle precision)
-const SNAPSHOT_INTERVAL_MS = 10000;
+// Ring-buffer config (live 3-second snapshots for higher real-time precision)
+const SNAPSHOT_INTERVAL_MS = 3000;
 const WINDOW_MS = 5 * 60 * 1000;
 const RETENTION_MS = 7 * 60 * 1000;
 const STALE_AFTER_MS = 45000;
-const MAX_POINTS_PER_SYMBOL = 80;
-const MIN_POINTS_IN_WINDOW = 2;
+const MAX_POINTS_PER_SYMBOL = 180;
+const MIN_POINTS_IN_WINDOW = 8;
+const MAX_LAST_POINT_AGE_MS = 12000;
+const MIN_VOLUME_24H_USDT = 2_000_000;
 
 // On-demand kline ranking config
 // Rather than relying on in-memory ring buffers (which are empty on cold starts /
@@ -239,6 +241,8 @@ class BinanceMarketMapService {
     if (safe.length < MIN_POINTS_IN_WINDOW) return null;
     const inWindow = safe.filter((p) => Number(p?.ts) >= nowTs - WINDOW_MS);
     if (inWindow.length < MIN_POINTS_IN_WINDOW) return null;
+    const lastPointTs = Number(inWindow[inWindow.length - 1]?.ts || 0);
+    if (!Number.isFinite(lastPointTs) || nowTs - lastPointTs > MAX_LAST_POINT_AGE_MS) return null;
     const prices = inWindow.map((p) => p.price);
     const high = Math.max(...prices); const low = Math.min(...prices); const last = prices[prices.length - 1];
     if (!Number.isFinite(last) || last <= 0) return null;
@@ -377,13 +381,15 @@ class BinanceMarketMapService {
     const nowTs = Date.now();
     const scoredRows = [];
     for (const [symbol, history] of this.priceHistoryBySymbol.entries()) {
+      const volume24h = Number(this.volumeBySymbol.get(symbol) || 0);
+      if (!Number.isFinite(volume24h) || volume24h < MIN_VOLUME_24H_USDT) continue;
       const natr = this.computeFiveMinuteNATR(history, nowTs);
       if (!Number.isFinite(natr)) continue;
       scoredRows.push({
         symbol,
         activityScore: Number(natr.toFixed(6)),
         activityMetric: 'natr5m',
-        volume24h: Number(this.volumeBySymbol.get(symbol) || 0),
+        volume24h,
         warmup: false,
       });
     }
