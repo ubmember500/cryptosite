@@ -4,12 +4,14 @@ const WebSocket = require('ws');
 // Ring-buffer config (live 3-second snapshots for higher real-time precision)
 const SNAPSHOT_INTERVAL_MS = 3000;
 const WINDOW_MS = 5 * 60 * 1000;
+const RECENT_WINDOW_MS = 60 * 1000;
 const RETENTION_MS = 7 * 60 * 1000;
 const STALE_AFTER_MS = 45000;
 const MAX_POINTS_PER_SYMBOL = 180;
 const MIN_POINTS_IN_WINDOW = 8;
 const MAX_LAST_POINT_AGE_MS = 12000;
-const MIN_VOLUME_24H_USDT = 2_000_000;
+const MIN_VOLUME_24H_USDT = 0;
+const FULL_SNAPSHOT_REFRESH_MS = 10000;
 
 // On-demand kline ranking config
 // Rather than relying on in-memory ring buffers (which are empty on cold starts /
@@ -39,6 +41,7 @@ class BinanceMarketMapService {
     this.lastError = null;
     this.isTicking = false;
     this.timer = null;
+    this.fullSnapshotTimer = null;
     this.started = false;
     this.ws = null;
     this.wsReconnectTimer = null;
@@ -54,6 +57,7 @@ class BinanceMarketMapService {
     if (this.started) return;
     this.started = true;
     this.startWsStream();
+    this.tick().catch(() => {});
     this.timer = setInterval(() => {
       const nowTs = Date.now();
       for (const [symbol, history] of this.priceHistoryBySymbol.entries()) {
@@ -67,6 +71,9 @@ class BinanceMarketMapService {
         this.priceHistoryBySymbol.set(symbol, trimmed);
       }
     }, SNAPSHOT_INTERVAL_MS);
+    this.fullSnapshotTimer = setInterval(() => {
+      this.tick().catch(() => {});
+    }, FULL_SNAPSHOT_REFRESH_MS);
   }
 
   stop() {
@@ -84,6 +91,7 @@ class BinanceMarketMapService {
       this.ws = null;
     }
     if (this.timer) { clearInterval(this.timer); this.timer = null; }
+    if (this.fullSnapshotTimer) { clearInterval(this.fullSnapshotTimer); this.fullSnapshotTimer = null; }
     this.started = false;
   }
 
@@ -174,8 +182,9 @@ class BinanceMarketMapService {
       if (shouldAppend) {
         existing.push({ ts: nowTs, price: lastPrice });
       } else {
+        // Keep sample timestamp stable within interval; otherwise we'd keep
+        // refreshing ts and never accumulate enough points for 5m windows.
         last.price = lastPrice;
-        last.ts = nowTs;
       }
 
       this.priceHistoryBySymbol.set(symbol, existing.slice(-MAX_POINTS_PER_SYMBOL));
@@ -248,6 +257,20 @@ class BinanceMarketMapService {
     if (!Number.isFinite(last) || last <= 0) return null;
     if (!Number.isFinite(high) || !Number.isFinite(low)) return null;
     if (high <= 0 || low <= 0) return null;
+    return ((high - low) / last) * 100;
+  }
+
+  computeWindowRangePercent(history, nowTs, windowMs) {
+    const safe = Array.isArray(history) ? history : [];
+    if (safe.length < 2) return null;
+    const inWindow = safe.filter((p) => Number(p?.ts) >= nowTs - windowMs);
+    if (inWindow.length < 2) return null;
+    const prices = inWindow.map((p) => Number(p?.price)).filter((v) => Number.isFinite(v) && v > 0);
+    if (prices.length < 2) return null;
+    const high = Math.max(...prices);
+    const low = Math.min(...prices);
+    const last = prices[prices.length - 1];
+    if (!Number.isFinite(high) || !Number.isFinite(low) || !Number.isFinite(last) || last <= 0) return null;
     return ((high - low) / last) * 100;
   }
 
@@ -385,9 +408,11 @@ class BinanceMarketMapService {
       if (!Number.isFinite(volume24h) || volume24h < MIN_VOLUME_24H_USDT) continue;
       const natr = this.computeFiveMinuteNATR(history, nowTs);
       if (!Number.isFinite(natr)) continue;
+      const recentRange = this.computeWindowRangePercent(history, nowTs, RECENT_WINDOW_MS);
       scoredRows.push({
         symbol,
         activityScore: Number(natr.toFixed(6)),
+        recentActivityScore: Number.isFinite(recentRange) ? Number(recentRange.toFixed(6)) : 0,
         activityMetric: 'natr5m',
         volume24h,
         warmup: false,
@@ -395,6 +420,7 @@ class BinanceMarketMapService {
     }
     scoredRows.sort((a, b) => {
       if (b.activityScore !== a.activityScore) return b.activityScore - a.activityScore;
+      if (b.recentActivityScore !== a.recentActivityScore) return b.recentActivityScore - a.recentActivityScore;
       if (b.volume24h !== a.volume24h) return b.volume24h - a.volume24h;
       return a.symbol.localeCompare(b.symbol);
     });
@@ -411,16 +437,41 @@ class BinanceMarketMapService {
     const hasFreshWsFeed = this.lastWsMessageAt > 0 && nowTs - this.lastWsMessageAt <= STALE_AFTER_MS;
 
     if (hasFreshWsFeed && scoredCount >= MIN_LIVE_SCORED) {
-      const max = Number.isFinite(Number(limit)) && Number(limit) > 0 ? Number(limit) : scoredRows.length;
+      const scoredSet = new Set(scoredRows.map((row) => row.symbol));
+      const monitoredSymbols = new Set([
+        ...Array.from(this.volumeBySymbol.keys()),
+        ...Array.from(this.natrBySymbol.keys()),
+        ...Array.from(this.priceHistoryBySymbol.keys()),
+      ]);
+
+      const warmupRows = Array.from(monitoredSymbols)
+        .filter((symbol) => !scoredSet.has(symbol))
+        .map((symbol) => ({
+          symbol,
+          activityScore: 0,
+          recentActivityScore: 0,
+          activityMetric: 'natr24h_warmup',
+          volume24h: Number(this.volumeBySymbol.get(symbol) || 0),
+          warmup: true,
+        }))
+        .sort((a, b) => {
+          if (b.volume24h !== a.volume24h) return b.volume24h - a.volume24h;
+          return a.symbol.localeCompare(b.symbol);
+        });
+
+      const rows = [...scoredRows, ...warmupRows];
+      const totalCount = rows.length;
+      const warmupRatio = totalCount > 0 ? scoredRows.length / totalCount : 0;
+      const max = Number.isFinite(Number(limit)) && Number(limit) > 0 ? Number(limit) : rows.length;
       console.log(
         `[BinanceMarketMap] getRanking -> live ws path, ${scoredRows.length} scored, top: ` +
         scoredRows.slice(0, 3).map((r) => `${r.symbol}=${r.activityScore.toFixed(3)}%`).join(', ')
       );
       return {
-        rows: scoredRows.slice(0, max),
-        totalCount: scoredRows.length,
+        rows: rows.slice(0, max),
+        totalCount,
         scoredCount: scoredRows.length,
-        warmupRatio: 1,
+        warmupRatio,
         isStale: false,
         updatedAt: this.lastTickAt ? new Date(this.lastTickAt).toISOString() : new Date().toISOString(),
         lastError: null,
