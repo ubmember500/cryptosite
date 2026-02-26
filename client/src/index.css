@@ -5,13 +5,13 @@
 
 /* Theme: dark (default) and light */
 :root {
-  --color-background: #060912;
-  --color-surface: #0d1320;
-  --color-surface-hover: #14213a;
-  --color-surface-dark: #080c18;
-  --color-border: #1c2843;
+  --color-background: #111214;
+  --color-surface: #18191e;
+  --color-surface-hover: #1e2028;
+  --color-surface-dark: #0e0f11;
+  --color-border: #26272e;
   --color-text-primary: #e2e8f2;
-  --color-text-secondary: #5a7199;
+  --color-text-secondary: #6b7280;
   --color-accent: #0ea5e9;
   --color-success: #10d9a0;
   --color-danger: #f43f5e;
@@ -44,17 +44,17 @@
   }
   
   ::-webkit-scrollbar-track {
-    background: #080c18;
+    background: #0e0f11;
   }
   
   ::-webkit-scrollbar-thumb {
-    background: #1c2e4a;
+    background: #2a2b33;
     border-radius: 9999px;
-    border: 2px solid #080c18;
+    border: 2px solid #0e0f11;
   }
   
   ::-webkit-scrollbar-thumb:hover {
-    background: #2a4470;
+    background: #3d3f4a;
   }
   
   /* Selection */

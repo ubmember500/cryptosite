@@ -49,7 +49,7 @@ const Navbar = () => {
   };
 
   return (
-    <header className="bg-gray-800 border-b border-gray-700 shadow-sm z-10">
+    <header className="bg-surface border-b border-border shadow-sm z-10">
       <div className="flex items-center justify-between h-16 px-6">
         {/* Mobile menu button could go here */}
         
@@ -59,13 +59,13 @@ const Navbar = () => {
             <label htmlFor="search" className="sr-only">{t('Search')}</label>
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                <Search className="h-5 w-5 text-gray-400" />
+                <Search className="h-5 w-5 text-textSecondary" />
               </div>
               <form onSubmit={handleSearch}>
                 <input
                   id="search"
                   name="search"
-                  className="block w-full pl-10 pr-3 py-2 border border-gray-600 rounded-md leading-5 bg-gray-700 text-gray-300 placeholder-gray-400 focus:outline-none focus:bg-gray-600 focus:border-blue-500 focus:ring-blue-500 sm:text-sm transition-colors"
+                  className="block w-full pl-10 pr-3 py-2 border border-border rounded-md leading-5 bg-surfaceHover text-textPrimary placeholder-textSecondary focus:outline-none focus:bg-surface focus:border-accent focus:ring-accent sm:text-sm transition-colors"
                   placeholder={t('Search coins...')}
                   type="search"
                   value={searchQuery}
@@ -78,18 +78,18 @@ const Navbar = () => {
 
         {/* Right side: language switcher, notifications, user */}
         <div className="ml-4 flex items-center md:ml-6 space-x-4">
-          <div className="flex items-center rounded-lg border border-gray-600 bg-gray-700/50 p-0.5" role="group" aria-label="Language">
+          <div className="flex items-center rounded-lg border border-border bg-surfaceHover/50 p-0.5" role="group" aria-label="Language">
             <button
               type="button"
               onClick={() => handleLanguageChange('en')}
-              className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-offset-gray-800 focus:ring-blue-500 ${language === 'en' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}
+              className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-offset-surface focus:ring-accent ${language === 'en' ? 'bg-accent text-white' : 'text-textSecondary hover:text-textPrimary'}`}
             >
               EN
             </button>
             <button
               type="button"
               onClick={() => handleLanguageChange('ru')}
-              className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-offset-gray-800 focus:ring-blue-500 ${language === 'ru' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}
+              className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-offset-surface focus:ring-accent ${language === 'ru' ? 'bg-accent text-white' : 'text-textSecondary hover:text-textPrimary'}`}
             >
               RUS
             </button>
@@ -99,7 +99,7 @@ const Navbar = () => {
             <button
               type="button"
               onClick={toggleTheme}
-              className="p-1.5 rounded-full text-gray-400 hover:text-white focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-800 focus:ring-blue-500"
+              className="p-1.5 rounded-full text-textSecondary hover:text-textPrimary focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-surface focus:ring-accent"
               aria-label={theme === 'dark' ? t('Switch to light theme') : t('Switch to dark theme')}
             >
               {theme === 'dark' ? (
@@ -110,7 +110,7 @@ const Navbar = () => {
             </button>
           )}
 
-          <UserAccountMenu chipClassName="border-gray-600 bg-gray-800 px-2.5 py-1.5 hover:bg-gray-700 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-gray-800" />
+          <UserAccountMenu chipClassName="border-border bg-surface px-2.5 py-1.5 hover:bg-surfaceHover focus:ring-accent focus:ring-offset-2 focus:ring-offset-surface" />
         </div>
       </div>
     </header>

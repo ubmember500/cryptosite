@@ -334,7 +334,7 @@ const Market = () => {
       />
       <div className="flex flex-col h-screen bg-background overflow-hidden font-sans">
         {/* Page Global Header */}
-        <header className="flex items-center justify-between px-4 h-14 shrink-0 z-20" style={{ background: 'linear-gradient(90deg, #0d1320 0%, #0a1528 100%)', borderBottom: '1px solid #1c2843' }}>
+        <header className="flex items-center justify-between px-4 h-14 shrink-0 z-20 bg-surface border-b border-border">
           <button
             type="button"
             onClick={() => navigate(ROUTES.MARKET_MAP)}
@@ -356,8 +356,8 @@ const Market = () => {
           {/* Left Panel - Chart */}
           <div
             ref={chartPanelRef}
-            className="flex flex-col h-full overflow-hidden min-w-0"
-            style={{ width: `${100 - rightPanelPercent}%`, background: '#070b14' }}
+            className="flex flex-col h-full overflow-hidden min-w-0 bg-background"
+            style={{ width: `${100 - rightPanelPercent}%` }}
           >
             {/* Multi-chart: global header with symbol, Live, timeframes, layout */}
             {isMultiChart && (
@@ -564,7 +564,7 @@ const Market = () => {
         style={{ width: `${rightPanelPercent}%` }}
       >
         {/* Header */}
-        <div className="p-4" style={{ borderBottom: '1px solid #1c2843', background: 'linear-gradient(180deg, #0d1320 0%, #0a1118 100%)' }}>
+        <div className="p-4 bg-surface border-b border-border">
           <div className="flex items-center gap-4">
             <ExchangeSelector />
             <div className="flex-1 relative">
@@ -589,8 +589,8 @@ const Market = () => {
           
           {/* Result count */}
           {!loadingBinance && (
-            <div className="mt-2 text-xs font-medium" style={{ color: '#3a5278', letterSpacing: '0.03em' }}>
-              <span style={{ color: '#0ea5e9' }}>{binanceTokens.length}</span>
+            <div className="mt-2 text-xs text-textSecondary" style={{ letterSpacing: '0.03em' }}>
+              <span className="text-accent">{binanceTokens.length}</span>
               {' '}{binanceTokens.length === 1 ? 'token' : 'tokens'} found
             </div>
           )}

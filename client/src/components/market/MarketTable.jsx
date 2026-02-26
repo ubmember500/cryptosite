@@ -118,13 +118,13 @@ const MarketTable = () => {
   }
 
   return (
-    <div className="bg-gray-800 border border-gray-700 rounded-lg overflow-hidden">
+    <div className="bg-surface border border-border rounded-lg overflow-hidden">
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
-          <thead className="bg-gray-900 border-b border-gray-700">
+          <thead className="bg-surfaceDark border-b border-border">
             <tr>
               <th
-                className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider cursor-pointer hover:text-gray-300 group"
+                className="px-4 py-3 text-left text-xs font-medium text-textSecondary uppercase tracking-wider cursor-pointer hover:text-textPrimary group"
                 onClick={() => handleSort('market_cap_rank')}
               >
                 <div className="flex items-center gap-1">
@@ -133,7 +133,7 @@ const MarketTable = () => {
                 </div>
               </th>
               <th
-                className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider cursor-pointer hover:text-gray-300 group"
+                className="px-4 py-3 text-left text-xs font-medium text-textSecondary uppercase tracking-wider cursor-pointer hover:text-textPrimary group"
                 onClick={() => handleSort('name')}
               >
                 <div className="flex items-center gap-1">
@@ -142,7 +142,7 @@ const MarketTable = () => {
                 </div>
               </th>
               <th
-                className="px-4 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider cursor-pointer hover:text-gray-300 group"
+                className="px-4 py-3 text-right text-xs font-medium text-textSecondary uppercase tracking-wider cursor-pointer hover:text-textPrimary group"
                 onClick={() => handleSort('current_price')}
               >
                 <div className="flex items-center justify-end gap-1">
@@ -151,7 +151,7 @@ const MarketTable = () => {
                 </div>
               </th>
               <th
-                className="px-4 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider cursor-pointer hover:text-gray-300 group"
+                className="px-4 py-3 text-right text-xs font-medium text-textSecondary uppercase tracking-wider cursor-pointer hover:text-textPrimary group"
                 onClick={() => handleSort('price_change_percentage_24h')}
               >
                 <div className="flex items-center justify-end gap-1">
@@ -160,7 +160,7 @@ const MarketTable = () => {
                 </div>
               </th>
               <th
-                className="px-4 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider cursor-pointer hover:text-gray-300 group"
+                className="px-4 py-3 text-right text-xs font-medium text-textSecondary uppercase tracking-wider cursor-pointer hover:text-textPrimary group"
                 onClick={() => handleSort('price_change_percentage_7d')}
               >
                 <div className="flex items-center justify-end gap-1">
@@ -169,7 +169,7 @@ const MarketTable = () => {
                 </div>
               </th>
               <th
-                className="px-4 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider cursor-pointer hover:text-gray-300 group"
+                className="px-4 py-3 text-right text-xs font-medium text-textSecondary uppercase tracking-wider cursor-pointer hover:text-textPrimary group"
                 onClick={() => handleSort('market_cap')}
               >
                 <div className="flex items-center justify-end gap-1">
@@ -178,7 +178,7 @@ const MarketTable = () => {
                 </div>
               </th>
               <th
-                className="px-4 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider cursor-pointer hover:text-gray-300 group"
+                className="px-4 py-3 text-right text-xs font-medium text-textSecondary uppercase tracking-wider cursor-pointer hover:text-textPrimary group"
                 onClick={() => handleSort('total_volume')}
               >
                 <div className="flex items-center justify-end gap-1">
@@ -186,19 +186,19 @@ const MarketTable = () => {
                   <SortIcon columnKey="total_volume" />
                 </div>
               </th>
-              <th className="px-4 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">
+              <th className="px-4 py-3 text-right text-xs font-medium text-textSecondary uppercase tracking-wider">
                 Chart
               </th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-700">
+          <tbody className="divide-y divide-border">
             {paginatedCoins.map((coin) => (
               <tr
                 key={coin.id}
-                className="hover:bg-gray-700/50 cursor-pointer transition-colors"
+                className="hover:bg-surfaceHover/50 cursor-pointer transition-colors"
                 onClick={() => navigate(`/charts?coin=${coin.id}`)}
               >
-                <td className="px-4 py-4 whitespace-nowrap text-gray-300">
+                <td className="px-4 py-4 whitespace-nowrap text-textSecondary">
                   {coin.market_cap_rank || 'N/A'}
                 </td>
                 <td className="px-4 py-4 whitespace-nowrap">
@@ -207,12 +207,12 @@ const MarketTable = () => {
                       <img src={coin.image} alt={coin.name} className="h-8 w-8 rounded-full" />
                     )}
                     <div>
-                      <div className="text-gray-200 font-medium">{coin.name}</div>
-                      <div className="text-gray-400 text-xs">{coin.symbol.toUpperCase()}</div>
+                      <div className="text-textPrimary font-medium">{coin.name}</div>
+                      <div className="text-textSecondary text-xs">{coin.symbol.toUpperCase()}</div>
                     </div>
                   </div>
                 </td>
-                <td className="px-4 py-4 whitespace-nowrap text-right text-gray-200 font-medium">
+                <td className="px-4 py-4 whitespace-nowrap text-right text-textPrimary font-medium">
                   {formatPrice(prices[coin.id] || coin.current_price)}
                 </td>
                 <td className="px-4 py-4 whitespace-nowrap text-right">
@@ -221,10 +221,10 @@ const MarketTable = () => {
                 <td className="px-4 py-4 whitespace-nowrap text-right">
                   {formatPercent(coin.price_change_percentage_7d_in_currency)}
                 </td>
-                <td className="px-4 py-4 whitespace-nowrap text-right text-gray-300">
+                <td className="px-4 py-4 whitespace-nowrap text-right text-textSecondary">
                   {formatLargeNumber(coin.market_cap)}
                 </td>
-                <td className="px-4 py-4 whitespace-nowrap text-right text-gray-300">
+                <td className="px-4 py-4 whitespace-nowrap text-right text-textSecondary">
                   {formatLargeNumber(coin.total_volume)}
                 </td>
                 <td className="px-4 py-4 whitespace-nowrap">
@@ -239,8 +239,8 @@ const MarketTable = () => {
       </div>
 
       {totalPages > 1 && (
-        <div className="px-4 py-3 bg-gray-900 border-t border-gray-700 flex items-center justify-between">
-          <div className="text-sm text-gray-400">
+        <div className="px-4 py-3 bg-surfaceDark border-t border-border flex items-center justify-between">
+          <div className="text-sm text-textSecondary">
             Showing {(currentPage - 1) * itemsPerPage + 1} to{' '}
             {Math.min(currentPage * itemsPerPage, sortedCoins.length)} of {sortedCoins.length} coins
           </div>
@@ -248,14 +248,14 @@ const MarketTable = () => {
             <button
               onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
               disabled={currentPage === 1}
-              className="px-3 py-1 bg-gray-800 border border-gray-700 rounded text-gray-300 hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-3 py-1 bg-surface border border-border rounded text-textSecondary hover:bg-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Previous
             </button>
             <button
               onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
               disabled={currentPage === totalPages}
-              className="px-3 py-1 bg-gray-800 border border-gray-700 rounded text-gray-300 hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-3 py-1 bg-surface border border-border rounded text-textSecondary hover:bg-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Next
             </button>

@@ -57,18 +57,18 @@ const Register = () => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-900 px-4">
+    <div className="min-h-screen flex items-center justify-center bg-background px-4">
       <div className="w-full max-w-md">
-        <div className="bg-gray-800 border border-gray-700 rounded-xl shadow-xl p-8">
+        <div className="bg-surface border border-border rounded-xl shadow-xl p-8">
           <div className="text-center mb-8">
-            <h1 className="text-3xl font-bold text-gray-200 mb-2">Create Account</h1>
-            <p className="text-gray-400 inline-flex items-center gap-2">
+            <h1 className="text-3xl font-bold text-textPrimary mb-2">Create Account</h1>
+            <p className="text-textSecondary inline-flex items-center gap-2">
               <span>Sign up for</span>
               <span className="inline-flex items-center gap-1.5">
-                <span className="bg-blue-500/10 p-1 rounded-md border border-blue-500/20">
-                  <TrendingUp className="h-3.5 w-3.5 text-blue-400" />
+                <span className="bg-accent/10 p-1 rounded-md border border-accent/20">
+                  <TrendingUp className="h-3.5 w-3.5 text-accent" />
                 </span>
-                <span className="font-semibold bg-gradient-to-r from-blue-400 to-indigo-500 bg-clip-text text-transparent">
+                <span className="font-semibold bg-gradient-to-r from-sky-400 via-cyan-300 to-teal-400 bg-clip-text text-transparent">
                   CryptoAlerts
                 </span>
               </span>

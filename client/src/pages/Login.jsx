@@ -56,19 +56,19 @@ const Login = () => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-900 px-4">
+    <div className="min-h-screen flex items-center justify-center bg-background px-4">
       <div className="w-full max-w-md">
-        <div className="bg-gray-800 border border-gray-700 rounded-xl shadow-xl p-8">
+        <div className="bg-surface border border-border rounded-xl shadow-xl p-8">
           <div className="text-center mb-8">
             <div className="mb-2 flex items-center justify-center gap-2.5">
-              <div className="bg-blue-500/10 p-1.5 rounded-lg border border-blue-500/20">
-                <TrendingUp className="h-6 w-6 text-blue-400" />
+              <div className="bg-accent/10 p-1.5 rounded-lg border border-accent/20">
+                <TrendingUp className="h-6 w-6 text-accent" />
               </div>
-              <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-400 to-indigo-500 bg-clip-text text-transparent">
+              <h1 className="text-3xl font-bold bg-gradient-to-r from-sky-400 via-cyan-300 to-teal-400 bg-clip-text text-transparent">
                 CryptoAlerts
               </h1>
             </div>
-            <p className="text-gray-400">Sign in to your account</p>
+            <p className="text-textSecondary">Sign in to your account</p>
           </div>
 
           {error && (
@@ -115,7 +115,7 @@ const Login = () => {
           </form>
 
           <div className="mt-6 text-center">
-            <p className="text-gray-400 text-sm">
+            <p className="text-textSecondary text-sm">
               Don't have an account?{' '}
               <Link to={ROUTES.REGISTER} className="text-blue-400 hover:text-blue-300">
                 Sign up

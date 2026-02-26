@@ -231,7 +231,7 @@ const BinanceMarketTable = ({ onTokenSelect, highlightToken }) => {
     <>
       <div className="w-full">
         <table className="w-full text-sm">
-        <thead className="sticky top-0 z-10" style={{ background: 'linear-gradient(180deg, #0d1320 0%, rgba(13,19,32,0.97) 100%)', borderBottom: '1px solid #1c2843', backdropFilter: 'blur(8px)' }}>
+        <thead className="sticky top-0 z-10 bg-surface" style={{ borderBottom: '1px solid var(--color-border)' }}>
           <tr>
             <th className="w-10 px-2 py-3 text-left">
               <button
@@ -371,7 +371,7 @@ const BinanceMarketTable = ({ onTokenSelect, highlightToken }) => {
                 </td>
                 <td className="px-4 py-3 whitespace-nowrap">
                   <div className="text-textPrimary font-semibold tracking-wide">{token.symbol}</div>
-                  <div className="text-xs mt-0.5" style={{ color: '#3a5278' }}>{token.fullSymbol}</div>
+                  <div className="text-xs mt-0.5 text-textSecondary opacity-50">{token.fullSymbol}</div>
                 </td>
                 <td className="px-4 py-3 whitespace-nowrap text-right">
                   {formatPercent(token.priceChangePercent24h)}
