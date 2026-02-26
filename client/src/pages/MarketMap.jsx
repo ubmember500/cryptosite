@@ -40,6 +40,7 @@ const MarketMap = () => {
     isRankingRefresh,
     isHydratingVisible,
     isRealtimeConnected,
+    activeRealtimeSymbols,
     rankingIsStale,
     rankingWarmupRatio,
     rankingScoredCount,
@@ -270,6 +271,8 @@ const MarketMap = () => {
                       className="h-full"
                       compact
                       instanceId={`market-map-${row.symbol}`}
+                      isRealtimeConnected={isRealtimeConnected}
+                      isRealtimeSubscribed={Array.isArray(activeRealtimeSymbols) && activeRealtimeSymbols.includes(row.symbol)}
                     />
                   </div>
 

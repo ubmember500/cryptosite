@@ -69,6 +69,19 @@ export const INDICATORS = {
   ATR: 'ATR',         // Average True Range
 };
 
+// Returns appropriate decimal precision for a given price value.
+// Prevents e.g. BTC showing '68,752.30000000' on compact cards.
+const calcPricePrecision = (price) => {
+  const p = Number(price);
+  if (!Number.isFinite(p) || p <= 0) return 2;
+  if (p >= 100) return 2;
+  if (p >= 10) return 3;
+  if (p >= 1) return 4;
+  if (p >= 0.1) return 5;
+  if (p >= 0.01) return 6;
+  return 8;
+};
+
 const KLineChart = ({
   data,
   symbol = 'BTCUSDT',
@@ -1149,11 +1162,15 @@ const KLineChart = ({
 
 
       // Set symbol with precision settings (this triggers getBars)
-      // Dynamic precision: 8 decimals allows chart to show detailed prices for all ranges
+      // Derive precision from last known close price so BTC shows '68,752.30'
+      // not '68,752.30000000', while DOGE still shows enough decimals.
+      const lastCandle = dataRef.current?.[dataRef.current.length - 1];
+      const lastClose = Number(lastCandle?.close ?? 0);
+      const dynamicPrecision = calcPricePrecision(lastClose);
       chart.setSymbol({
         ticker: symbol,
-        pricePrecision: 8, // Show up to 8 decimals for low-priced coins
-        volumePrecision: 2, // Volume with 2 decimals is sufficient
+        pricePrecision: dynamicPrecision,
+        volumePrecision: 2,
       });
       
       const period = mapIntervalToPeriod(interval);

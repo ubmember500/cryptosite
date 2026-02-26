@@ -4,6 +4,8 @@ const http = require('http');
 const app = require('./app');
 const socketService = require('./services/socketService');
 const klineManager = require('./services/klineManager');
+const binanceMarketMapService = require('./services/binanceMarketMapService');
+const bybitMarketMapService = require('./services/bybitMarketMapService');
 const { startAlertEngine, stopAlertEngine } = require('./services/alertEngine');
 const priceWatcher = require('./services/priceWatcher');
 const telegramPolling = require('./services/telegramPolling');
@@ -27,6 +29,10 @@ async function bootstrap() {
 
       await startAlertEngine();
       console.log('⏰ Alert engine started');
+
+      binanceMarketMapService.start();
+      bybitMarketMapService.start();
+      console.log('🗺️  Market map scoring services started (warmup in progress)');
 
       await priceWatcher.start();
       console.log('📊 Price watcher started (WebSocket ticker streams)');
