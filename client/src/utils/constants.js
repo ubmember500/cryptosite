@@ -3,9 +3,10 @@ const DEV_API_FALLBACK = 'http://localhost:5000/api';
 
 const configuredApiBase = import.meta.env.VITE_API_BASE_URL;
 const configuredApiIsLocalhost = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//i.test(String(configuredApiBase || ''));
+const configuredApiIsRelative = /^\//.test(String(configuredApiBase || ''));
 
 export const API_BASE_URL =
-  (import.meta.env.PROD && configuredApiIsLocalhost
+  (import.meta.env.PROD && (configuredApiIsLocalhost || configuredApiIsRelative)
     ? PROD_API_FALLBACK
     : configuredApiBase) ||
   (import.meta.env.PROD ? PROD_API_FALLBACK : DEV_API_FALLBACK);
