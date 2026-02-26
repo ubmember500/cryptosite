@@ -8,9 +8,9 @@ const SUPPORTED_MARKET_MAP_EXCHANGES = ['binance', 'bybit'];
 const DEFAULT_MARKET_MAP_EXCHANGE = 'binance';
 const DEFAULT_EXCHANGE_TYPE = 'futures';
 const DEFAULT_INTERVAL = '5m';
-const DEFAULT_VISIBLE_KLINE_LIMIT = 1000;
+const DEFAULT_VISIBLE_KLINE_LIMIT = 300;
 const MIN_VISIBLE_KLINE_POINTS = 20;
-const VISIBLE_FETCH_CONCURRENCY = 4;
+const VISIBLE_FETCH_CONCURRENCY = 6;
 const CARD_CHANGE_HIGHLIGHT_MS = 12000;
 const VALID_SYMBOL_REGEX = /^[A-Z0-9]+$/;
 const DEFAULT_RANK_REFRESH_MS = 5000;
@@ -570,7 +570,7 @@ export const useMarketMapStore = create((set, get) => ({
       };
     });
 
-    const responses = await mapWithConcurrency(
+    await mapWithConcurrency(
       visible,
       async (row) => {
         try {
@@ -601,67 +601,65 @@ export const useMarketMapStore = create((set, get) => ({
           }
 
           if (klines.length < MIN_VISIBLE_KLINE_POINTS) {
-            return {
-              symbol: row.symbol,
-              klines: null,
-              error: `Insufficient chart data returned for ${row.symbol}`,
-            };
+            throw new Error(`Insufficient chart data returned for ${row.symbol}`);
           }
 
-          return { symbol: row.symbol, klines, error: null };
+          set((state) => {
+            const prevKlines = state.klinesBySymbol[row.symbol] || [];
+            const nextKlines = areKlinesEquivalent(prevKlines, klines) ? prevKlines : klines;
+            const earliestTime = nextKlines.length > 0 ? Number(nextKlines[0].time) : null;
+
+            return {
+              klinesBySymbol: {
+                ...state.klinesBySymbol,
+                [row.symbol]: nextKlines,
+              },
+              chartHistoryBySymbol: {
+                ...state.chartHistoryBySymbol,
+                [row.symbol]: {
+                  earliestTime,
+                  hasMoreHistory: nextKlines.length > 0,
+                  loadingOlder: false,
+                },
+              },
+              cardLoadingBySymbol: {
+                ...state.cardLoadingBySymbol,
+                [row.symbol]: false,
+              },
+              cardErrorBySymbol: {
+                ...state.cardErrorBySymbol,
+                [row.symbol]: null,
+              },
+              dataUpdatedAtBySymbol: {
+                ...state.dataUpdatedAtBySymbol,
+                [row.symbol]: Date.now(),
+              },
+            };
+          });
         } catch (error) {
-          return {
-            symbol: row.symbol,
-            klines: null,
-            error: error?.message || `Failed to load ${row.symbol} chart`,
-          };
+          set((state) => ({
+            cardLoadingBySymbol: {
+              ...state.cardLoadingBySymbol,
+              [row.symbol]: false,
+            },
+            cardErrorBySymbol: {
+              ...state.cardErrorBySymbol,
+              [row.symbol]: error?.message || `Failed to load ${row.symbol} chart`,
+            },
+            chartHistoryBySymbol: {
+              ...state.chartHistoryBySymbol,
+              [row.symbol]: {
+                ...(state.chartHistoryBySymbol[row.symbol] || {}),
+                loadingOlder: false,
+              },
+            },
+          }));
         }
+
+        return null;
       },
       VISIBLE_FETCH_CONCURRENCY
     );
-
-    set((state) => {
-      const nextMap = { ...state.klinesBySymbol };
-      const nextHistory = { ...state.chartHistoryBySymbol };
-      const nextLoading = { ...state.cardLoadingBySymbol };
-      const nextErrors = { ...state.cardErrorBySymbol };
-      const nextUpdatedAt = { ...state.dataUpdatedAtBySymbol };
-
-      responses.forEach((item) => {
-        if (Array.isArray(item.klines) && item.klines.length > 0) {
-          const prevKlines = state.klinesBySymbol[item.symbol] || [];
-          nextMap[item.symbol] = areKlinesEquivalent(prevKlines, item.klines)
-            ? prevKlines
-            : item.klines;
-
-          const effectiveKlines = nextMap[item.symbol] || [];
-          const earliestTime = effectiveKlines.length > 0 ? Number(effectiveKlines[0].time) : null;
-          nextHistory[item.symbol] = {
-            earliestTime,
-            hasMoreHistory: effectiveKlines.length > 0,
-            loadingOlder: false,
-          };
-
-          nextErrors[item.symbol] = null;
-          nextUpdatedAt[item.symbol] = Date.now();
-        } else {
-          nextErrors[item.symbol] = item.error;
-          nextHistory[item.symbol] = {
-            ...(nextHistory[item.symbol] || {}),
-            loadingOlder: false,
-          };
-        }
-        nextLoading[item.symbol] = false;
-      });
-
-      return {
-        klinesBySymbol: nextMap,
-        chartHistoryBySymbol: nextHistory,
-        cardLoadingBySymbol: nextLoading,
-        cardErrorBySymbol: nextErrors,
-        dataUpdatedAtBySymbol: nextUpdatedAt,
-      };
-    });
   },
 
   loadOlderVisibleHistory: async (symbol, beforeTimestampMs) => {

@@ -18,6 +18,7 @@ const MIN_MICRO_ACTIVITY_PERCENT = 0.04;
 const MIN_DISTINCT_PRICE_CHANGES = 3;
 const MAX_LAST_MOVE_AGE_MS = 18000;
 const MIN_ACTIVE_ROWS_FOR_STRICT_MODE = 40;
+const MIN_RECENT_FLOOR_PERCENT = 0.05;
 const FULL_SNAPSHOT_REFRESH_MS = 10000;
 
 // On-demand kline ranking config
@@ -458,13 +459,15 @@ class BinanceMarketMapService {
       const microActivityScore = Number.isFinite(microRange) ? Number(microRange.toFixed(6)) : 0;
       const activityScore = Number(natr.toFixed(6));
 
+      if (recentActivityScore < MIN_RECENT_FLOOR_PERCENT) continue;
+
       const isActiveNow =
         recentActivityScore >= MIN_RECENT_ACTIVITY_PERCENT ||
         microActivityScore >= MIN_MICRO_ACTIVITY_PERCENT ||
         (distinctChanges >= MIN_DISTINCT_PRICE_CHANGES && lastMoveAgeMs <= MAX_LAST_MOVE_AGE_MS);
 
-      // Blend emphasizes current motion while preserving 5m volatility context.
-      const blendedScore = Number((activityScore * 0.55 + recentActivityScore * 0.35 + microActivityScore * 0.10).toFixed(6));
+      // Blend strongly emphasizes current movement while still considering 5m context.
+      const blendedScore = Number((activityScore * 0.25 + recentActivityScore * 0.55 + microActivityScore * 0.20).toFixed(6));
 
       allScoredRows.push({
         symbol,
@@ -485,11 +488,12 @@ class BinanceMarketMapService {
     const scoredRows = activeNowRows.length >= MIN_ACTIVE_ROWS_FOR_STRICT_MODE ? activeNowRows : allScoredRows;
 
     scoredRows.sort((a, b) => {
-      if (b.blendedScore !== a.blendedScore) return b.blendedScore - a.blendedScore;
-      if (b.activityScore !== a.activityScore) return b.activityScore - a.activityScore;
+      if (a.isActiveNow !== b.isActiveNow) return a.isActiveNow ? -1 : 1;
       if (b.recentActivityScore !== a.recentActivityScore) return b.recentActivityScore - a.recentActivityScore;
       if (b.microActivityScore !== a.microActivityScore) return b.microActivityScore - a.microActivityScore;
       if (a.lastMoveAgeMs !== b.lastMoveAgeMs) return a.lastMoveAgeMs - b.lastMoveAgeMs;
+      if (b.blendedScore !== a.blendedScore) return b.blendedScore - a.blendedScore;
+      if (b.activityScore !== a.activityScore) return b.activityScore - a.activityScore;
       if (b.volume24h !== a.volume24h) return b.volume24h - a.volume24h;
       return a.symbol.localeCompare(b.symbol);
     });
