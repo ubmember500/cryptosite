@@ -82,6 +82,77 @@ const calcPricePrecision = (price) => {
   return 8;
 };
 
+// ===========================================================================
+// Indicator tooltip $ currency formatting helpers
+// ===========================================================================
+
+// Indicators whose values are in price (USDT) units — show "$" prefix
+const PRICE_TOOLTIP_INDICATORS = new Set([
+  'MA', 'EMA', 'SMA', 'BBI', 'BOLL', 'SAR', 'DMA', 'AO', 'MACD', 'ATR', 'EMV', 'MTM',
+]);
+// Indicators whose values are in USDT volume (large numbers) — show "$" with compact suffix
+const VOLUME_TOOLTIP_INDICATORS = new Set(['VOL', 'MAVOL', 'OBV', 'PVT']);
+
+/**
+ * Format a price/delta value with a $ prefix and sensible decimal places.
+ * Handles negative MACD-style values: shows "-$0.0012" instead of "$-0.0012".
+ */
+function formatIndicatorPriceValue(value) {
+  if (!Number.isFinite(value)) return 'n/a';
+  const abs = Math.abs(value);
+  const sign = value < 0 ? '-' : '';
+  let decimals;
+  if (abs >= 100) decimals = 2;
+  else if (abs >= 10) decimals = 3;
+  else if (abs >= 1) decimals = 4;
+  else if (abs >= 0.1) decimals = 5;
+  else decimals = 6;
+  return `${sign}$${abs.toFixed(decimals)}`;
+}
+
+/**
+ * Format a USDT volume value with compact suffix (K/M/B/T) and $ prefix.
+ */
+function formatIndicatorVolumeValue(value) {
+  if (!Number.isFinite(value) || value < 0) return 'n/a';
+  if (value >= 1e12) return `$${(value / 1e12).toFixed(3)}T`;
+  if (value >= 1e9)  return `$${(value / 1e9).toFixed(3)}B`;
+  if (value >= 1e6)  return `$${(value / 1e6).toFixed(3)}M`;
+  if (value >= 1e3)  return `$${(value / 1e3).toFixed(2)}K`;
+  return `$${value.toFixed(2)}`;
+}
+
+/**
+ * createTooltipDataSource for price-denominated indicators.
+ * Reads indicator.result at crosshair.dataIndex and formats each figure value with $.
+ */
+function createPriceIndicatorTooltip({ indicator, crosshair }) {
+  const data = indicator.result?.[crosshair.dataIndex];
+  if (!data) return {};
+  const legends = (indicator.figures ?? [])
+    .filter(f => typeof f.title === 'string' && f.title.length > 0)
+    .map(f => ({
+      title: f.title,
+      value: formatIndicatorPriceValue(data[f.key]),
+    }));
+  return legends.length > 0 ? { legends } : {};
+}
+
+/**
+ * createTooltipDataSource for USDT-volume indicators (VOL, OBV, etc.).
+ */
+function createVolumeIndicatorTooltip({ indicator, crosshair }) {
+  const data = indicator.result?.[crosshair.dataIndex];
+  if (!data) return {};
+  const legends = (indicator.figures ?? [])
+    .filter(f => typeof f.title === 'string' && f.title.length > 0)
+    .map(f => ({
+      title: f.title,
+      value: formatIndicatorVolumeValue(data[f.key]),
+    }));
+  return legends.length > 0 ? { legends } : {};
+}
+
 // Register a custom VOL indicator that uses the `turnover` field (USDT-denominated
 // quote volume) when available, falling back to `volume`.  This ensures consistent
 // scale across all exchanges (Binance row[7], Bybit arr[6], OKX arr[6], etc.) and
@@ -143,6 +214,8 @@ const calcPricePrecision = (price) => {
           return result;
         });
       },
+      // Show $ prefix on all VOL tooltip values (volume bar + MA lines)
+      createTooltipDataSource: createVolumeIndicatorTooltip,
     });
   } catch (e) {
     // Silently ignore if already registered or API unavailable
@@ -866,6 +939,23 @@ const KLineChart = ({
       );
 
       if (indicatorId) {
+        // Apply $ currency formatting to tooltip for price/volume indicators
+        if (PRICE_TOOLTIP_INDICATORS.has(indicatorName)) {
+          try {
+            chartRef.current.overrideIndicator({
+              id: indicatorId,
+              createTooltipDataSource: createPriceIndicatorTooltip,
+            });
+          } catch (e) { /* ignore */ }
+        } else if (VOLUME_TOOLTIP_INDICATORS.has(indicatorName)) {
+          try {
+            chartRef.current.overrideIndicator({
+              id: indicatorId,
+              createTooltipDataSource: createVolumeIndicatorTooltip,
+            });
+          } catch (e) { /* ignore */ }
+        }
+
         const indicatorConfig = {
           id: indicatorId,
           name: indicatorName,
