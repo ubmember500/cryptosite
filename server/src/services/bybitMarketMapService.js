@@ -12,6 +12,7 @@ class BybitMarketMapService {
   constructor() {
     this.priceHistoryBySymbol = new Map();
     this.volumeBySymbol = new Map();
+    this.natrBySymbol = new Map(); // instant NATR from 24h high/low — used as fallback score during warmup
     this.lastTickAt = 0;
     this.lastError = null;
     this.isTicking = false;
@@ -109,6 +110,11 @@ class BybitMarketMapService {
           this.volumeBySymbol.set(symbol, volume24h);
         }
 
+        const natr = Number(token?.natr);
+        if (Number.isFinite(natr) && natr >= 0) {
+          this.natrBySymbol.set(symbol, natr);
+        }
+
         if (!Number.isFinite(lastPrice) || lastPrice <= 0) {
           continue;
         }
@@ -131,6 +137,7 @@ class BybitMarketMapService {
         if (!liveSymbols.has(symbol)) {
           this.priceHistoryBySymbol.delete(symbol);
           this.volumeBySymbol.delete(symbol);
+          this.natrBySymbol.delete(symbol);
         }
       }
 
@@ -189,7 +196,11 @@ class BybitMarketMapService {
       const volume24h = Number(this.volumeBySymbol.get(symbol) || 0);
       const activityScore = this.computeFiveMinuteAbsChangePercent(history, nowTs);
       const warmup = !Number.isFinite(activityScore);
-      const finalScore = Number.isFinite(activityScore) ? activityScore : 0;
+
+      // During warmup use instant NATR (24h high-low/price) as proxy score so
+      // volatile coins rank above liquid-but-quiet large-caps like BTC/ETH/SOL.
+      const natrFallback = Number(this.natrBySymbol.get(symbol) || 0);
+      const finalScore = warmup ? natrFallback : activityScore;
 
       const row = {
         symbol,
@@ -219,10 +230,17 @@ class BybitMarketMapService {
       return a.symbol.localeCompare(b.symbol);
     });
 
+    // Sort warmup rows by NATR proxy score desc so volatile coins appear first
+    // even before the 5m ring-buffer has enough history for true scoring.
     warmupRows.sort((a, b) => {
+      if (b.activityScore !== a.activityScore) {
+        return b.activityScore - a.activityScore;
+      }
+
       if (b.volume24h !== a.volume24h) {
         return b.volume24h - a.volume24h;
       }
+
       return a.symbol.localeCompare(b.symbol);
     });
 
