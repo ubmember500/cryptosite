@@ -78,7 +78,7 @@ const MarketTable = () => {
     if (value === null || value === undefined) return 'N/A';
     const isPositive = value >= 0;
     return (
-      <span className={cn('flex items-center gap-1', isPositive ? 'text-green-400' : 'text-red-400')}>
+      <span className={cn('flex items-center gap-1', isPositive ? 'text-success' : 'text-danger')}>
         {isPositive ? <ArrowUp className="h-4 w-4" /> : <ArrowDown className="h-4 w-4" />}
         {Math.abs(value).toFixed(2)}%
       </span>
@@ -87,7 +87,7 @@ const MarketTable = () => {
 
   const SortIcon = ({ columnKey }) => {
     if (sortConfig.key !== columnKey) {
-      return <ChevronUp className="h-4 w-4 text-gray-500 opacity-0 group-hover:opacity-100" />;
+      return <ChevronUp className="h-4 w-4 text-textSecondary opacity-0 group-hover:opacity-100" />;
     }
     return sortConfig.direction === 'asc' ? (
       <ChevronUp className="h-4 w-4 text-blue-400" />

@@ -42,11 +42,11 @@ const ForgotPassword = () => {
 
   if (success) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-900 px-4">
+      <div className="min-h-screen flex items-center justify-center bg-background px-4">
         <div className="w-full max-w-md">
-          <div className="bg-gray-800 border border-gray-700 rounded-xl shadow-xl p-8 text-center">
-            <h1 className="text-3xl font-bold text-gray-200 mb-2">Check your email</h1>
-            <p className="text-gray-400 mb-6">
+          <div className="bg-surface border border-border rounded-xl shadow-xl p-8 text-center">
+            <h1 className="text-3xl font-bold text-textPrimary mb-2">Check your email</h1>
+            <p className="text-textSecondary mb-6">
               {resetLink
                 ? 'Use the link below to reset your password (dev mode).'
                 : 'If an account exists with this email, you will receive a password reset link.'}
@@ -54,7 +54,7 @@ const ForgotPassword = () => {
             {resetLink && (
               <a
                 href={resetLink}
-                className="block mb-6 px-4 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium break-all"
+                className="block mb-6 px-4 py-3 bg-accent hover:bg-accent/80 text-white rounded-lg font-medium break-all"
               >
                 Open reset link
               </a>
@@ -72,12 +72,12 @@ const ForgotPassword = () => {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-900 px-4">
+    <div className="min-h-screen flex items-center justify-center bg-background px-4">
       <div className="w-full max-w-md">
-        <div className="bg-gray-800 border border-gray-700 rounded-xl shadow-xl p-8">
+        <div className="bg-surface border border-border rounded-xl shadow-xl p-8">
           <div className="text-center mb-8">
-            <h1 className="text-3xl font-bold text-gray-200 mb-2">Restore account</h1>
-            <p className="text-gray-400">Enter your email address</p>
+            <h1 className="text-3xl font-bold text-textPrimary mb-2">Restore account</h1>
+            <p className="text-textSecondary">Enter your email address</p>
           </div>
 
           {error && (

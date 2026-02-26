@@ -103,7 +103,7 @@ const Watchlist = () => {
       <Card
         header={
           <div className="flex items-center justify-between">
-            <h3 className="text-lg font-semibold text-gray-200">Watchlist</h3>
+            <h3 className="text-lg font-semibold text-textPrimary">Watchlist</h3>
             <Button
               variant="ghost"
               size="sm"
@@ -116,7 +116,7 @@ const Watchlist = () => {
         }
       >
         {watchlistCoins.length === 0 ? (
-          <div className="text-center py-8 text-gray-400">
+          <div className="text-center py-8 text-textSecondary">
             <p>No coins in watchlist</p>
             <Button
               variant="outline"
@@ -132,7 +132,7 @@ const Watchlist = () => {
             {watchlistCoins.map((item) => (
               <div
                 key={item.coinId}
-                className="flex items-center justify-between p-3 bg-gray-800 rounded-lg hover:bg-gray-750 transition-colors"
+                className="flex items-center justify-between p-3 bg-surfaceHover rounded-lg hover:bg-surfaceHover/70 transition-colors"
               >
                 <div className="flex items-center gap-4 flex-1 min-w-0">
                   {item.coin?.image && (
@@ -143,16 +143,16 @@ const Watchlist = () => {
                     />
                   )}
                   <div className="flex-1 min-w-0">
-                    <div className="text-gray-200 font-medium truncate">
+                    <div className="text-textPrimary font-medium truncate">
                       {item.coin?.name || item.coinSymbol}
                     </div>
-                    <div className="text-sm text-gray-400">
+                    <div className="text-sm text-textSecondary">
                       {item.coinSymbol?.toUpperCase()}
                     </div>
                   </div>
                   <div className="flex items-center gap-4">
                     <div className="text-right">
-                      <div className="text-gray-200 font-medium">
+                      <div className="text-textPrimary font-medium">
                         ${item.currentPrice.toLocaleString(undefined, {
                           minimumFractionDigits: 2,
                           maximumFractionDigits: 2,
@@ -162,8 +162,8 @@ const Watchlist = () => {
                         className={cn(
                           'text-xs',
                           item.priceChange24h >= 0
-                            ? 'text-green-400'
-                            : 'text-red-400'
+                            ? 'text-success'
+                            : 'text-danger'
                         )}
                       >
                         {item.priceChange24h >= 0 ? '+' : ''}
@@ -177,7 +177,7 @@ const Watchlist = () => {
                 </div>
                 <button
                   onClick={() => handleRemoveCoin(item.coinId)}
-                  className="ml-4 p-1 text-gray-400 hover:text-red-400 transition-colors"
+                  className="ml-4 p-1 text-textSecondary hover:text-danger transition-colors"
                 >
                   <X className="h-4 w-4" />
                 </button>
@@ -189,8 +189,8 @@ const Watchlist = () => {
 
       {showAddModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
-          <div className="bg-gray-800 border border-gray-700 rounded-lg p-6 max-w-md w-full">
-            <h3 className="text-lg font-semibold text-gray-200 mb-4">
+          <div className="bg-surface border border-border rounded-lg p-6 max-w-md w-full">
+            <h3 className="text-lg font-semibold text-textPrimary mb-4">
               Add Coin to Watchlist
             </h3>
             <CoinSelector

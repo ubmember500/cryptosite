@@ -44,17 +44,17 @@
   }
   
   ::-webkit-scrollbar-track {
-    background: #0e0f11;
+    background: var(--color-surface-dark);
   }
   
   ::-webkit-scrollbar-thumb {
-    background: #2a2b33;
+    background: var(--color-border);
     border-radius: 9999px;
-    border: 2px solid #0e0f11;
+    border: 2px solid var(--color-surface-dark);
   }
   
   ::-webkit-scrollbar-thumb:hover {
-    background: #3d3f4a;
+    background: var(--color-text-secondary);
   }
   
   /* Selection */

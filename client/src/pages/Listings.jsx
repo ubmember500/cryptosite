@@ -115,11 +115,11 @@ const Listings = () => {
       <Card className="overflow-hidden p-0">
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-border">
-            <thead className="bg-gray-800/80">
+            <thead className="bg-surfaceDark">
               <tr>
                 <th
                   role="columnheader"
-                  className="px-4 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer hover:text-white group"
+                  className="px-4 py-3 text-left text-xs font-medium text-textSecondary uppercase tracking-wider cursor-pointer hover:text-textPrimary group"
                   onClick={() => handleSort('coin')}
                 >
                   <div className="flex items-center gap-1">
@@ -129,7 +129,7 @@ const Listings = () => {
                 </th>
                 <th
                   role="columnheader"
-                  className="px-4 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer hover:text-white group"
+                  className="px-4 py-3 text-left text-xs font-medium text-textSecondary uppercase tracking-wider cursor-pointer hover:text-textPrimary group"
                   onClick={() => handleSort('exchange')}
                 >
                   <div className="flex items-center gap-1">
@@ -139,7 +139,7 @@ const Listings = () => {
                 </th>
                 <th
                   role="columnheader"
-                  className="px-4 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer hover:text-white group"
+                  className="px-4 py-3 text-left text-xs font-medium text-textSecondary uppercase tracking-wider cursor-pointer hover:text-textPrimary group"
                   onClick={() => handleSort('market')}
                 >
                   <div className="flex items-center gap-1">
@@ -149,7 +149,7 @@ const Listings = () => {
                 </th>
                 <th
                   role="columnheader"
-                  className="px-4 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer hover:text-white group"
+                  className="px-4 py-3 text-left text-xs font-medium text-textSecondary uppercase tracking-wider cursor-pointer hover:text-textPrimary group"
                   onClick={() => handleSort('date')}
                 >
                   <div className="flex items-center gap-1">
@@ -168,7 +168,7 @@ const Listings = () => {
                 </tr>
               ) : (
                 sortedItems.map((row) => (
-                  <tr key={row.id} className="hover:bg-gray-800/40">
+                  <tr key={row.id} className="hover:bg-surfaceHover/50">
                     <td className="px-4 py-3 text-sm text-textPrimary">{row.coin}</td>
                     <td className="px-4 py-3 text-sm text-textPrimary">{row.exchange}</td>
                     <td className="px-4 py-3 text-sm text-textPrimary capitalize">{row.market}</td>

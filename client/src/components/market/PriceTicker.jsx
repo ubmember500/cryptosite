@@ -41,7 +41,7 @@ const PriceTicker = () => {
   };
 
   return (
-    <div className="bg-gray-900 border-b border-gray-700 overflow-hidden">
+    <div className="bg-surfaceDark border-b border-border overflow-hidden">
       <div className="flex animate-ticker-scroll">
         <div className="flex gap-8 px-6 py-3">
           {tickerCoins.map((coin) => {
@@ -53,14 +53,14 @@ const PriceTicker = () => {
                 key={coin.id}
                 className="flex items-center gap-2 whitespace-nowrap"
               >
-                <span className="text-gray-400 font-medium">{coin.symbol.toUpperCase()}</span>
-                <span className="text-gray-200 font-semibold">
+                <span className="text-textSecondary font-medium">{coin.symbol.toUpperCase()}</span>
+                <span className="text-textPrimary font-semibold">
                   {formatPrice(currentPrice)}
                 </span>
                 <span
                   className={cn(
                     'flex items-center gap-1 text-xs font-medium',
-                    isPositive ? 'text-green-400' : 'text-red-400'
+                    isPositive ? 'text-success' : 'text-danger'
                   )}
                 >
                   {isPositive ? (
@@ -85,14 +85,14 @@ const PriceTicker = () => {
                 key={`${coin.id}-dup`}
                 className="flex items-center gap-2 whitespace-nowrap"
               >
-                <span className="text-gray-400 font-medium">{coin.symbol.toUpperCase()}</span>
-                <span className="text-gray-200 font-semibold">
+                <span className="text-textSecondary font-medium">{coin.symbol.toUpperCase()}</span>
+                <span className="text-textPrimary font-semibold">
                   {formatPrice(currentPrice)}
                 </span>
                 <span
                   className={cn(
                     'flex items-center gap-1 text-xs font-medium',
-                    isPositive ? 'text-green-400' : 'text-red-400'
+                    isPositive ? 'text-success' : 'text-danger'
                   )}
                 >
                   {isPositive ? (

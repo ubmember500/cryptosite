@@ -54,32 +54,32 @@ const MarketOverview = () => {
   return (
     <Card header="Market Overview">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+        <div className="bg-surfaceHover rounded-lg p-4 border border-border">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-gray-400 text-sm">Total Market Cap</span>
+            <span className="text-textSecondary text-sm">Total Market Cap</span>
             <DollarSign className="h-5 w-5 text-blue-400" />
           </div>
-          <div className="text-xl font-bold text-gray-200">
+          <div className="text-xl font-bold text-textPrimary">
             {formatLargeNumber(marketStats.totalMarketCap)}
           </div>
         </div>
 
-        <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+        <div className="bg-surfaceHover rounded-lg p-4 border border-border">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-gray-400 text-sm">BTC Dominance</span>
+            <span className="text-textSecondary text-sm">BTC Dominance</span>
             <TrendingUp className="h-5 w-5 text-orange-400" />
           </div>
-          <div className="text-xl font-bold text-gray-200">
+          <div className="text-xl font-bold text-textPrimary">
             {marketStats.btcDominance.toFixed(2)}%
           </div>
         </div>
 
-        <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+        <div className="bg-surfaceHover rounded-lg p-4 border border-border">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-gray-400 text-sm">24h Volume</span>
+            <span className="text-textSecondary text-sm">24h Volume</span>
             <BarChart3 className="h-5 w-5 text-green-400" />
           </div>
-          <div className="text-xl font-bold text-gray-200">
+          <div className="text-xl font-bold text-textPrimary">
             {formatLargeNumber(marketStats.totalVolume24h)}
           </div>
         </div>

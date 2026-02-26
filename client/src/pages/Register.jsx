@@ -135,7 +135,7 @@ const Register = () => {
           </form>
 
           <div className="mt-6 text-center">
-            <p className="text-gray-400 text-sm">
+            <p className="text-textSecondary text-sm">
               Already have an account?{' '}
               <Link to={ROUTES.LOGIN} className="text-blue-400 hover:text-blue-300">
                 Sign in
