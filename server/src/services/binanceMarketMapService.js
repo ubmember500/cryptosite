@@ -23,10 +23,59 @@ class BinanceMarketMapService {
     if (this.started) return;
     this.started = true;
 
-    this.tick().catch(() => {});
+    // First tick builds the symbol list, then immediately seed ring buffers
+    // from 1m kline history so rankings have real scores on the first request
+    // instead of sitting in warmup for 5+ minutes after every server restart.
+    this.tick()
+      .then(() => this.seedFromKlines())
+      .catch(() => {});
+
     this.timer = setInterval(() => {
       this.tick().catch(() => {});
     }, SNAPSHOT_INTERVAL_MS);
+  }
+
+  // Retroactively populate ring buffers from the last 8 closed 1m candles
+  // (~7 minutes of history). Each candle close becomes a price snapshot point,
+  // giving computeFiveMinuteAbsChangePercent() enough data to score immediately.
+  async seedFromKlines() {
+    const symbols = Array.from(this.priceHistoryBySymbol.keys());
+    if (symbols.length === 0) return;
+
+    const SEED_CONCURRENCY = 20;
+    const SEED_LIMIT = 8; // 8 × 1m ≈ 7 min — enough to span a 5m window
+
+    let seeded = 0;
+    const nowTs = Date.now();
+
+    const seedSymbol = async (symbol) => {
+      try {
+        const klines = await binanceService.fetchKlines(symbol, 'futures', '1m', SEED_LIMIT);
+        if (!Array.isArray(klines) || klines.length < 2) return;
+
+        const points = klines
+          .map((k) => ({ ts: Number(k.time) * 1000, price: Number(k.close) }))
+          .filter((p) => Number.isFinite(p.ts) && Number.isFinite(p.price) && p.price > 0);
+
+        if (points.length < 2) return;
+
+        const existing = this.priceHistoryBySymbol.get(symbol) || [];
+        const existingTs = new Set(existing.map((p) => Number(p.ts)));
+        const merged = [...points.filter((p) => !existingTs.has(p.ts)), ...existing]
+          .sort((a, b) => a.ts - b.ts);
+
+        this.priceHistoryBySymbol.set(symbol, this.trimHistory(merged, nowTs));
+        seeded += 1;
+      } catch {
+        // Non-fatal — symbol warms up naturally on the next tick
+      }
+    };
+
+    for (let i = 0; i < symbols.length; i += SEED_CONCURRENCY) {
+      await Promise.all(symbols.slice(i, i + SEED_CONCURRENCY).map(seedSymbol));
+    }
+
+    console.log(`[BinanceMarketMap] Seeded ${seeded}/${symbols.length} symbols from 1m klines — rankings live immediately`);
   }
 
   stop() {
