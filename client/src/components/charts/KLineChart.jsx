@@ -122,6 +122,9 @@ const KLineChart = ({
   // in-place WITHOUT resetting the viewport (unlike resetData() which snaps
   // the view back to the latest candle every time).
   const realtimeBarCallbackRef = useRef(null);
+  // Tracks the pricePrecision last applied via setSymbol so we only re-call
+  // it when the precision actually changes (avoids redundant redraws).
+  const appliedPrecisionRef = useRef(null);
 
   // Drawing tools state management
   const [activeDrawingTool, setActiveDrawingTool] = useState(null);
@@ -325,6 +328,9 @@ const KLineChart = ({
 
   useEffect(() => {
     canLoadMoreHistoryRef.current = true;
+    // Reset so the precision-sync effect re-applies correct decimals for the
+    // new symbol (e.g. switching from BTC ~65000 → XRP ~1.44 needs precision 4).
+    appliedPrecisionRef.current = null;
   }, [symbol, interval]);
 
   const handleGetBars = useCallback(async ({ type, timestamp, callback }) => {
@@ -1273,6 +1279,34 @@ const KLineChart = ({
   useEffect(() => {
     dataRef.current = data || [];
   }, [data]);
+
+  // Keep Y-axis precision in sync with the actual price.
+  // At chart init time data may still be empty, so pricePrecision defaults to
+  // 2 (calcPricePrecision(0)). Once real candles arrive the last close may be
+  // in a different bracket (e.g. XRP ~1.44 needs precision 4, not 2). Without
+  // this effect the Y-axis labels all show '1.44' instead of '1.4400 … 1.4450'.
+  useEffect(() => {
+    if (!chartRef.current || !isInitialized) return;
+    if (!Array.isArray(data) || data.length === 0) return;
+
+    const lastCandle = data[data.length - 1];
+    const lastClose = Number(lastCandle?.close ?? 0);
+    if (!Number.isFinite(lastClose) || lastClose <= 0) return;
+
+    const newPrecision = calcPricePrecision(lastClose);
+    if (appliedPrecisionRef.current === newPrecision) return;
+    appliedPrecisionRef.current = newPrecision;
+
+    try {
+      chartRef.current.setSymbol({
+        ticker: symbol,
+        pricePrecision: newPrecision,
+        volumePrecision: 2,
+      });
+    } catch (e) {
+      // ignore – chart may be mid-dispose
+    }
+  }, [data, isInitialized, symbol]);
 
   // Apply realtime updates: when the incoming data list changes (new candle or
   // updated last candle), push the latest candle through the subscribeBar
