@@ -369,9 +369,9 @@ const BinanceMarketTable = ({ onTokenSelect, highlightToken }) => {
                     )}
                   </div>
                 </td>
-                <td className="px-4 py-3 whitespace-nowrap">
-                  <div className="text-textPrimary font-semibold tracking-wide">{token.symbol}</div>
-                  <div className="text-xs mt-0.5 text-textSecondary opacity-50">{token.fullSymbol}</div>
+                <td className="px-1 py-3 whitespace-nowrap">
+                  <div className="text-textPrimary font-bold text-sm leading-tight">{token.symbol}</div>
+                  <div className="text-[11px] mt-0.5 text-textSecondary">{token.fullSymbol}</div>
                 </td>
                 <td className="px-4 py-3 whitespace-nowrap text-right">
                   {formatPercent(token.priceChangePercent24h)}
