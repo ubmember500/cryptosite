@@ -6,16 +6,21 @@ const RETENTION_MS = 7 * 60 * 1000;
 const STALE_AFTER_MS = 45000;
 const MAX_POINTS_PER_SYMBOL = 80;
 const MIN_POINTS_IN_WINDOW = 2;
+const KLINE_NATR_REFRESH_MS = 5 * 60 * 1000; // refresh 5m kline NATR every 5 minutes
+const KLINE_NATR_CANDLES = 2;               // fetch 2×5m candles → ~10-min range
+const KLINE_NATR_CONCURRENCY = 20;
 
 class BinanceMarketMapService {
   constructor() {
     this.priceHistoryBySymbol = new Map();
     this.volumeBySymbol = new Map();
-    this.natrBySymbol = new Map(); // instant NATR from 24h — fallback during warmup
+    this.natrBySymbol = new Map();         // 24h NATR — last-resort fallback
+    this.natr5mKlineBySymbol = new Map();  // 5m kline NATR — immediate non-zero score
     this.lastTickAt = 0;
     this.lastError = null;
     this.isTicking = false;
     this.timer = null;
+    this.klineNatrTimer = null;
     this.started = false;
   }
 
@@ -24,65 +29,78 @@ class BinanceMarketMapService {
     this.started = true;
 
     this.tick()
-      .then(() => this.seedFromKlines())
+      .then(() => this.refreshKlineNATR())
       .catch(() => {});
 
     this.timer = setInterval(() => {
       this.tick().catch(() => {});
     }, SNAPSHOT_INTERVAL_MS);
+
+    this.klineNatrTimer = setInterval(() => {
+      this.refreshKlineNATR().catch(() => {});
+    }, KLINE_NATR_REFRESH_MS);
   }
 
-  // Seed ring buffers from recent 1m klines — inject high AND low per candle
-  // so computeFiveMinuteNATR sees the full price range, not just closes.
-  async seedFromKlines() {
+  // Fetch the last 2×5m candles for every known symbol and compute
+  // NATR = (max_high - min_low) / last_close * 100.
+  // This gives an immediate, accurate, non-zero volatility score on startup
+  // (covers the last ~10 minutes of price action) and refreshes every 5 min.
+  async refreshKlineNATR() {
     const symbols = Array.from(this.priceHistoryBySymbol.keys());
     if (symbols.length === 0) return;
 
-    const SEED_CONCURRENCY = 20;
-    const SEED_LIMIT = 8;
+    let updated = 0;
 
-    let seeded = 0;
-    const nowTs = Date.now();
-
-    const seedSymbol = async (symbol) => {
+    const processSymbol = async (symbol) => {
       try {
-        const klines = await binanceService.fetchKlines(symbol, 'futures', '1m', SEED_LIMIT);
-        if (!Array.isArray(klines) || klines.length < 2) return;
+        const klines = await binanceService.fetchKlines(symbol, 'futures', '5m', KLINE_NATR_CANDLES);
+        if (!Array.isArray(klines) || klines.length < 1) return;
 
-        const points = [];
+        let maxHigh = -Infinity;
+        let minLow = Infinity;
+        let lastClose = null;
+
         for (const k of klines) {
-          const ts = Number(k.time) * 1000;
           const high = Number(k.high);
           const low = Number(k.low);
           const close = Number(k.close);
-          if (!Number.isFinite(ts)) continue;
-          if (Number.isFinite(high) && high > 0) points.push({ ts, price: high });
-          if (Number.isFinite(low) && low > 0) points.push({ ts: ts + 1, price: low });
-          if (Number.isFinite(close) && close > 0) points.push({ ts: ts + 2, price: close });
+          if (Number.isFinite(high) && high > 0) maxHigh = Math.max(maxHigh, high);
+          if (Number.isFinite(low) && low > 0) minLow = Math.min(minLow, low);
+          if (Number.isFinite(close) && close > 0) lastClose = close;
         }
 
-        if (points.length < 2) return;
+        if (
+          maxHigh === -Infinity ||
+          minLow === Infinity ||
+          lastClose === null ||
+          lastClose <= 0
+        ) return;
 
-        const existing = this.priceHistoryBySymbol.get(symbol) || [];
-        const merged = [...points, ...existing].sort((a, b) => a.ts - b.ts);
-        this.priceHistoryBySymbol.set(symbol, this.trimHistory(merged, nowTs));
-        seeded += 1;
+        const natr5m = ((maxHigh - minLow) / lastClose) * 100;
+        if (Number.isFinite(natr5m) && natr5m >= 0) {
+          this.natr5mKlineBySymbol.set(symbol, natr5m);
+          updated += 1;
+        }
       } catch {
-        // Non-fatal
+        // Non-fatal — symbol stays with previous kline NATR or falls back to 24h
       }
     };
 
-    for (let i = 0; i < symbols.length; i += SEED_CONCURRENCY) {
-      await Promise.all(symbols.slice(i, i + SEED_CONCURRENCY).map(seedSymbol));
+    for (let i = 0; i < symbols.length; i += KLINE_NATR_CONCURRENCY) {
+      await Promise.all(symbols.slice(i, i + KLINE_NATR_CONCURRENCY).map(processSymbol));
     }
 
-    console.log(`[BinanceMarketMap] Seeded ${seeded}/${symbols.length} symbols from 1m klines`);
+    console.log(`[BinanceMarketMap] Refreshed 5m kline NATR for ${updated}/${symbols.length} symbols`);
   }
 
   stop() {
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = null;
+    }
+    if (this.klineNatrTimer) {
+      clearInterval(this.klineNatrTimer);
+      this.klineNatrTimer = null;
     }
     this.started = false;
   }
@@ -138,6 +156,7 @@ class BinanceMarketMapService {
           this.priceHistoryBySymbol.delete(symbol);
           this.volumeBySymbol.delete(symbol);
           this.natrBySymbol.delete(symbol);
+          this.natr5mKlineBySymbol.delete(symbol);
         }
       }
 
@@ -194,17 +213,40 @@ class BinanceMarketMapService {
 
     for (const [symbol, history] of this.priceHistoryBySymbol.entries()) {
       const volume24h = Number(this.volumeBySymbol.get(symbol) || 0);
-      const activityScore = this.computeFiveMinuteNATR(history, nowTs);
-      const warmup = !Number.isFinite(activityScore);
 
-      // During warmup use instant NATR (24h high-low/price) as proxy score
-      const natrFallback = Number(this.natrBySymbol.get(symbol) || 0);
-      const finalScore = warmup ? natrFallback : activityScore;
+      // 3-tier fallback for NATR score:
+      //   1. Ring-buffer 5m NATR — live, intra-candle precision (best)
+      //   2. 5m kline NATR       — accurate, available immediately on startup
+      //   3. 24h NATR proxy      — last resort if klines haven't loaded yet
+      const ringNATR = this.computeFiveMinuteNATR(history, nowTs);
+      const klineNATR = this.natr5mKlineBySymbol.get(symbol);
+      const natr24h = Number(this.natrBySymbol.get(symbol) || 0);
+
+      let finalScore;
+      let activityMetric;
+      let warmup;
+
+      if (Number.isFinite(ringNATR)) {
+        // Best: live ring-buffer data
+        finalScore = ringNATR;
+        activityMetric = 'natr5m';
+        warmup = false;
+      } else if (Number.isFinite(klineNATR) && klineNATR >= 0) {
+        // Good: 5m kline-based NATR — non-zero, available right after startup
+        finalScore = klineNATR;
+        activityMetric = 'natr5m_kline';
+        warmup = false;
+      } else {
+        // Fallback: 24h NATR proxy (shown as warmup badge)
+        finalScore = natr24h;
+        activityMetric = 'natr24h_warmup';
+        warmup = true;
+      }
 
       const row = {
         symbol,
         activityScore: Number(finalScore.toFixed(6)),
-        activityMetric: warmup ? 'natr24h_warmup' : 'natr5m',
+        activityMetric,
         volume24h,
         warmup,
       };

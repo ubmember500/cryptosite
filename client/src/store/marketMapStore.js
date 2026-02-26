@@ -12,7 +12,7 @@ const MIN_VISIBLE_KLINE_POINTS = 20;
 const VISIBLE_FETCH_CONCURRENCY = 4;
 const CARD_CHANGE_HIGHLIGHT_MS = 12000;
 const VALID_SYMBOL_REGEX = /^[A-Z0-9]+$/;
-const DEFAULT_RANK_REFRESH_MS = 20000;
+const DEFAULT_RANK_REFRESH_MS = 10000;
 const DEFAULT_CHART_REFRESH_MS = 8000;
 const RANKING_STALE_AFTER_MS = 60000;
 
@@ -345,7 +345,10 @@ export const useMarketMapStore = create((set, get) => ({
         symbol: token?.symbol,
         volume24h: toFiniteNumber(token?.volume24h) ?? 0,
         activityScore: toFiniteNumber(token?.activityScore) ?? 0,
-        activityMetric: token?.warmup ? 'change5m_warmup' : 'change5m',
+        // natr24h_warmup  → warmup badge shown
+        // natr5m_kline    → fully scored (kline-based, no warmup badge)
+        // natr5m          → fully scored (live ring-buffer)
+        activityMetric: token?.activityMetric === 'natr24h_warmup' ? 'change5m_warmup' : 'change5m',
       }))
       .filter(
         (token) =>

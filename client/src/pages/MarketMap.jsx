@@ -254,7 +254,8 @@ const MarketMap = () => {
                       ) : null}
                     </div>
                     <div className="text-xs text-textSecondary mt-1">
-                      {t('5m activity')}
+                      NATR 5m
+                      {row.activityMetric === 'change5m_warmup' ? ' (est)' : ''}
                       : {row.activityScore.toFixed(3)}%
                     </div>
                   </div>
