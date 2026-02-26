@@ -1009,13 +1009,14 @@ const KLineChart = ({
               },
               last: {
                 show: true,
-                compareRule: 'current_open',
-                upColor: themeColors.success,
-                downColor: themeColors.danger,
+                compareRule: 'none',
+                upColor: themeColors.textSecondary,
+                downColor: themeColors.textSecondary,
                 noChangeColor: themeColors.textSecondary,
                 line: {
                   show: true,
-                  style: 'solid',
+                  style: 'dashed',
+                  dashedValue: [4, 4],
                   size: 1,
                 },
                 text: {
@@ -1028,7 +1029,7 @@ const KLineChart = ({
                   paddingBottom: 4,
                   borderStyle: 'solid',
                   borderSize: 1,
-                  borderColor: themeColors.border,
+                  borderColor: themeColors.textSecondary,
                   borderRadius: 4,
                   color: themeColors.textPrimary,
                   family: 'Inter, system-ui, sans-serif',
