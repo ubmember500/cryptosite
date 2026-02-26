@@ -1,4 +1,5 @@
 ﻿const binanceService = require('./binanceService');
+const WebSocket = require('ws');
 
 // Ring-buffer config (live 10-second snapshots for intra-candle precision)
 const SNAPSHOT_INTERVAL_MS = 10000;
@@ -22,7 +23,10 @@ const CACHE_TTL_MS = 30 * 1000;
 const CANDIDATE_COUNT = 200;
 const KLINE_CANDLES = 3;
 const KLINE_CONCURRENCY = 30;
-const MIN_LIVE_SCORED = 50;
+const MIN_LIVE_SCORED = 20;
+const WS_TICKER_URL = 'wss://fstream.binance.com/ws/!ticker@arr';
+const WS_RECONNECT_BASE_MS = 3000;
+const WS_RECONNECT_MAX_MS = 30000;
 
 class BinanceMarketMapService {
   constructor() {
@@ -34,6 +38,10 @@ class BinanceMarketMapService {
     this.isTicking = false;
     this.timer = null;
     this.started = false;
+    this.ws = null;
+    this.wsReconnectTimer = null;
+    this.wsReconnectAttempts = 0;
+    this.lastWsMessageAt = 0;
 
     this.onDemandCache = null;
     this.isComputingOnDemand = false;
@@ -43,13 +51,137 @@ class BinanceMarketMapService {
   start() {
     if (this.started) return;
     this.started = true;
-    this.tick().catch(() => {});
-    this.timer = setInterval(() => { this.tick().catch(() => {}); }, SNAPSHOT_INTERVAL_MS);
+    this.startWsStream();
+    this.timer = setInterval(() => {
+      const nowTs = Date.now();
+      for (const [symbol, history] of this.priceHistoryBySymbol.entries()) {
+        const trimmed = this.trimHistory(history, nowTs);
+        if (trimmed.length === 0) {
+          this.priceHistoryBySymbol.delete(symbol);
+          this.volumeBySymbol.delete(symbol);
+          this.natrBySymbol.delete(symbol);
+          continue;
+        }
+        this.priceHistoryBySymbol.set(symbol, trimmed);
+      }
+    }, SNAPSHOT_INTERVAL_MS);
   }
 
   stop() {
+    if (this.wsReconnectTimer) {
+      clearTimeout(this.wsReconnectTimer);
+      this.wsReconnectTimer = null;
+    }
+    if (this.ws) {
+      try { this.ws.removeAllListeners(); } catch {}
+      try {
+        if (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING) {
+          this.ws.close();
+        }
+      } catch {}
+      this.ws = null;
+    }
     if (this.timer) { clearInterval(this.timer); this.timer = null; }
     this.started = false;
+  }
+
+  startWsStream() {
+    if (!this.started) return;
+    if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
+      return;
+    }
+
+    const ws = new WebSocket(WS_TICKER_URL);
+    this.ws = ws;
+
+    ws.on('open', () => {
+      this.wsReconnectAttempts = 0;
+      this.lastError = null;
+      console.log('[BinanceMarketMap] WS ticker stream connected');
+    });
+
+    ws.on('message', (raw) => {
+      try {
+        const payload = JSON.parse(String(raw));
+        this.handleWsTickerPayload(payload);
+      } catch (error) {
+        this.lastError = error?.message || 'Failed to parse Binance WS payload';
+      }
+    });
+
+    ws.on('error', (error) => {
+      this.lastError = error?.message || 'Binance WS stream error';
+      console.warn('[BinanceMarketMap] WS error:', this.lastError);
+    });
+
+    ws.on('close', () => {
+      if (this.ws === ws) {
+        this.ws = null;
+      }
+      if (this.started) {
+        this.scheduleWsReconnect();
+      }
+    });
+  }
+
+  scheduleWsReconnect() {
+    if (!this.started) return;
+    if (this.wsReconnectTimer) return;
+
+    this.wsReconnectAttempts += 1;
+    const delay = Math.min(WS_RECONNECT_BASE_MS * (2 ** Math.max(0, this.wsReconnectAttempts - 1)), WS_RECONNECT_MAX_MS);
+
+    this.wsReconnectTimer = setTimeout(() => {
+      this.wsReconnectTimer = null;
+      this.startWsStream();
+    }, delay);
+
+    console.warn(`[BinanceMarketMap] WS reconnect scheduled in ${delay}ms`);
+  }
+
+  handleWsTickerPayload(payload) {
+    if (!Array.isArray(payload) || payload.length === 0) return;
+
+    const nowTs = Date.now();
+    for (const item of payload) {
+      const symbol = typeof item?.s === 'string' ? item.s : null;
+      if (!symbol || !symbol.endsWith('USDT')) continue;
+
+      const lastPrice = Number(item?.c);
+      const volume24h = Number(item?.q);
+      const high24h = Number(item?.h);
+      const low24h = Number(item?.l);
+
+      if (Number.isFinite(volume24h) && volume24h > 0) {
+        this.volumeBySymbol.set(symbol, volume24h);
+      }
+
+      if (Number.isFinite(high24h) && Number.isFinite(low24h) && Number.isFinite(lastPrice) && lastPrice > 0) {
+        const instantNatr = ((high24h - low24h) / lastPrice) * 100;
+        if (Number.isFinite(instantNatr) && instantNatr > 0) {
+          this.natrBySymbol.set(symbol, instantNatr);
+        }
+      }
+
+      if (!Number.isFinite(lastPrice) || lastPrice <= 0) continue;
+
+      const existing = this.trimHistory(this.priceHistoryBySymbol.get(symbol), nowTs);
+      const last = existing[existing.length - 1];
+      const shouldAppend = !last || nowTs - Number(last.ts || 0) >= SNAPSHOT_INTERVAL_MS - 1000;
+
+      if (shouldAppend) {
+        existing.push({ ts: nowTs, price: lastPrice });
+      } else {
+        last.price = lastPrice;
+        last.ts = nowTs;
+      }
+
+      this.priceHistoryBySymbol.set(symbol, existing.slice(-MAX_POINTS_PER_SYMBOL));
+    }
+
+    this.lastTickAt = nowTs;
+    this.lastWsMessageAt = nowTs;
+    this.lastError = null;
   }
 
   async tick() {
@@ -264,12 +396,37 @@ class BinanceMarketMapService {
   }
 
   async getRanking({ limit } = {}) {
-    // Always use on-demand kline-based ranking.
-    // The ring buffer approach is fundamentally flawed: discrete lastPrice snapshots
-    // at 10s intervals miss intra-candle high/low swings, producing NATR ≈ 0 for most
-    // tokens. This causes a volume-based tiebreaker where BTC/ETH/SOL always win.
-    // Real OHLC kline data always has high >= low, giving true 5m volatility.
-    this.start(); // keep background tick for diagnostics only
+    // Prefer real-time WS-based 5m volatility ranking.
+    // Fallback to on-demand kline/24h ranking only when live stream is unavailable.
+    this.start();
+
+    const nowTs = Date.now();
+    const { scoredRows, scoredCount } = this.getRankingFromBuffer();
+    const hasFreshWsFeed = this.lastWsMessageAt > 0 && nowTs - this.lastWsMessageAt <= STALE_AFTER_MS;
+
+    if (hasFreshWsFeed && scoredCount >= MIN_LIVE_SCORED) {
+      const max = Number.isFinite(Number(limit)) && Number(limit) > 0 ? Number(limit) : scoredRows.length;
+      console.log(
+        `[BinanceMarketMap] getRanking -> live ws path, ${scoredRows.length} scored, top: ` +
+        scoredRows.slice(0, 3).map((r) => `${r.symbol}=${r.activityScore.toFixed(3)}%`).join(', ')
+      );
+      return {
+        rows: scoredRows.slice(0, max),
+        totalCount: scoredRows.length,
+        scoredCount: scoredRows.length,
+        warmupRatio: 1,
+        isStale: false,
+        updatedAt: this.lastTickAt ? new Date(this.lastTickAt).toISOString() : new Date().toISOString(),
+        lastError: null,
+        contract: {
+          type: '5m-natr',
+          formula: '(highest_5m - lowest_5m) / last_price * 100',
+          windowMinutes: 5,
+          sampleIntervalMs: SNAPSHOT_INTERVAL_MS,
+          minPointsInWindow: MIN_POINTS_IN_WINDOW,
+        },
+      };
+    }
 
     const computed = await this.computeOnDemandRanking();
     if (!computed) {
