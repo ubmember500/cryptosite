@@ -128,28 +128,28 @@ const MarketMap = () => {
   );
 
   return (
-    <div className="h-screen overflow-hidden bg-background text-textPrimary px-3 py-3 md:px-4 md:py-4">
+    <div className="h-screen overflow-hidden bg-background text-textPrimary px-2 py-1 md:px-3 md:py-2">
       <div className="h-full w-full max-w-none flex flex-col min-h-0">
-        <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
           <button
             type="button"
             onClick={() => navigate(ROUTES.MARKET)}
-            className="group flex items-center gap-2.5 transition-all"
+            className="group flex items-center gap-1.5 transition-all"
             title="Go to Market"
           >
-            <div className="bg-accent/10 p-1.5 rounded-lg border border-accent/20 group-hover:bg-accent/20 transition-colors">
-              <TrendingUp className="h-6 w-6 text-accent" />
+            <div className="bg-accent/10 p-1 rounded-md border border-accent/20 group-hover:bg-accent/20 transition-colors">
+              <TrendingUp className="h-4 w-4 text-accent" />
             </div>
-            <span className="text-2xl font-bold bg-gradient-to-r from-blue-400 to-indigo-500 bg-clip-text text-transparent">
+            <span className="text-lg font-bold bg-gradient-to-r from-blue-400 to-indigo-500 bg-clip-text text-transparent leading-none">
               CryptoAlerts
             </span>
           </button>
           <UserAccountMenu />
         </div>
 
-        <div className="flex justify-center mb-2">
-          <div className="flex items-center gap-8 flex-wrap justify-center">
-            <div className="flex items-center gap-2">
+        <div className="flex justify-center mt-0.5 mb-1">
+          <div className="flex items-center gap-3 flex-wrap justify-center">
+            <div className="flex items-center gap-1">
               {[
                 { key: 'binance', label: 'Binance', enabled: true },
                 { key: 'bybit', label: 'Bybit', enabled: true },
@@ -164,7 +164,7 @@ const MarketMap = () => {
                   }}
                   disabled={!exchange.enabled}
                   className={[
-                    'px-3 py-1.5 rounded border text-sm',
+                    'px-2 py-0.5 rounded border text-[11px] leading-4',
                     !exchange.enabled
                       ? 'border-border text-textSecondary opacity-60 cursor-not-allowed'
                       : '',
@@ -178,14 +178,14 @@ const MarketMap = () => {
               ))}
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1">
               {[3, 6, 8, 9, 12, 16].map((count) => (
                 <button
                   key={count}
                   type="button"
                   onClick={() => setChartCount(count)}
                   className={[
-                    'px-3 py-1.5 rounded border text-sm',
+                    'px-2 py-0.5 rounded border text-[11px] leading-4',
                     selectedCount === count
                       ? 'border-accent text-accent bg-accent/10'
                       : 'border-border text-textSecondary hover:text-textPrimary hover:bg-surfaceHover',
@@ -198,7 +198,7 @@ const MarketMap = () => {
           </div>
         </div>
 
-        <div className="mt-4 text-sm text-textSecondary">
+        <div className="mt-1 text-xs text-textSecondary leading-4">
           {loading ? t('Loading market activity...') : `${rankedSymbols.length} ${t('ranked symbols')}`}
           {isRefreshing || isRankingRefresh || isHydratingVisible ? ` • ${t('Refreshing...')}` : ''}
           {lastUpdated ? ` • ${t('Updated')}: ${new Date(lastUpdated).toLocaleTimeString()}` : ''}
@@ -210,10 +210,10 @@ const MarketMap = () => {
         </div>
 
         {error ? (
-          <div className="mt-4 text-danger text-sm">{error}</div>
+          <div className="mt-2 text-danger text-xs">{error}</div>
         ) : null}
 
-        <div className="mt-3 flex-1 min-h-0 overflow-hidden">
+        <div className="mt-1.5 flex-1 min-h-0 overflow-hidden">
           <div className="h-full grid gap-2" style={gridStyle}>
           {visibleSymbols.map((row, index) => (
             (() => {
