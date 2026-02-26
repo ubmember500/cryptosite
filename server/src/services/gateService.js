@@ -488,11 +488,12 @@ async function fetchKlines(symbol, exchangeType, interval = '15m', limit = 500, 
       }
       
       const klines = rawList.map((item, index) => {
-        let tsSeconds, open, high, low, close, volume;
+        let tsSeconds, open, high, low, close, volume, turnover = 0;
         
         // Handle both array format and object format
         if (Array.isArray(item)) {
           // Array format: [ ts, vol, close, high, low, open, amount ]
+          // amount (item[6]) = quote USDT volume
           if (item.length < 6) {
             console.error(`[Gate.io] Candle at index ${index} has insufficient length (${item.length}):`, item);
             throw new Error(`Invalid candle at index ${index}: expected at least 6 elements, got ${item.length}`);
@@ -504,6 +505,7 @@ async function fetchKlines(symbol, exchangeType, interval = '15m', limit = 500, 
           low = parseFloat(item[4]);
           close = parseFloat(item[2]);
           volume = parseFloat(item[1]) || 0;
+          turnover = parseFloat(item[6]) || 0;
         } else if (typeof item === 'object' && item !== null) {
           // Object format: { t: timestamp, o: open, h: high, l: low, c: close, v: volume }
           // Also handle { time, open, high, low, close, volume } format
@@ -513,6 +515,7 @@ async function fetchKlines(symbol, exchangeType, interval = '15m', limit = 500, 
           low = parseFloat(item.l || item.low);
           close = parseFloat(item.c || item.close);
           volume = parseFloat(item.v || item.volume || item.vol) || 0;
+          turnover = parseFloat(item.amount || item.quoteVol || item.quoteVolume) || 0;
         } else {
           console.error(`[Gate.io] Candle at index ${index} is neither array nor object:`, item);
           throw new Error(`Invalid candle at index ${index}: unexpected format`);
@@ -524,7 +527,7 @@ async function fetchKlines(symbol, exchangeType, interval = '15m', limit = 500, 
           });
           throw new Error(`Invalid kline at index ${index}: non-finite values`);
         }
-        return { time: tsSeconds, open, high, low, close, volume };
+        return { time: tsSeconds, open, high, low, close, volume, turnover };
       });
 
       // Gate returns oldest first (chronological) - already in correct order

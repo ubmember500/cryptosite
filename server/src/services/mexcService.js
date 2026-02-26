@@ -485,10 +485,12 @@ async function fetchKlines(symbol, exchangeType, interval = '15m', limit = 500, 
           const low = parseFloat(arr[3]);
           const close = parseFloat(arr[4]);
           const volume = parseFloat(arr[5]) || 0;
+          // arr[7] = quoteAssetVolume (USDT turnover) for MEXC spot
+          const turnover = parseFloat(arr[7]) || 0;
           if (!Number.isFinite(tsSeconds) || !Number.isFinite(open) || !Number.isFinite(high) || !Number.isFinite(low) || !Number.isFinite(close)) {
-            throw new Error(`Invalid kline at index ${index}`);
+            throw new Error(`Invalid candle at index ${index}`);
           }
-          return { time: tsSeconds, open, high, low, close, volume };
+          return { time: tsSeconds, open, high, low, close, volume, turnover };
         });
       } else {
         // Futures format: { success: true, code: 0, data: [{ open, close, high, low, vol, time(seconds) }] }

@@ -118,7 +118,8 @@ const fetchBybitKlinesDirect = async (symbol, exchangeType = 'futures', interval
         const low = parseFloat(arr[3]);
         const close = parseFloat(arr[4]);
         const volume = parseFloat(arr[5]) || 0;
-        return { time, open, high, low, close, volume };
+        const turnover = parseFloat(arr[6]) || 0;
+        return { time, open, high, low, close, volume, turnover };
       });
       klines.reverse();
       return klines;
@@ -707,6 +708,7 @@ const fetchBinanceFuturesKlinesDirect = async (
       low: Number(row[3]),
       close: Number(row[4]),
       volume: Number(row[5]),
+      turnover: Number(row[7]) || 0,
     }))
     .filter(
       (row) =>

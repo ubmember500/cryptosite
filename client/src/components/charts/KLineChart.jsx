@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { init, dispose } from 'klinecharts';
+import { init, dispose, registerIndicator } from 'klinecharts';
 import { registerCustomShapeOverlays } from './overlays/customShapeOverlays';
 import { cn } from '../../utils/cn';
 import LoadingSpinner from '../common/LoadingSpinner';
@@ -82,6 +82,73 @@ const calcPricePrecision = (price) => {
   return 8;
 };
 
+// Register a custom VOL indicator that uses the `turnover` field (USDT-denominated
+// quote volume) when available, falling back to `volume`.  This ensures consistent
+// scale across all exchanges (Binance row[7], Bybit arr[6], OKX arr[6], etc.) and
+// fixes the issue where volume looked different across timeframes.
+// Registered once at module load so every chart instance shares the same definition.
+(function registerCustomVolIndicator() {
+  try {
+    registerIndicator({
+      name: 'VOL',
+      shortName: 'VOL',
+      series: 'volume',
+      calcParams: [5, 10, 20],
+      shouldFormatBigNumber: true,
+      precision: 0,
+      minValue: 0,
+      regenerateFigures: (params) => {
+        const maFigures = params.map((p, i) => ({
+          key: `ma${i + 1}`,
+          title: `MA${p}: `,
+          type: 'line',
+        }));
+        maFigures.push({
+          key: 'volume',
+          title: 'VOLUME: ',
+          type: 'bar',
+          baseValue: 0,
+          styles: ({ data }) => {
+            const cur = data?.current;
+            if (!cur) return {};
+            return {
+              color: cur.close >= cur.open
+                ? 'rgba(38, 166, 154, 0.9)'
+                : 'rgba(239, 83, 80, 0.9)',
+            };
+          },
+        });
+        return maFigures;
+      },
+      calc: (dataList, indicator) => {
+        const { calcParams: params } = indicator;
+        const volSums = new Array(params.length).fill(0);
+        return dataList.map((kLineData, i) => {
+          // Prefer USDT turnover (quote volume); fall back to base-asset volume
+          const vol = (kLineData.turnover != null && kLineData.turnover > 0)
+            ? kLineData.turnover
+            : (kLineData.volume ?? 0);
+          const result = { volume: vol, open: kLineData.open, close: kLineData.close };
+          params.forEach((p, idx) => {
+            volSums[idx] += vol;
+            if (i >= p - 1) {
+              result[`ma${idx + 1}`] = volSums[idx] / p;
+              volSums[idx] -= (
+                (dataList[i - (p - 1)].turnover != null && dataList[i - (p - 1)].turnover > 0)
+                  ? dataList[i - (p - 1)].turnover
+                  : (dataList[i - (p - 1)].volume ?? 0)
+              );
+            }
+          });
+          return result;
+        });
+      },
+    });
+  } catch (e) {
+    // Silently ignore if already registered or API unavailable
+  }
+}());
+
 const KLineChart = ({
   data,
   symbol = 'BTCUSDT',
@@ -114,6 +181,9 @@ const KLineChart = ({
     lastClose: null,
   });
   const pendingResetRafRef = useRef(null);
+  // Set to true when interval changes so the next data update does a full
+  // resetData() (replacing all candles) rather than just pushing the latest candle.
+  const pendingIntervalChangeRef = useRef(false);
   const onLoadMoreHistoryRef = useRef(onLoadMoreHistory);
   const hasMoreHistoryRef = useRef(hasMoreHistory);
   const canLoadMoreHistoryRef = useRef(true);
@@ -136,6 +206,10 @@ const KLineChart = ({
   // Indicators state management
   const [indicators, setIndicators] = useState([]); // Store indicator configs: [{ id, name, params, visible, isStack }]
   const indicatorsRef = useRef([]); // Ref for cleanup access
+  // intervalRef keeps the current interval accessible inside callbacks (like
+  // handleGetBars) that are wrapped in useCallback without re-creating them on
+  // every interval change – avoiding unnecessary chart re-initialisation.
+  const intervalRef = useRef(interval);
   const [showIndicatorsModal, setShowIndicatorsModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [showCreateAlertModal, setShowCreateAlertModal] = useState(false);
@@ -262,6 +336,7 @@ const KLineChart = ({
       const low = typeof candle.low === 'string' ? parseFloat(candle.low) : Number(candle.low);
       const close = typeof candle.close === 'string' ? parseFloat(candle.close) : Number(candle.close);
       const volume = typeof candle.volume === 'string' ? parseFloat(candle.volume) : Number(candle.volume || 0);
+      const turnover = typeof candle.turnover === 'string' ? parseFloat(candle.turnover) : Number(candle.turnover || 0);
 
       // Validate data
       if (
@@ -302,6 +377,7 @@ const KLineChart = ({
         low,
         close,
         volume,
+        turnover,
       });
     });
 
@@ -331,6 +407,13 @@ const KLineChart = ({
     // Reset so the precision-sync effect re-applies correct decimals for the
     // new symbol (e.g. switching from BTC ~65000 → XRP ~1.44 needs precision 4).
     appliedPrecisionRef.current = null;
+    // Also reset data signature so the realtime-update effect applies the new
+    // interval's candles even if the array length happens to be identical.
+    lastAppliedDataRef.current = { count: 0, lastTime: null, lastClose: null };
+    intervalRef.current = interval;
+    // Mark that the next data update needs a full resetData() to replace all
+    // historical candles for the new interval (not just the latest candle).
+    pendingIntervalChangeRef.current = true;
   }, [symbol, interval]);
 
   const handleGetBars = useCallback(async ({ type, timestamp, callback }) => {
@@ -348,7 +431,7 @@ const KLineChart = ({
           type,
           timestamp,
           symbol,
-          interval,
+          interval: intervalRef.current,
         });
         const transformedOlder = transformDataForKLineChart(olderCandles || []);
         if (transformedOlder.length === 0) {
@@ -383,7 +466,22 @@ const KLineChart = ({
       forward: canLoadMoreHistoryRef.current && !!onLoadMoreHistoryRef.current,
       backward: false,
     });
-  }, [interval, symbol, transformDataForKLineChart]);
+  }, [symbol, transformDataForKLineChart]);
+
+  // When interval changes (but symbol stays the same) update the period label
+  // and reload data without destroying and re-creating the chart instance.
+  // This preserves user-added indicators, drawings, and scroll position.
+  useEffect(() => {
+    if (!chartRef.current || !isInitialized) return;
+    try {
+      const period = mapIntervalToPeriod(interval);
+      chartRef.current.setPeriod({ span: period.span, type: period.type });
+      chartRef.current.resetData();
+    } catch (e) {
+      // ignore – chart may be mid-dispose
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [interval, isInitialized]);
 
   // ==================== Drawing Tools Functions ====================
   
@@ -1254,7 +1352,7 @@ const KLineChart = ({
       console.error('[KLineChart] Error initializing chart:', error);
       setIsInitialized(false);
     }
-  }, [symbol, interval, handleGetBars]); // Re-initialize when symbol or interval changes
+  }, [symbol, handleGetBars]); // Re-initialize only when symbol changes; interval changes are handled by the separate period-update effect
 
   // Resize chart when container size changes (window resize, layout change, different monitor resolution)
   // klinecharts uses container.clientWidth/clientHeight; calling resize() recaches bounding and redraws.
@@ -1350,15 +1448,16 @@ const KLineChart = ({
       if (!chartRef.current) return;
       try {
         const pushCallback = realtimeBarCallbackRef.current;
-        if (pushCallback) {
+        if (pushCallback && !pendingIntervalChangeRef.current) {
           // Push only the latest candle — viewport stays where the user left it.
           const transformed = transformDataForKLineChart(dataRef.current);
           const latest = transformed[transformed.length - 1];
           if (latest) pushCallback(latest);
         } else {
-          // subscribeBar callback not yet available (race before first init load
-          // completes). Fall back to resetData() — acceptable on first render
-          // because the user hasn't had a chance to scroll anywhere yet.
+          // Full reload: either subscribeBar callback not yet available (race
+          // before first init load), or the interval just changed and we need to
+          // replace ALL historical candles for the new timeframe.
+          pendingIntervalChangeRef.current = false;
           chartRef.current.resetData();
         }
       } catch (error) {

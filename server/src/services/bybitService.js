@@ -509,10 +509,11 @@ async function fetchKlines(symbol, exchangeType, interval = '15m', limit = 500, 
         const low = parseFloat(arr[3]);
         const close = parseFloat(arr[4]);
         const volume = parseFloat(arr[5]) || 0;
+        const turnover = parseFloat(arr[6]) || 0;
         if (!Number.isFinite(time) || !Number.isFinite(open) || !Number.isFinite(high) || !Number.isFinite(low) || !Number.isFinite(close)) {
           throw new Error(`Invalid kline at index ${index}`);
         }
-        return { time, open, high, low, close, volume };
+        return { time, open, high, low, close, volume, turnover };
       });
 
       // Bybit returns newest first; we need chronological order

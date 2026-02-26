@@ -492,7 +492,7 @@ async function fetchKlines(symbol, exchangeType, interval = '15m', limit = 500, 
       }
 
       const klines = rawList.map((item, index) => {
-        let tsSeconds, open, high, low, close, volume;
+        let tsSeconds, open, high, low, close, volume, turnover = 0;
         
         // Handle both array format and object format
         if (Array.isArray(item)) {
@@ -508,6 +508,8 @@ async function fetchKlines(symbol, exchangeType, interval = '15m', limit = 500, 
           low = parseFloat(item[3]);
           close = parseFloat(item[4]);
           volume = parseFloat(item[5]) || 0;
+          // item[6] = quoteVolume (USDT turnover)
+          turnover = parseFloat(item[6]) || 0;
         } else if (typeof item === 'object' && item !== null) {
           // Object format: { ts, o, h, l, c, v } or { time, open, high, low, close, volume }
           const tsMs = typeof item.ts === 'string' ? parseInt(item.ts, 10) : (item.ts || item.time || item.timestamp);
@@ -517,6 +519,7 @@ async function fetchKlines(symbol, exchangeType, interval = '15m', limit = 500, 
           low = parseFloat(item.l || item.low);
           close = parseFloat(item.c || item.close);
           volume = parseFloat(item.v || item.volume || item.baseVol) || 0;
+          turnover = parseFloat(item.quoteVol || item.quoteVolume || item.quoteAssetVol) || 0;
         } else {
           console.error(`[Bitget] Candle at index ${index} is neither array nor object:`, item);
           throw new Error(`Invalid candle at index ${index}: unexpected format`);
@@ -528,7 +531,7 @@ async function fetchKlines(symbol, exchangeType, interval = '15m', limit = 500, 
           });
           throw new Error(`Invalid kline at index ${index}: non-finite values`);
         }
-        return { time: tsSeconds, open, high, low, close, volume };
+        return { time: tsSeconds, open, high, low, close, volume, turnover };
       });
 
       // Bitget returns data in chronological order (oldest first) - NO NEED TO REVERSE!
