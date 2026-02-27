@@ -11,6 +11,15 @@ import { ROUTES } from '../utils/constants';
 const CARD_HIGHLIGHT_MS = 12000;
 const CARD_STALE_MS = 45000;
 
+const formatCompactVolume = (value) => {
+  const numberValue = Number(value);
+  if (!Number.isFinite(numberValue) || numberValue <= 0) return '0';
+  if (numberValue >= 1e9) return `${(numberValue / 1e9).toFixed(2)}B`;
+  if (numberValue >= 1e6) return `${(numberValue / 1e6).toFixed(2)}M`;
+  if (numberValue >= 1e3) return `${(numberValue / 1e3).toFixed(1)}K`;
+  return numberValue.toFixed(0);
+};
+
 const getGridLayout = (count) => {
   if (count === 3) return { columns: 3, rows: 1 };
   if (count === 6) return { columns: 3, rows: 2 };
@@ -225,49 +234,24 @@ const MarketMap = () => {
               const hasData = symbolData.length > 0;
               const historyMeta = chartHistoryBySymbol[row.symbol] || {};
               const cardError = !hasData ? (cardErrorBySymbol[row.symbol] || null) : null;
-              const changedAt = Number(changedAtBySymbol[row.symbol] || 0);
-              const isRecentlyChanged = changedAt > 0 && Date.now() - changedAt < CARD_HIGHLIGHT_MS;
-              const dataUpdatedAt = Number(dataUpdatedAtBySymbol[row.symbol] || 0);
-              const isStaleData = hasData && dataUpdatedAt > 0 && Date.now() - dataUpdatedAt > CARD_STALE_MS;
+              const latestVolume = hasData ? Number(symbolData[symbolData.length - 1]?.volume || 0) : 0;
+              const formattedVolume = formatCompactVolume(latestVolume);
 
               return (
                 <div
                   key={row.symbol}
-                  className={[
-                    'rounded border bg-surface p-1.5 transition-colors h-full min-h-0 flex flex-col',
-                    isRecentlyChanged
-                      ? 'border-accent/70 shadow-[0_0_0_1px_rgba(59,130,246,0.35)]'
-                      : 'border-border',
-                  ].join(' ')}
+                  className="rounded border border-border bg-surface p-1.5 transition-colors h-full min-h-0 flex flex-col"
                 >
                   <div className="px-0.5 pb-0.5">
-                    <div className="text-[10px] text-textSecondary leading-3">#{index + 1}</div>
-                    <div className="font-medium text-sm leading-4 flex items-center gap-1.5">
-                      <span>{row.symbol}</span>
-                      {row.activityMetric === 'change5m_warmup' ? (
-                        <span className="text-[9px] px-1 py-0.5 rounded border border-border text-textSecondary leading-3">
-                          {t('Warmup')}
-                        </span>
-                      ) : null}
-                      {isRecentlyChanged ? (
-                        <span className="text-[9px] px-1 py-0.5 rounded border border-accent/60 text-accent leading-3">
-                          {t('Active now')}
-                        </span>
-                      ) : null}
-                      {isStaleData ? (
-                        <span className="text-[9px] px-1 py-0.5 rounded border border-warning/60 text-warning leading-3">
-                          {t('Stale')}
-                        </span>
-                      ) : null}
-                    </div>
-                    <div className="text-[10px] text-textSecondary mt-0.5 leading-3">
-                      NATR 5m
-                      {row.activityMetric === 'change5m_warmup' ? ' (est)' : ''}
-                      : {row.activityScore.toFixed(3)}%
-                    </div>
+                    <div className="font-medium text-sm leading-4 truncate">{row.symbol}</div>
                   </div>
 
-                  <div className="flex-1 min-h-0">
+                  <div className="flex-1 min-h-0 relative">
+                    <div className="absolute left-2 top-2 z-20 pointer-events-none select-none">
+                      <div className="text-[10px] leading-3 text-textSecondary">NATR: {row.activityScore.toFixed(3)}%</div>
+                      <div className="text-[10px] leading-3 text-textSecondary">VOL: {formattedVolume}</div>
+                    </div>
+
                     <KLineChart
                       data={symbolData}
                       symbol={row.symbol}
@@ -278,11 +262,13 @@ const MarketMap = () => {
                       error={cardError}
                       className="h-full"
                       compact
+                      hideCompactHeader
                       instanceId={`market-map-${row.symbol}`}
                       isRealtimeConnected={isRealtimeConnected}
                       isRealtimeSubscribed={Array.isArray(activeRealtimeSymbols) && activeRealtimeSymbols.includes(row.symbol)}
                       hasMoreHistory={!!historyMeta.hasMoreHistory}
                       showVolumeIndicator
+                      stackVolumeInMainPane
                       showCenterWatermark
                       watermarkText={row.symbol.replace(/(USDT|USDC|USD|BUSD|FDUSD|TUSD|USDE)$/i, '')}
                       watermarkOpacity={0.08}

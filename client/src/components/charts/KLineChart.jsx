@@ -234,9 +234,11 @@ const KLineChart = ({
   hasMoreHistory = false,
   onLoadMoreHistory,
   showVolumeIndicator = false,
+  stackVolumeInMainPane = false,
   showCenterWatermark = false,
   watermarkText = '',
   watermarkOpacity = 0.08,
+  hideCompactHeader = false,
 }) => {
   const chartContainerRef = useRef(null);
   const chartRef = useRef(null);
@@ -369,6 +371,7 @@ const KLineChart = ({
   // Available timeframes for the selector (must match mapIntervalToPeriod keys)
   const TIMEFRAMES = ['1s', '5s', '15s', '1m', '5m', '15m', '30m', '1h', '4h', '1d'];
   const isTimeframeLeft = timeframePosition === 'left';
+  const shouldShowHeader = !(compact && hideCompactHeader);
   const explicitAlertPrice = useMemo(() => {
     const value = Number(alertCurrentPrice);
     return Number.isFinite(value) && value > 0 ? String(value) : '';
@@ -1477,11 +1480,11 @@ const KLineChart = ({
       return;
     }
 
-    const indicatorId = addIndicator(INDICATORS.VOL, { isStack: false });
+    const indicatorId = addIndicator(INDICATORS.VOL, { isStack: !!stackVolumeInMainPane });
     if (indicatorId) {
       autoVolumeIndicatorIdRef.current = indicatorId;
     }
-  }, [isInitialized, showVolumeIndicator, addIndicator, removeIndicator]);
+  }, [isInitialized, showVolumeIndicator, stackVolumeInMainPane, addIndicator, removeIndicator]);
 
   // Resize chart when container size changes (window resize, layout change, different monitor resolution)
   // klinecharts uses container.clientWidth/clientHeight; calling resize() recaches bounding and redraws.
@@ -1769,69 +1772,71 @@ const KLineChart = ({
       {/* Center - Chart Container */}
       <div className="flex-1 flex flex-col min-w-0 relative">
         {/* Chart header: full (symbol + Live + timeframes) or compact (symbol • interval • Live only); compact header clickable to "choose" chart */}
-        <div
-          className={cn(
-            "flex items-center border-b border-border bg-surface flex-shrink-0",
-            compact
-              ? "justify-between gap-2 px-2 py-2 rounded-t-lg min-h-[36px]"
-              : isTimeframeLeft
-                ? "justify-start gap-3 px-3 py-2.5 rounded-t-xl"
-                : "justify-between gap-4 px-3 py-2.5 rounded-t-xl",
-            compact && onHeaderClick && "cursor-pointer hover:bg-surfaceHover select-none"
-          )}
-          onClick={compact && onHeaderClick ? (e) => { e.stopPropagation(); onHeaderClick(); } : undefined}
-          role={compact && onHeaderClick ? "button" : undefined}
-          aria-label={compact && onHeaderClick ? "Select this chart to change token" : undefined}
-          title={compact && onHeaderClick ? "Click to choose this chart, then pick a token from the list" : undefined}
-        >
-          <div className={cn("flex items-center gap-2 min-w-0", !compact && !isTimeframeLeft && "flex-1", compact && "flex-1")}>
-            <span className={cn("font-medium text-textPrimary truncate", compact ? "text-xs" : "text-sm")}>
-              {symbol}
-              {interval && <span className="text-textSecondary font-normal"> • {interval}</span>}
-            </span>
-            <RealtimeIndicator
-              isConnected={isRealtimeConnected}
-              isSubscribed={isRealtimeSubscribed}
-            />
-            {compact && onHeaderClick && (
-              <span className="text-[10px] text-textSecondary whitespace-nowrap ml-1">Click to change token</span>
+        {shouldShowHeader && (
+          <div
+            className={cn(
+              "flex items-center border-b border-border bg-surface flex-shrink-0",
+              compact
+                ? "justify-between gap-2 px-2 py-2 rounded-t-lg min-h-[36px]"
+                : isTimeframeLeft
+                  ? "justify-start gap-3 px-3 py-2.5 rounded-t-xl"
+                  : "justify-between gap-4 px-3 py-2.5 rounded-t-xl",
+              compact && onHeaderClick && "cursor-pointer hover:bg-surfaceHover select-none"
+            )}
+            onClick={compact && onHeaderClick ? (e) => { e.stopPropagation(); onHeaderClick(); } : undefined}
+            role={compact && onHeaderClick ? "button" : undefined}
+            aria-label={compact && onHeaderClick ? "Select this chart to change token" : undefined}
+            title={compact && onHeaderClick ? "Click to choose this chart, then pick a token from the list" : undefined}
+          >
+            <div className={cn("flex items-center gap-2 min-w-0", !compact && !isTimeframeLeft && "flex-1", compact && "flex-1")}>
+              <span className={cn("font-medium text-textPrimary truncate", compact ? "text-xs" : "text-sm")}>
+                {symbol}
+                {interval && <span className="text-textSecondary font-normal"> • {interval}</span>}
+              </span>
+              <RealtimeIndicator
+                isConnected={isRealtimeConnected}
+                isSubscribed={isRealtimeSubscribed}
+              />
+              {compact && onHeaderClick && (
+                <span className="text-[10px] text-textSecondary whitespace-nowrap ml-1">Click to change token</span>
+              )}
+            </div>
+            {!compact && onTimeframeChange && (
+              <div className={cn("flex items-center", isTimeframeLeft && "ml-1") }>
+                <div className="flex flex-wrap gap-1">
+                  {TIMEFRAMES.map((tf) => (
+                    <button
+                      key={tf}
+                      type="button"
+                      onClick={() => onTimeframeChange(tf)}
+                      className={cn(
+                        'px-2.5 py-1 text-xs font-medium rounded-md transition-colors',
+                        interval === tf
+                          ? 'bg-accent text-white'
+                          : 'text-textSecondary hover:bg-surfaceHover hover:text-textPrimary'
+                      )}
+                    >
+                      {tf}
+                    </button>
+                  ))}
+                </div>
+                <div className="ml-2 pl-2 border-l border-border flex items-center">
+                  <IndicatorsButton
+                    activeIndicatorsCount={indicators.length}
+                    onClick={() => setShowIndicatorsModal(!showIndicatorsModal)}
+                    isOpen={showIndicatorsModal}
+                    className="h-7 w-8 rounded-md"
+                  />
+                </div>
+              </div>
+            )}
+            {!compact && headerRightActions && (
+              <div className="ml-auto pl-3 flex items-center">
+                {headerRightActions}
+              </div>
             )}
           </div>
-          {!compact && onTimeframeChange && (
-            <div className={cn("flex items-center", isTimeframeLeft && "ml-1") }>
-              <div className="flex flex-wrap gap-1">
-                {TIMEFRAMES.map((tf) => (
-                  <button
-                    key={tf}
-                    type="button"
-                    onClick={() => onTimeframeChange(tf)}
-                    className={cn(
-                      'px-2.5 py-1 text-xs font-medium rounded-md transition-colors',
-                      interval === tf
-                        ? 'bg-accent text-white'
-                        : 'text-textSecondary hover:bg-surfaceHover hover:text-textPrimary'
-                    )}
-                  >
-                    {tf}
-                  </button>
-                ))}
-              </div>
-              <div className="ml-2 pl-2 border-l border-border flex items-center">
-                <IndicatorsButton
-                  activeIndicatorsCount={indicators.length}
-                  onClick={() => setShowIndicatorsModal(!showIndicatorsModal)}
-                  isOpen={showIndicatorsModal}
-                  className="h-7 w-8 rounded-md"
-                />
-              </div>
-            </div>
-          )}
-          {!compact && headerRightActions && (
-            <div className="ml-auto pl-3 flex items-center">
-              {headerRightActions}
-            </div>
-          )}
-        </div>
+        )}
         {/* Chart Settings Modal */}
         <ChartSettingsModal
           isOpen={showSettingsModal}
@@ -1861,7 +1866,11 @@ const KLineChart = ({
           <div
             ref={chartContainerRef}
             id={chartIdRef.current}
-            className={cn("w-full h-full overflow-hidden border border-border border-t-0", compact ? "rounded-b-lg" : "rounded-b-xl")}
+            className={cn(
+              "w-full h-full overflow-hidden border border-border",
+              shouldShowHeader && "border-t-0",
+              compact ? (shouldShowHeader ? "rounded-b-lg" : "rounded-lg") : (shouldShowHeader ? "rounded-b-xl" : "rounded-xl")
+            )}
             style={{
               minHeight: 0,
               minWidth: 0,
