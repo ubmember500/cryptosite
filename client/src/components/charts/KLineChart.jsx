@@ -373,6 +373,24 @@ const KLineChart = ({
   const TIMEFRAMES = ['1s', '5s', '15s', '1m', '5m', '15m', '30m', '1h', '4h', '1d'];
   const isTimeframeLeft = timeframePosition === 'left';
   const shouldShowHeader = !(compact && hideCompactHeader);
+  const applyCompactViewportDefaults = useCallback(() => {
+    const chart = chartRef.current;
+    if (!chart || !compact) return;
+
+    try {
+      if (typeof chart.setOffsetRightDistance === 'function') {
+        chart.setOffsetRightDistance(6);
+      }
+      if (typeof chart.setBarSpace === 'function') {
+        chart.setBarSpace(4);
+      }
+      if (typeof chart.scrollToRealTime === 'function') {
+        chart.scrollToRealTime();
+      }
+    } catch {
+      // noop for incompatible klinecharts builds
+    }
+  }, [compact]);
   const inlineVolumeBars = useMemo(() => {
     if (!showInlineVolumeOverlay || !Array.isArray(data) || data.length === 0) return [];
 
@@ -578,7 +596,7 @@ const KLineChart = ({
 
     const transformedData = transformDataForKLineChart(dataRef.current);
     callback(transformedData, {
-      forward: canLoadMoreHistoryRef.current && !!onLoadMoreHistoryRef.current,
+      forward: false,
       backward: false,
     });
   }, [symbol, transformDataForKLineChart]);
@@ -592,6 +610,7 @@ const KLineChart = ({
       const period = mapIntervalToPeriod(interval);
       chartRef.current.setPeriod({ span: period.span, type: period.type });
       chartRef.current.resetData();
+      requestAnimationFrame(() => applyCompactViewportDefaults());
     } catch (e) {
       // ignore – chart may be mid-dispose
     }
@@ -1428,6 +1447,8 @@ const KLineChart = ({
         type: period.type,
       });
 
+      applyCompactViewportDefaults();
+
       setIsInitialized(true);
 
       // Resize once after layout so chart picks up container dimensions (fixes init with 0 size)
@@ -1485,7 +1506,7 @@ const KLineChart = ({
       console.error('[KLineChart] Error initializing chart:', error);
       setIsInitialized(false);
     }
-  }, [symbol, handleGetBars]); // Re-initialize only when symbol changes; interval changes are handled by the separate period-update effect
+  }, [symbol, handleGetBars, applyCompactViewportDefaults]); // Re-initialize only when symbol changes; interval changes are handled by the separate period-update effect
 
   // Auto-enable bottom volume indicator when requested (e.g. Market Map cards).
   useEffect(() => {
@@ -1521,6 +1542,7 @@ const KLineChart = ({
       if (chartRef.current) {
         try {
           chartRef.current.resize();
+          applyCompactViewportDefaults();
         } catch (e) {
           // ignore
         }
@@ -1528,7 +1550,7 @@ const KLineChart = ({
     });
     resizeObserver.observe(container);
     return () => resizeObserver.disconnect();
-  }, [isInitialized]);
+  }, [isInitialized, applyCompactViewportDefaults]);
 
   // Update data ref when data prop changes
   useEffect(() => {
@@ -1616,6 +1638,7 @@ const KLineChart = ({
           // replace ALL historical candles for the new timeframe.
           pendingIntervalChangeRef.current = false;
           chartRef.current.resetData();
+          requestAnimationFrame(() => applyCompactViewportDefaults());
         }
       } catch (error) {
         console.error('[KLineChart] Error applying realtime update:', error);
@@ -1628,7 +1651,7 @@ const KLineChart = ({
         pendingResetRafRef.current = null;
       }
     };
-  }, [data, isInitialized, transformDataForKLineChart]);
+  }, [data, isInitialized, transformDataForKLineChart, applyCompactViewportDefaults]);
 
   // When chart initialized before first API response, trigger one initial load.
   // Also recover from race where a realtime candle arrives before history and chart gets stuck on 1 candle.
@@ -1643,6 +1666,7 @@ const KLineChart = ({
 
       if (currentData.length === 0) {
         chartRef.current.resetData();
+        requestAnimationFrame(() => applyCompactViewportDefaults());
         return;
       }
 
@@ -1653,11 +1677,12 @@ const KLineChart = ({
 
       if (shouldRecoverFromBootstrapRace) {
         chartRef.current.resetData();
+        requestAnimationFrame(() => applyCompactViewportDefaults());
       }
     } catch (error) {
       console.error('[KLineChart] Error applying initial data:', error);
     }
-  }, [data, isInitialized]);
+  }, [data, isInitialized, applyCompactViewportDefaults]);
 
   // Loading state
   if (loading && !isInitialized) {

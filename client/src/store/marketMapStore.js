@@ -8,9 +8,10 @@ const SUPPORTED_MARKET_MAP_EXCHANGES = ['binance', 'bybit'];
 const DEFAULT_MARKET_MAP_EXCHANGE = 'binance';
 const DEFAULT_EXCHANGE_TYPE = 'futures';
 const DEFAULT_INTERVAL = '5m';
-const DEFAULT_VISIBLE_KLINE_LIMIT = 300;
-const MIN_VISIBLE_KLINE_POINTS = 20;
+const DEFAULT_VISIBLE_KLINE_LIMIT = 720;
+const MIN_VISIBLE_KLINE_POINTS = 3;
 const VISIBLE_FETCH_CONCURRENCY = 6;
+const PREFETCH_VISIBLE_MULTIPLIER = 3;
 const CARD_CHANGE_HIGHLIGHT_MS = 12000;
 const VALID_SYMBOL_REGEX = /^[A-Z0-9]+$/;
 const DEFAULT_RANK_REFRESH_MS = 5000;
@@ -603,6 +604,16 @@ export const useMarketMapStore = create((set, get) => ({
     const visible = get().visibleSymbols;
     if (!Array.isArray(visible) || visible.length === 0) return;
 
+    const rankedSymbols = Array.isArray(get().rankedSymbols) ? get().rankedSymbols : [];
+    const selectedCount = Number(get().selectedCount || visible.length || DEFAULT_COUNT);
+    const prefetchLimit = Math.max(
+      selectedCount,
+      Math.min(rankedSymbols.length || selectedCount, selectedCount * PREFETCH_VISIBLE_MULTIPLIER)
+    );
+    const targets = (rankedSymbols.length > 0 ? rankedSymbols.slice(0, prefetchLimit) : visible)
+      .filter((row) => row?.symbol);
+    const visibleSet = new Set(visible.map((row) => row.symbol));
+
     const selectedExchange = SUPPORTED_MARKET_MAP_EXCHANGES.includes(get().selectedExchange)
       ? get().selectedExchange
       : DEFAULT_MARKET_MAP_EXCHANGE;
@@ -612,11 +623,18 @@ export const useMarketMapStore = create((set, get) => ({
       const nextLoading = { ...state.cardLoadingBySymbol };
       const nextErrors = { ...state.cardErrorBySymbol };
       const nextHistoryReady = { ...state.historyReadyBySymbol };
+
       visible.forEach((row) => {
-        nextLoading[row.symbol] = true;
+        const cached = Array.isArray(state.klinesBySymbol[row.symbol])
+          ? state.klinesBySymbol[row.symbol]
+          : [];
+        const hasUsableCache = cached.length >= MIN_VISIBLE_KLINE_POINTS;
+
+        nextLoading[row.symbol] = !hasUsableCache;
         nextErrors[row.symbol] = null;
-        nextHistoryReady[row.symbol] = false;
+        nextHistoryReady[row.symbol] = hasUsableCache;
       });
+
       return {
         cardLoadingBySymbol: nextLoading,
         cardErrorBySymbol: nextErrors,
@@ -625,8 +643,14 @@ export const useMarketMapStore = create((set, get) => ({
     });
 
     await mapWithConcurrency(
-      visible,
+      targets,
       async (row) => {
+        const isVisibleCard = visibleSet.has(row.symbol);
+        const cachedBeforeFetch = get().klinesBySymbol[row.symbol] || [];
+        if (!isVisibleCard && Array.isArray(cachedBeforeFetch) && cachedBeforeFetch.length >= MIN_VISIBLE_KLINE_POINTS) {
+          return null;
+        }
+
         try {
           const response = await api.get(`/market/${selectedExchange}/klines`, {
             params: {
@@ -706,6 +730,25 @@ export const useMarketMapStore = create((set, get) => ({
             };
           });
         } catch (error) {
+          const fallbackCached = get().klinesBySymbol[row.symbol] || [];
+          if (!isVisibleCard || (Array.isArray(fallbackCached) && fallbackCached.length >= MIN_VISIBLE_KLINE_POINTS)) {
+            set((state) => ({
+              cardLoadingBySymbol: {
+                ...state.cardLoadingBySymbol,
+                [row.symbol]: false,
+              },
+              cardErrorBySymbol: {
+                ...state.cardErrorBySymbol,
+                [row.symbol]: null,
+              },
+              historyReadyBySymbol: {
+                ...state.historyReadyBySymbol,
+                [row.symbol]: true,
+              },
+            }));
+            return null;
+          }
+
           set((state) => ({
             cardLoadingBySymbol: {
               ...state.cardLoadingBySymbol,
