@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { Search, Sun, Moon } from 'lucide-react';
 import { useMarketStore } from '../../store/marketStore';
 import { useLanguageStore } from '../../store/languageStore';
@@ -10,7 +10,6 @@ import i18n from '../../i18n';
 
 const Navbar = () => {
   const { t } = useTranslation();
-  const location = useLocation();
   const theme = useThemeStore((state) => state.theme);
   const toggleTheme = useThemeStore((state) => state.toggleTheme);
   const searchCoins = useMarketStore((state) => state.searchCoins);
@@ -19,9 +18,6 @@ const Navbar = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const navigate = useNavigate();
-
-  const isMarketPage = location.pathname === '/market' || location.pathname.startsWith('/market/');
-  const showThemeToggle = !isMarketPage;
 
   const handleLanguageChange = (lang) => {
     setLanguage(lang);
@@ -95,8 +91,7 @@ const Navbar = () => {
             </button>
           </div>
 
-          {showThemeToggle && (
-            <button
+          <button
               type="button"
               onClick={toggleTheme}
               className="p-1.5 rounded-full text-textSecondary hover:text-textPrimary focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-surface focus:ring-accent"
@@ -108,7 +103,6 @@ const Navbar = () => {
                 <Moon className="h-5 w-5" />
               )}
             </button>
-          )}
 
           <UserAccountMenu chipClassName="border-border bg-surface px-2.5 py-1.5 hover:bg-surfaceHover focus:ring-accent focus:ring-offset-2 focus:ring-offset-surface" />
         </div>
