@@ -67,10 +67,6 @@ const UserAccountMenu = ({ chipClassName = '', menuClassName = '' }) => {
             <List className="h-4 w-4 shrink-0" style={{ color: '#34d399' }} />
             {t('Listings')}
           </Link>
-          <Link to="/subscription" onClick={closeMenu} className="flex items-center gap-3 px-4 py-2.5 text-sm text-textPrimary hover:bg-surfaceHover transition-colors">
-            <CreditCard className="h-4 w-4 shrink-0" style={{ color: '#f472b6' }} />
-            {t('Subscription')}
-          </Link>
           <Link to="/wall-scanner" onClick={closeMenu} className="flex items-center gap-3 px-4 py-2.5 text-sm text-textPrimary hover:bg-surfaceHover transition-colors">
             <Layers className="h-4 w-4 shrink-0" style={{ color: '#fb923c' }} />
             {t('Wall Scanner')}
@@ -86,6 +82,10 @@ const UserAccountMenu = ({ chipClassName = '', menuClassName = '' }) => {
           <Link to="/telegram-bots" onClick={closeMenu} className="flex items-center gap-3 px-4 py-2.5 text-sm text-textPrimary hover:bg-surfaceHover transition-colors">
             <Bot className="h-4 w-4 shrink-0" style={{ color: '#38bdf8' }} />
             {t('Telegram Bots')}
+          </Link>
+          <Link to="/subscription" onClick={closeMenu} className="flex items-center gap-3 px-4 py-2.5 text-sm text-textPrimary hover:bg-surfaceHover transition-colors">
+            <CreditCard className="h-4 w-4 shrink-0" style={{ color: '#f472b6' }} />
+            {t('Subscription')}
           </Link>
           <a
             href="https://t.me/ManagerAlan"
