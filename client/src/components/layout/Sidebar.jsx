@@ -1,7 +1,7 @@
 import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { NavLink, Link } from 'react-router-dom';
-import { Bell, TrendingUp, User, LogOut, Bot, CreditCard, List, Layers } from 'lucide-react';
+import { Bell, TrendingUp, User, LogOut, Bot, CreditCard, List, Layers, LayoutGrid } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
 import { cn } from '../../utils/cn';
 
@@ -15,6 +15,7 @@ const Sidebar = () => {
     { path: '/listings', labelKey: 'Listings', icon: List },
     { path: '/wall-scanner', labelKey: 'Wall Scanner', icon: Layers },
     { path: '/market', labelKey: 'Market', icon: TrendingUp },
+    { path: '/market-map', labelKey: 'Market Map', icon: LayoutGrid },
     { path: '/telegram-bots', labelKey: 'Telegram Bots', icon: Bot },
     { path: '/subscription', labelKey: 'Subscription', icon: CreditCard },
   ];

@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useNavigate } from 'react-router-dom';
-import { User, Bell, CreditCard, LogOut, TrendingUp, Bot, List, Layers } from 'lucide-react';
+import { User, Bell, CreditCard, LogOut, TrendingUp, Bot, List, Layers, LayoutGrid } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
 import UserAccountChip from './UserAccountChip';
 
@@ -78,6 +78,10 @@ const UserAccountMenu = ({ chipClassName = '', menuClassName = '' }) => {
           <Link to="/market" onClick={closeMenu} className="flex items-center gap-3 px-4 py-2.5 text-sm text-textPrimary hover:bg-surfaceHover transition-colors">
             <TrendingUp className="h-4 w-4 text-textSecondary shrink-0" />
             {t('Market')}
+          </Link>
+          <Link to="/market-map" onClick={closeMenu} className="flex items-center gap-3 px-4 py-2.5 text-sm text-textPrimary hover:bg-surfaceHover transition-colors">
+            <LayoutGrid className="h-4 w-4 text-textSecondary shrink-0" />
+            {t('Market Map')}
           </Link>
           <Link to="/telegram-bots" onClick={closeMenu} className="flex items-center gap-3 px-4 py-2.5 text-sm text-textPrimary hover:bg-surfaceHover transition-colors">
             <Bot className="h-4 w-4 text-textSecondary shrink-0" />
