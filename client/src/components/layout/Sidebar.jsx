@@ -10,14 +10,14 @@ const Sidebar = () => {
   const logout = useAuthStore((state) => state.logout);
 
   const navItems = [
-    { path: '/account', labelKey: 'Account', icon: User },
-    { path: '/alerts', labelKey: 'Alerts', icon: Bell },
-    { path: '/listings', labelKey: 'Listings', icon: List },
-    { path: '/wall-scanner', labelKey: 'Wall Scanner', icon: Layers },
-    { path: '/market', labelKey: 'Market', icon: TrendingUp },
-    { path: '/market-map', labelKey: 'Market Map', icon: LayoutGrid },
-    { path: '/telegram-bots', labelKey: 'Telegram Bots', icon: Bot },
-    { path: '/subscription', labelKey: 'Subscription', icon: CreditCard },
+    { path: '/account',       labelKey: 'Account',       icon: User,       iconColor: '#60a5fa' }, // blue-400
+    { path: '/alerts',        labelKey: 'Alerts',        icon: Bell,       iconColor: '#fbbf24' }, // amber-400
+    { path: '/listings',      labelKey: 'Listings',      icon: List,       iconColor: '#34d399' }, // emerald-400
+    { path: '/wall-scanner',  labelKey: 'Wall Scanner',  icon: Layers,     iconColor: '#fb923c' }, // orange-400
+    { path: '/market',        labelKey: 'Market',        icon: TrendingUp, iconColor: '#22d3ee' }, // cyan-400
+    { path: '/market-map',    labelKey: 'Market Map',    icon: LayoutGrid, iconColor: '#a78bfa' }, // violet-400
+    { path: '/telegram-bots', labelKey: 'Telegram Bots', icon: Bot,        iconColor: '#38bdf8' }, // sky-400
+    { path: '/subscription',  labelKey: 'Subscription',  icon: CreditCard, iconColor: '#f472b6' }, // pink-400
   ];
 
   return (
@@ -51,7 +51,7 @@ const Sidebar = () => {
                 )
               }
             >
-              <item.icon className="mr-3 h-5 w-5" />
+              <item.icon className="mr-3 h-5 w-5 shrink-0" style={{ color: item.iconColor }} />
               {t(item.labelKey)}
             </NavLink>
           ))}
@@ -68,14 +68,14 @@ const Sidebar = () => {
             )
           }
         >
-          <List className="mr-3 h-5 w-5" />
+          <List className="mr-3 h-5 w-5 shrink-0" style={{ color: '#34d399' }} />
           {t('Listings')}
         </NavLink>
         <button
           onClick={logout}
           className="flex items-center w-full px-4 py-2 text-sm font-medium text-textSecondary rounded-md hover:bg-surfaceHover hover:text-textPrimary transition-colors"
         >
-          <LogOut className="mr-3 h-5 w-5" />
+          <LogOut className="mr-3 h-5 w-5 shrink-0" style={{ color: '#f87171' }} />
           {t('Logout')}
         </button>
       </div>

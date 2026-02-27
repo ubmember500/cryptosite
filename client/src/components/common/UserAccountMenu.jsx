@@ -56,35 +56,35 @@ const UserAccountMenu = ({ chipClassName = '', menuClassName = '' }) => {
           </div>
 
           <Link to="/account" onClick={closeMenu} className="flex items-center gap-3 px-4 py-2.5 text-sm text-textPrimary hover:bg-surfaceHover transition-colors">
-            <User className="h-4 w-4 text-textSecondary shrink-0" />
+            <User className="h-4 w-4 shrink-0" style={{ color: '#60a5fa' }} />
             {t('Account')}
           </Link>
           <Link to="/alerts" onClick={closeMenu} className="flex items-center gap-3 px-4 py-2.5 text-sm text-textPrimary hover:bg-surfaceHover transition-colors">
-            <Bell className="h-4 w-4 text-textSecondary shrink-0" />
+            <Bell className="h-4 w-4 shrink-0" style={{ color: '#fbbf24' }} />
             {t('Alerts')}
           </Link>
           <Link to="/listings" onClick={closeMenu} className="flex items-center gap-3 px-4 py-2.5 text-sm text-textPrimary hover:bg-surfaceHover transition-colors">
-            <List className="h-4 w-4 text-textSecondary shrink-0" />
+            <List className="h-4 w-4 shrink-0" style={{ color: '#34d399' }} />
             {t('Listings')}
           </Link>
           <Link to="/subscription" onClick={closeMenu} className="flex items-center gap-3 px-4 py-2.5 text-sm text-textPrimary hover:bg-surfaceHover transition-colors">
-            <CreditCard className="h-4 w-4 text-textSecondary shrink-0" />
+            <CreditCard className="h-4 w-4 shrink-0" style={{ color: '#f472b6' }} />
             {t('Subscription')}
           </Link>
           <Link to="/wall-scanner" onClick={closeMenu} className="flex items-center gap-3 px-4 py-2.5 text-sm text-textPrimary hover:bg-surfaceHover transition-colors">
-            <Layers className="h-4 w-4 text-textSecondary shrink-0" />
+            <Layers className="h-4 w-4 shrink-0" style={{ color: '#fb923c' }} />
             {t('Wall Scanner')}
           </Link>
           <Link to="/market" onClick={closeMenu} className="flex items-center gap-3 px-4 py-2.5 text-sm text-textPrimary hover:bg-surfaceHover transition-colors">
-            <TrendingUp className="h-4 w-4 text-textSecondary shrink-0" />
+            <TrendingUp className="h-4 w-4 shrink-0" style={{ color: '#22d3ee' }} />
             {t('Market')}
           </Link>
           <Link to="/market-map" onClick={closeMenu} className="flex items-center gap-3 px-4 py-2.5 text-sm text-textPrimary hover:bg-surfaceHover transition-colors">
-            <LayoutGrid className="h-4 w-4 text-textSecondary shrink-0" />
+            <LayoutGrid className="h-4 w-4 shrink-0" style={{ color: '#a78bfa' }} />
             {t('Market Map')}
           </Link>
           <Link to="/telegram-bots" onClick={closeMenu} className="flex items-center gap-3 px-4 py-2.5 text-sm text-textPrimary hover:bg-surfaceHover transition-colors">
-            <Bot className="h-4 w-4 text-textSecondary shrink-0" />
+            <Bot className="h-4 w-4 shrink-0" style={{ color: '#38bdf8' }} />
             {t('Telegram Bots')}
           </Link>
           <a
@@ -104,7 +104,7 @@ const UserAccountMenu = ({ chipClassName = '', menuClassName = '' }) => {
             onClick={handleLogout}
             className="flex items-center gap-3 w-full px-4 py-2.5 text-sm text-textPrimary hover:bg-surfaceHover transition-colors text-left"
           >
-            <LogOut className="h-4 w-4 text-textSecondary shrink-0" />
+            <LogOut className="h-4 w-4 shrink-0" style={{ color: '#f87171' }} />
             {t('Logout')}
           </button>
         </div>
