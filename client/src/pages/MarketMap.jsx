@@ -282,6 +282,10 @@ const MarketMap = () => {
                       isRealtimeConnected={isRealtimeConnected}
                       isRealtimeSubscribed={Array.isArray(activeRealtimeSymbols) && activeRealtimeSymbols.includes(row.symbol)}
                       hasMoreHistory={!!historyMeta.hasMoreHistory}
+                      showVolumeIndicator
+                      showCenterWatermark
+                      watermarkText={row.symbol.replace(/(USDT|USDC|USD|BUSD|FDUSD|TUSD|USDE)$/i, '')}
+                      watermarkOpacity={0.08}
                       onLoadMoreHistory={async ({ timestamp }) => {
                         return loadOlderVisibleHistory(row.symbol, timestamp);
                       }}

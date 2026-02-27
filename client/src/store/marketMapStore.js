@@ -166,6 +166,8 @@ export const useMarketMapStore = create((set, get) => ({
   chartHistoryBySymbol: {},
   cardLoadingBySymbol: {},
   cardErrorBySymbol: {},
+  historyReadyBySymbol: {},
+  queuedRealtimeBySymbol: {},
   dataUpdatedAtBySymbol: {},
   changedAtBySymbol: {},
   slotChangedAtByIndex: {},
@@ -336,6 +338,16 @@ export const useMarketMapStore = create((set, get) => ({
         ? state.klinesBySymbol[symbol]
         : [];
 
+      const isHistoryReady = Boolean(state.historyReadyBySymbol[symbol]);
+      if (!isHistoryReady) {
+        return {
+          queuedRealtimeBySymbol: {
+            ...state.queuedRealtimeBySymbol,
+            [symbol]: kline,
+          },
+        };
+      }
+
       const existingIndex = currentData.findIndex((candle) => Number(candle?.time) === Number(kline.time));
       let nextData;
 
@@ -357,6 +369,10 @@ export const useMarketMapStore = create((set, get) => ({
         },
         cardErrorBySymbol: {
           ...state.cardErrorBySymbol,
+          [symbol]: null,
+        },
+        queuedRealtimeBySymbol: {
+          ...state.queuedRealtimeBySymbol,
           [symbol]: null,
         },
         dataUpdatedAtBySymbol: {
@@ -397,6 +413,8 @@ export const useMarketMapStore = create((set, get) => ({
       chartHistoryBySymbol: {},
       cardLoadingBySymbol: {},
       cardErrorBySymbol: {},
+      historyReadyBySymbol: {},
+      queuedRealtimeBySymbol: {},
       dataUpdatedAtBySymbol: {},
       changedAtBySymbol: {},
       slotChangedAtByIndex: {},
@@ -472,6 +490,8 @@ export const useMarketMapStore = create((set, get) => ({
         chartHistoryBySymbol: {},
         cardLoadingBySymbol: {},
         cardErrorBySymbol: {},
+        historyReadyBySymbol: {},
+        queuedRealtimeBySymbol: {},
         dataUpdatedAtBySymbol: {},
         changedAtBySymbol: {},
         slotChangedAtByIndex: {},
@@ -508,7 +528,12 @@ export const useMarketMapStore = create((set, get) => ({
     const { selectedCount, rankedSymbols, visibleSymbols: previousVisible, changedAtBySymbol } = get();
 
     if (!Array.isArray(rankedSymbols) || rankedSymbols.length === 0) {
-      set({ visibleSymbols: [], lastUpdated: new Date().toISOString() });
+      set({
+        visibleSymbols: [],
+        historyReadyBySymbol: {},
+        queuedRealtimeBySymbol: {},
+        lastUpdated: new Date().toISOString(),
+      });
       return [];
     }
 
@@ -538,11 +563,37 @@ export const useMarketMapStore = create((set, get) => ({
       }
     });
 
-    set({
-      visibleSymbols: rows,
-      changedAtBySymbol: nextChanged,
-      slotChangedAtByIndex: nextSlotChanged,
-      lastUpdated: new Date().toISOString(),
+    const visibleSet = new Set(rows.map((row) => row.symbol));
+
+    set((state) => {
+      const nextHistoryReadyBySymbol = {};
+      Object.entries(state.historyReadyBySymbol || {}).forEach(([symbol, isReady]) => {
+        if (visibleSet.has(symbol)) {
+          nextHistoryReadyBySymbol[symbol] = Boolean(isReady);
+        }
+      });
+
+      const nextQueuedRealtimeBySymbol = {};
+      Object.entries(state.queuedRealtimeBySymbol || {}).forEach(([symbol, queued]) => {
+        if (visibleSet.has(symbol) && queued) {
+          nextQueuedRealtimeBySymbol[symbol] = queued;
+        }
+      });
+
+      rows.forEach((row) => {
+        if (!(row.symbol in nextHistoryReadyBySymbol)) {
+          nextHistoryReadyBySymbol[row.symbol] = false;
+        }
+      });
+
+      return {
+        visibleSymbols: rows,
+        changedAtBySymbol: nextChanged,
+        slotChangedAtByIndex: nextSlotChanged,
+        historyReadyBySymbol: nextHistoryReadyBySymbol,
+        queuedRealtimeBySymbol: nextQueuedRealtimeBySymbol,
+        lastUpdated: new Date().toISOString(),
+      };
     });
 
     return rows;
@@ -560,13 +611,16 @@ export const useMarketMapStore = create((set, get) => ({
     set((state) => {
       const nextLoading = { ...state.cardLoadingBySymbol };
       const nextErrors = { ...state.cardErrorBySymbol };
+      const nextHistoryReady = { ...state.historyReadyBySymbol };
       visible.forEach((row) => {
         nextLoading[row.symbol] = true;
         nextErrors[row.symbol] = null;
+        nextHistoryReady[row.symbol] = false;
       });
       return {
         cardLoadingBySymbol: nextLoading,
         cardErrorBySymbol: nextErrors,
+        historyReadyBySymbol: nextHistoryReady,
       };
     });
 
@@ -605,8 +659,15 @@ export const useMarketMapStore = create((set, get) => ({
           }
 
           set((state) => {
+            const queuedRealtime = state.queuedRealtimeBySymbol[row.symbol];
+            const mergedWithQueued = queuedRealtime
+              ? mergeCandlesByTime(klines, [queuedRealtime])
+              : klines;
+
             const prevKlines = state.klinesBySymbol[row.symbol] || [];
-            const nextKlines = areKlinesEquivalent(prevKlines, klines) ? prevKlines : klines;
+            const nextKlines = areKlinesEquivalent(prevKlines, mergedWithQueued)
+              ? prevKlines
+              : mergedWithQueued;
             const earliestTime = nextKlines.length > 0 ? Number(nextKlines[0].time) : null;
 
             return {
@@ -630,6 +691,14 @@ export const useMarketMapStore = create((set, get) => ({
                 ...state.cardErrorBySymbol,
                 [row.symbol]: null,
               },
+              historyReadyBySymbol: {
+                ...state.historyReadyBySymbol,
+                [row.symbol]: true,
+              },
+              queuedRealtimeBySymbol: {
+                ...state.queuedRealtimeBySymbol,
+                [row.symbol]: null,
+              },
               dataUpdatedAtBySymbol: {
                 ...state.dataUpdatedAtBySymbol,
                 [row.symbol]: Date.now(),
@@ -645,6 +714,10 @@ export const useMarketMapStore = create((set, get) => ({
             cardErrorBySymbol: {
               ...state.cardErrorBySymbol,
               [row.symbol]: error?.message || `Failed to load ${row.symbol} chart`,
+            },
+            historyReadyBySymbol: {
+              ...state.historyReadyBySymbol,
+              [row.symbol]: false,
             },
             chartHistoryBySymbol: {
               ...state.chartHistoryBySymbol,

@@ -153,10 +153,8 @@ function createVolumeIndicatorTooltip({ indicator, crosshair }) {
   return legends.length > 0 ? { legends } : {};
 }
 
-// Register a custom VOL indicator that uses the `turnover` field (USDT-denominated
-// quote volume) when available, falling back to `volume`.  This ensures consistent
-// scale across all exchanges (Binance row[7], Bybit arr[6], OKX arr[6], etc.) and
-// fixes the issue where volume looked different across timeframes.
+// Register a custom VOL indicator that uses only the `volume` field.
+// This keeps Market Map volume behavior consistent with live websocket updates.
 // Registered once at module load so every chart instance shares the same definition.
 (function registerCustomVolIndicator() {
   try {
@@ -195,20 +193,13 @@ function createVolumeIndicatorTooltip({ indicator, crosshair }) {
         const { calcParams: params } = indicator;
         const volSums = new Array(params.length).fill(0);
         return dataList.map((kLineData, i) => {
-          // Prefer USDT turnover (quote volume); fall back to base-asset volume
-          const vol = (kLineData.turnover != null && kLineData.turnover > 0)
-            ? kLineData.turnover
-            : (kLineData.volume ?? 0);
+          const vol = kLineData.volume ?? 0;
           const result = { volume: vol, open: kLineData.open, close: kLineData.close };
           params.forEach((p, idx) => {
             volSums[idx] += vol;
             if (i >= p - 1) {
               result[`ma${idx + 1}`] = volSums[idx] / p;
-              volSums[idx] -= (
-                (dataList[i - (p - 1)].turnover != null && dataList[i - (p - 1)].turnover > 0)
-                  ? dataList[i - (p - 1)].turnover
-                  : (dataList[i - (p - 1)].volume ?? 0)
-              );
+              volSums[idx] -= (dataList[i - (p - 1)].volume ?? 0);
             }
           });
           return result;
@@ -242,6 +233,10 @@ const KLineChart = ({
   headerRightActions = null,
   hasMoreHistory = false,
   onLoadMoreHistory,
+  showVolumeIndicator = false,
+  showCenterWatermark = false,
+  watermarkText = '',
+  watermarkOpacity = 0.08,
 }) => {
   const chartContainerRef = useRef(null);
   const chartRef = useRef(null);
@@ -268,6 +263,25 @@ const KLineChart = ({
   // Tracks the pricePrecision last applied via setSymbol so we only re-call
   // it when the precision actually changes (avoids redundant redraws).
   const appliedPrecisionRef = useRef(null);
+  const autoVolumeIndicatorIdRef = useRef(null);
+
+  const centerWatermarkLabel = useMemo(() => {
+    if (typeof watermarkText === 'string' && watermarkText.trim().length > 0) {
+      return watermarkText.trim().toUpperCase();
+    }
+
+    const normalizedSymbol = String(symbol || '').toUpperCase();
+    if (!normalizedSymbol) return '';
+
+    const quoteSuffixes = ['USDT', 'USDC', 'USD', 'BUSD', 'FDUSD', 'TUSD', 'USDE'];
+    const matchedSuffix = quoteSuffixes.find((suffix) => normalizedSymbol.endsWith(suffix));
+    if (matchedSuffix) {
+      const base = normalizedSymbol.slice(0, -matchedSuffix.length);
+      return base || normalizedSymbol;
+    }
+
+    return normalizedSymbol;
+  }, [watermarkText, symbol]);
 
   // Drawing tools state management
   const [activeDrawingTool, setActiveDrawingTool] = useState(null);
@@ -1428,6 +1442,7 @@ const KLineChart = ({
 
           // Clear realtime callback so stale pushes don't land on a new chart
           realtimeBarCallbackRef.current = null;
+          autoVolumeIndicatorIdRef.current = null;
 
           // Dispose chart
           dispose(chartId);
@@ -1443,6 +1458,30 @@ const KLineChart = ({
       setIsInitialized(false);
     }
   }, [symbol, handleGetBars]); // Re-initialize only when symbol changes; interval changes are handled by the separate period-update effect
+
+  // Auto-enable bottom volume indicator when requested (e.g. Market Map cards).
+  useEffect(() => {
+    if (!chartRef.current || !isInitialized) return;
+
+    if (!showVolumeIndicator) {
+      if (autoVolumeIndicatorIdRef.current) {
+        removeIndicator(autoVolumeIndicatorIdRef.current);
+        autoVolumeIndicatorIdRef.current = null;
+      }
+      return;
+    }
+
+    const existingVolume = indicatorsRef.current.find((indicator) => indicator.name === INDICATORS.VOL);
+    if (existingVolume?.id) {
+      autoVolumeIndicatorIdRef.current = existingVolume.id;
+      return;
+    }
+
+    const indicatorId = addIndicator(INDICATORS.VOL, { isStack: false });
+    if (indicatorId) {
+      autoVolumeIndicatorIdRef.current = indicatorId;
+    }
+  }, [isInitialized, showVolumeIndicator, addIndicator, removeIndicator]);
 
   // Resize chart when container size changes (window resize, layout change, different monitor resolution)
   // klinecharts uses container.clientWidth/clientHeight; calling resize() recaches bounding and redraws.
@@ -1837,6 +1876,21 @@ const KLineChart = ({
               // User should click directly on the line to edit it
             }}
           />
+
+          {showCenterWatermark && centerWatermarkLabel ? (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10 px-3">
+              <span
+                className="text-textSecondary font-semibold tracking-[0.14em] uppercase select-none truncate"
+                style={{
+                  opacity: Number.isFinite(Number(watermarkOpacity)) ? Number(watermarkOpacity) : 0.08,
+                  fontSize: compact ? 'clamp(20px, 4.6vw, 44px)' : 'clamp(22px, 4vw, 56px)',
+                  lineHeight: 1,
+                }}
+              >
+                {centerWatermarkLabel}
+              </span>
+            </div>
+          ) : null}
 
           {/* Indicator legend with delete (X) - rendered on top of chart so it's visible */}
           {!compact && indicators.length > 0 && (
