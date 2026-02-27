@@ -972,6 +972,24 @@ export const useMarketStore = create((set, get) => ({
   },
   
   fetchChartData: async (symbol, exchangeType, interval = '15m') => {
+    // Second-level intervals (1s, 5s, 15s) have no real historical REST data from any exchange.
+    // Returning empty lets the chart start clean; the live WebSocket feed populates real candles.
+    if (['1s', '5s', '15s'].includes(interval)) {
+      const exchange = get().exchange;
+      const historyKey = getChartHistoryKey({ exchange, exchangeType, symbol, interval });
+      const seriesKey = getChartSeriesKey({ exchange, exchangeType, symbol, interval });
+      set((state) => ({
+        chartData: [],
+        chartDataMap: { ...state.chartDataMap, [seriesKey]: [] },
+        chartHistoryMap: {
+          ...state.chartHistoryMap,
+          [historyKey]: { earliestTime: null, hasMoreHistory: false, loadingOlder: false },
+        },
+        loadingChart: false,
+        chartError: null,
+      }));
+      return;
+    }
     set({ loadingChart: true, chartError: null });
     const exchange = get().exchange;
     const historyKey = getChartHistoryKey({ exchange, exchangeType, symbol, interval });
@@ -1219,6 +1237,8 @@ export const useMarketStore = create((set, get) => ({
   },
 
   loadOlderChartData: async (symbol, exchangeType, interval = '15m', beforeTimestampMs) => {
+    // No historical data exists for second-level intervals.
+    if (['1s', '5s', '15s'].includes(interval)) return [];
     const exchange = get().exchange;
     const historyKey = getChartHistoryKey({ exchange, exchangeType, symbol, interval });
     const seriesKey = getChartSeriesKey({ exchange, exchangeType, symbol, interval });

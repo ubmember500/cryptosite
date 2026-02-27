@@ -1216,13 +1216,12 @@ async function fetchKlines(
   const cacheKey = `${symbol.toUpperCase()}_${exchangeType}_${interval}_${limit}_${beforeKey}`;
   const now = Date.now();
 
-  // Second intervals: Binance only has 1m+. We fetch 1m and resample to 1s/5s/15s.
+  // Second-level intervals have no real historical REST data from Binance.
+  // Return empty immediately; the live WebSocket feed provides real second-level candles.
   const isSecondInterval = ['1s', '5s', '15s'].includes(interval);
-  const binanceInterval = isSecondInterval ? '1m' : interval;
-  // Keep resampled count reasonable: 1s -> 50 1m = 3000 candles, 5s -> 84 1m ≈ 1000, 15s -> 125 1m = 500
-  const binanceLimit = isSecondInterval
-    ? { '1s': 50, '5s': 84, '15s': 125 }[interval]
-    : limit;
+  if (isSecondInterval) return [];
+  const binanceInterval = interval;
+  const binanceLimit = limit;
 
   // Check cache (uses effectiveCacheTTL which may be shorter for market-map calls)
   if (

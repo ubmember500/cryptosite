@@ -441,9 +441,12 @@ async function fetchKlines(symbol, exchangeType, interval = '15m', limit = 500, 
     return klinesCache[cacheKey].data;
   }
 
+  // Second-level intervals have no real historical REST data from Gate.io.
+  // Return empty immediately; the live WebSocket feed provides real second-level candles.
   const isSecondInterval = ['1s', '5s', '15s'].includes(interval);
-  const gateInterval = isSecondInterval ? '1m' : mapIntervalToGate(interval);
-  const gateLimit = isSecondInterval ? { '1s': 50, '5s': 84, '15s': 125 }[interval] : limit;
+  if (isSecondInterval) return [];
+  const gateInterval = mapIntervalToGate(interval);
+  const gateLimit = limit;
 
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {

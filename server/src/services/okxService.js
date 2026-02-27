@@ -541,9 +541,12 @@ async function fetchKlines(symbol, exchangeType, interval = '15m', limit = 500, 
     return klinesCache[cacheKey].data;
   }
 
+  // Second-level intervals have no real historical REST data from OKX.
+  // Return empty immediately; the live WebSocket feed provides real second-level candles.
   const isSecondInterval = ['1s', '5s', '15s'].includes(interval);
-  const okxBar = isSecondInterval ? '1m' : mapIntervalToOkx(interval);
-  const okxLimit = isSecondInterval ? { '1s': 50, '5s': 84, '15s': 125 }[interval] : limit;
+  if (isSecondInterval) return [];
+  const okxBar = mapIntervalToOkx(interval);
+  const okxLimit = limit;
 
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
