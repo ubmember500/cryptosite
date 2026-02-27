@@ -128,28 +128,26 @@ const MarketMap = () => {
   );
 
   return (
-    <div className="h-screen overflow-hidden bg-background text-textPrimary px-2 py-1 md:px-3 md:py-2">
+    <div className="h-screen overflow-hidden bg-background text-textPrimary px-1.5 py-1 md:px-2 md:py-1.5">
       <div className="h-full w-full max-w-none flex flex-col min-h-0">
-        <div className="flex items-center justify-between gap-2 flex-wrap">
-          <button
-            type="button"
-            onClick={() => navigate(ROUTES.MARKET)}
-            className="group flex items-center gap-1.5 transition-all"
-            title="Go to Market"
-          >
-            <div className="bg-accent/10 p-1 rounded-md border border-accent/20 group-hover:bg-accent/20 transition-colors">
-              <TrendingUp className="h-4 w-4 text-accent" />
-            </div>
-            <span className="text-lg font-bold bg-gradient-to-r from-blue-400 to-indigo-500 bg-clip-text text-transparent leading-none">
-              CryptoAlerts
-            </span>
-          </button>
-          <UserAccountMenu />
-        </div>
+        <div className="rounded-lg border border-border bg-surface/70 px-2 py-1">
+          <div className="flex items-center justify-between gap-2">
+            <button
+              type="button"
+              onClick={() => navigate(ROUTES.MARKET)}
+              className="group flex items-center gap-1 transition-all shrink-0"
+              title="Go to Market"
+            >
+              <div className="bg-accent/10 p-0.5 rounded border border-accent/20 group-hover:bg-accent/20 transition-colors">
+                <TrendingUp className="h-3.5 w-3.5 text-accent" />
+              </div>
+              <span className="text-sm font-bold bg-gradient-to-r from-blue-400 to-indigo-500 bg-clip-text text-transparent leading-none">
+                CryptoAlerts
+              </span>
+            </button>
 
-        <div className="flex justify-center mt-0.5 mb-1">
-          <div className="flex items-center gap-3 flex-wrap justify-center">
-            <div className="flex items-center gap-1">
+            <div className="min-w-0 flex items-center justify-center gap-2 flex-wrap">
+              <div className="flex items-center gap-1">
               {[
                 { key: 'binance', label: 'Binance', enabled: true },
                 { key: 'bybit', label: 'Bybit', enabled: true },
@@ -164,7 +162,7 @@ const MarketMap = () => {
                   }}
                   disabled={!exchange.enabled}
                   className={[
-                    'px-2 py-0.5 rounded border text-[11px] leading-4',
+                    'px-1.5 py-0.5 rounded border text-[10px] leading-3.5',
                     !exchange.enabled
                       ? 'border-border text-textSecondary opacity-60 cursor-not-allowed'
                       : '',
@@ -178,14 +176,14 @@ const MarketMap = () => {
               ))}
             </div>
 
-            <div className="flex items-center gap-1">
+              <div className="flex items-center gap-1">
               {[3, 6, 8, 9, 12, 16].map((count) => (
                 <button
                   key={count}
                   type="button"
                   onClick={() => setChartCount(count)}
                   className={[
-                    'px-2 py-0.5 rounded border text-[11px] leading-4',
+                    'px-1.5 py-0.5 rounded border text-[10px] leading-3.5',
                     selectedCount === count
                       ? 'border-accent text-accent bg-accent/10'
                       : 'border-border text-textSecondary hover:text-textPrimary hover:bg-surfaceHover',
@@ -194,11 +192,17 @@ const MarketMap = () => {
                   {count}
                 </button>
               ))}
+              </div>
             </div>
+
+            <UserAccountMenu
+              chipClassName="px-1.5 py-0.5 text-xs rounded-lg gap-1 [&>span:first-child]:h-6 [&>span:first-child]:w-6 [&>span:first-child]:text-xs"
+              menuClassName="mt-1"
+            />
           </div>
         </div>
 
-        <div className="mt-1 text-xs text-textSecondary leading-4">
+        <div className="mt-0.5 text-[10px] text-textSecondary leading-3.5 truncate px-0.5">
           {loading ? t('Loading market activity...') : `${rankedSymbols.length} ${t('ranked symbols')}`}
           {isRefreshing || isRankingRefresh || isHydratingVisible ? ` • ${t('Refreshing...')}` : ''}
           {lastUpdated ? ` • ${t('Updated')}: ${new Date(lastUpdated).toLocaleTimeString()}` : ''}
@@ -210,11 +214,11 @@ const MarketMap = () => {
         </div>
 
         {error ? (
-          <div className="mt-2 text-danger text-xs">{error}</div>
+          <div className="mt-1 text-danger text-[11px]">{error}</div>
         ) : null}
 
-        <div className="mt-1.5 flex-1 min-h-0 overflow-hidden">
-          <div className="h-full grid gap-2" style={gridStyle}>
+        <div className="mt-1 flex-1 min-h-0 overflow-hidden">
+          <div className="h-full grid gap-1.5" style={gridStyle}>
           {visibleSymbols.map((row, index) => (
             (() => {
               const symbolData = klinesBySymbol[row.symbol] || [];
@@ -230,33 +234,33 @@ const MarketMap = () => {
                 <div
                   key={row.symbol}
                   className={[
-                    'rounded border bg-surface p-2 transition-colors h-full min-h-0 flex flex-col',
+                    'rounded border bg-surface p-1.5 transition-colors h-full min-h-0 flex flex-col',
                     isRecentlyChanged
                       ? 'border-accent/70 shadow-[0_0_0_1px_rgba(59,130,246,0.35)]'
                       : 'border-border',
                   ].join(' ')}
                 >
-                  <div className="px-1 pb-1">
-                    <div className="text-xs text-textSecondary">#{index + 1}</div>
-                    <div className="font-medium flex items-center gap-2">
+                  <div className="px-0.5 pb-0.5">
+                    <div className="text-[10px] text-textSecondary leading-3">#{index + 1}</div>
+                    <div className="font-medium text-sm leading-4 flex items-center gap-1.5">
                       <span>{row.symbol}</span>
                       {row.activityMetric === 'change5m_warmup' ? (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded border border-border text-textSecondary">
+                        <span className="text-[9px] px-1 py-0.5 rounded border border-border text-textSecondary leading-3">
                           {t('Warmup')}
                         </span>
                       ) : null}
                       {isRecentlyChanged ? (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded border border-accent/60 text-accent">
+                        <span className="text-[9px] px-1 py-0.5 rounded border border-accent/60 text-accent leading-3">
                           {t('Active now')}
                         </span>
                       ) : null}
                       {isStaleData ? (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded border border-warning/60 text-warning">
+                        <span className="text-[9px] px-1 py-0.5 rounded border border-warning/60 text-warning leading-3">
                           {t('Stale')}
                         </span>
                       ) : null}
                     </div>
-                    <div className="text-xs text-textSecondary mt-1">
+                    <div className="text-[10px] text-textSecondary mt-0.5 leading-3">
                       NATR 5m
                       {row.activityMetric === 'change5m_warmup' ? ' (est)' : ''}
                       : {row.activityScore.toFixed(3)}%
