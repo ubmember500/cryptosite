@@ -166,6 +166,7 @@ const Register = () => {
                 theme="filled_black"
                 shape="rectangular"
                 text="signup_with"
+                locale="en"
                 width="100%"
               />
             </div>

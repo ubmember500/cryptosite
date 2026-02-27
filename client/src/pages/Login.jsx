@@ -146,6 +146,7 @@ const Login = () => {
                 theme="filled_black"
                 shape="rectangular"
                 text="signin_with"
+                locale="en"
                 width="100%"
               />
             </div>
