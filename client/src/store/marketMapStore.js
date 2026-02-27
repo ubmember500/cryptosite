@@ -21,10 +21,40 @@ const BINANCE_FUTURES_BASE_URLS = [
   'https://fapi.binance.com/fapi/v1',
   'https://www.binance.com/fapi/v1',
 ];
+const MARKET_MAP_CACHE_KEY = 'market-map-snapshot-v1';
+const MARKET_MAP_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
 
 const toFiniteNumber = (value) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+};
+
+const loadMarketMapSnapshot = () => {
+  if (typeof window === 'undefined') return null;
+
+  try {
+    const raw = window.localStorage.getItem(MARKET_MAP_CACHE_KEY);
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw);
+    const ts = Number(parsed?.ts || 0);
+    if (!Number.isFinite(ts) || ts <= 0) return null;
+    if (Date.now() - ts > MARKET_MAP_CACHE_MAX_AGE_MS) return null;
+
+    return parsed;
+  } catch {
+    return null;
+  }
+};
+
+const saveMarketMapSnapshot = (snapshot) => {
+  if (typeof window === 'undefined') return;
+
+  try {
+    window.localStorage.setItem(MARKET_MAP_CACHE_KEY, JSON.stringify(snapshot));
+  } catch {
+    // Ignore storage quota / private mode errors
+  }
 };
 
 const mapWithConcurrency = async (items, worker, concurrency) => {
@@ -202,8 +232,125 @@ export const useMarketMapStore = create((set, get) => ({
     }));
   },
 
+  hydrateFromCache: () => {
+    const snapshot = loadMarketMapSnapshot();
+    if (!snapshot) return false;
+
+    const selectedExchange = SUPPORTED_MARKET_MAP_EXCHANGES.includes(snapshot.exchange)
+      ? snapshot.exchange
+      : null;
+
+    if (!selectedExchange || selectedExchange !== get().selectedExchange) {
+      return false;
+    }
+
+    const rankedSymbols = Array.isArray(snapshot.rankedSymbols) ? snapshot.rankedSymbols : [];
+    const visibleSymbols = Array.isArray(snapshot.visibleSymbols) ? snapshot.visibleSymbols : [];
+    const klinesBySymbol = snapshot.klinesBySymbol && typeof snapshot.klinesBySymbol === 'object'
+      ? snapshot.klinesBySymbol
+      : {};
+    const chartHistoryBySymbol = snapshot.chartHistoryBySymbol && typeof snapshot.chartHistoryBySymbol === 'object'
+      ? snapshot.chartHistoryBySymbol
+      : {};
+
+    if (rankedSymbols.length === 0 || visibleSymbols.length === 0) {
+      return false;
+    }
+
+    const now = Date.now();
+    const historyReadyBySymbol = {};
+    const cardLoadingBySymbol = {};
+    const cardErrorBySymbol = {};
+    const dataUpdatedAtBySymbol = {};
+
+    visibleSymbols.forEach((row) => {
+      const symbol = row?.symbol;
+      if (!symbol) return;
+      const points = Array.isArray(klinesBySymbol[symbol]) ? klinesBySymbol[symbol].length : 0;
+      const ready = points >= MIN_VISIBLE_KLINE_POINTS;
+      historyReadyBySymbol[symbol] = ready;
+      cardLoadingBySymbol[symbol] = !ready;
+      cardErrorBySymbol[symbol] = null;
+      dataUpdatedAtBySymbol[symbol] = now;
+    });
+
+    set((state) => ({
+      rankedSymbols,
+      universeSymbols: rankedSymbols,
+      visibleSymbols,
+      klinesBySymbol: {
+        ...state.klinesBySymbol,
+        ...klinesBySymbol,
+      },
+      chartHistoryBySymbol: {
+        ...state.chartHistoryBySymbol,
+        ...chartHistoryBySymbol,
+      },
+      historyReadyBySymbol: {
+        ...state.historyReadyBySymbol,
+        ...historyReadyBySymbol,
+      },
+      cardLoadingBySymbol: {
+        ...state.cardLoadingBySymbol,
+        ...cardLoadingBySymbol,
+      },
+      cardErrorBySymbol: {
+        ...state.cardErrorBySymbol,
+        ...cardErrorBySymbol,
+      },
+      dataUpdatedAtBySymbol: {
+        ...state.dataUpdatedAtBySymbol,
+        ...dataUpdatedAtBySymbol,
+      },
+      rankingScoredCount: rankedSymbols.filter((row) => row.activityMetric === 'change5m').length,
+      rankingWarmupRatio: rankedSymbols.length > 0
+        ? rankedSymbols.filter((row) => row.activityMetric === 'change5m').length / rankedSymbols.length
+        : 0,
+      lastUpdated: new Date(snapshot.ts).toISOString(),
+      loading: false,
+      error: null,
+    }));
+
+    return true;
+  },
+
+  persistSnapshot: () => {
+    const state = get();
+    const visibleSymbols = Array.isArray(state.visibleSymbols) ? state.visibleSymbols : [];
+    const rankedSymbols = Array.isArray(state.rankedSymbols) ? state.rankedSymbols : [];
+
+    if (visibleSymbols.length === 0 || rankedSymbols.length === 0) return;
+
+    const klinesBySymbol = {};
+    const chartHistoryBySymbol = {};
+
+    visibleSymbols.forEach((row) => {
+      const symbol = row?.symbol;
+      if (!symbol) return;
+
+      const klines = Array.isArray(state.klinesBySymbol[symbol]) ? state.klinesBySymbol[symbol] : [];
+      if (klines.length > 0) {
+        klinesBySymbol[symbol] = klines;
+      }
+
+      if (state.chartHistoryBySymbol[symbol]) {
+        chartHistoryBySymbol[symbol] = state.chartHistoryBySymbol[symbol];
+      }
+    });
+
+    saveMarketMapSnapshot({
+      ts: Date.now(),
+      exchange: state.selectedExchange,
+      rankedSymbols,
+      visibleSymbols,
+      klinesBySymbol,
+      chartHistoryBySymbol,
+    });
+  },
+
   initialize: async () => {
-    await get().refreshData({ silent: false });
+    const hydrated = get().hydrateFromCache();
+    await get().refreshData({ silent: hydrated ? true : false, force: true });
   },
 
   refreshData: async ({ silent = true, force = false } = {}) => {
@@ -776,6 +923,8 @@ export const useMarketMapStore = create((set, get) => ({
       },
       VISIBLE_FETCH_CONCURRENCY
     );
+
+    get().persistSnapshot();
   },
 
   loadOlderVisibleHistory: async (symbol, beforeTimestampMs) => {
@@ -866,6 +1015,8 @@ export const useMarketMapStore = create((set, get) => ({
           },
         };
       });
+
+      get().persistSnapshot();
 
       return older;
     } catch {
