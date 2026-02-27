@@ -4,13 +4,17 @@ const router = express.Router();
 const authController = require('../controllers/authController');
 const authMiddleware = require('../middleware/auth');
 
-/** Rate limit: forgot-password to prevent abuse (e.g. 5 per 15 min per IP) */
+/** Rate limit: forgot-password — 10 requests per hour per IP.
+ *  keepin it reasonable for real users who may retry a few times.
+ *  trust proxy must be set on the Express app for req.ip to reflect the real client IP on Render/Railway/Heroku.
+ */
 const forgotPasswordLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 5,
-  message: { error: 'Too many reset requests. Please try again later.' },
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 10,
+  message: { error: 'Too many reset requests. Please wait an hour before trying again.' },
   standardHeaders: true,
   legacyHeaders: false,
+  skipSuccessfulRequests: false,
 });
 
 /**

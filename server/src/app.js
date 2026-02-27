@@ -5,6 +5,10 @@ const marketController = require('./controllers/marketController');
 
 const app = express();
 
+// Trust the first proxy hop (required on Render, Railway, Heroku, etc.)
+// Without this, req.ip is always the internal proxy IP → everyone shares one rate-limit bucket.
+app.set('trust proxy', 1);
+
 const configuredFrontendOrigins = String(process.env.FRONTEND_URLS || process.env.FRONTEND_URL || '')
   .split(',')
   .map((origin) => origin.trim())

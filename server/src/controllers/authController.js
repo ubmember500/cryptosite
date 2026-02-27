@@ -237,8 +237,14 @@ async function forgotPassword(req, res, next) {
       const resetLink = getResetLink(rawToken);
       try {
         await sendPasswordResetEmail(user.email, resetLink);
+        console.log('[forgotPassword] Reset email sent to', user.email);
       } catch (emailErr) {
-        console.error('[authController.forgotPassword] Email send failed:', emailErr?.message || emailErr);
+        console.error('[forgotPassword] *** EMAIL SEND FAILED ***');
+        console.error('[forgotPassword] Error:', emailErr?.message || emailErr);
+        console.error('[forgotPassword] SMTP_HOST:', process.env.SMTP_HOST || '(not set)');
+        console.error('[forgotPassword] SMTP_USER:', process.env.SMTP_USER || '(not set)');
+        console.error('[forgotPassword] RESEND_API_KEY:', process.env.RESEND_API_KEY ? 'set' : '(not set)');
+        console.error('[forgotPassword] FRONTEND_URL:', process.env.FRONTEND_URL || '(not set)');
         if (process.env.DEV_SHOW_RESET_LINK !== 'true') {
           return res.status(503).json({
             error: 'Could not send reset email. Please try again later or contact support.',
