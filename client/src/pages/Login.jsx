@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
+import { GoogleLogin } from '@react-oauth/google';
 import { useAuthStore } from '../store/authStore';
 import { ROUTES } from '../utils/constants';
 import Input from '../components/common/Input';
@@ -12,7 +13,22 @@ const Login = () => {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const login = useAuthStore((state) => state.login);
+  const googleLogin = useAuthStore((state) => state.googleLogin);
   const navigate = useNavigate();
+
+  const handleGoogleSuccess = async (credentialResponse) => {
+    setError('');
+    setLoading(true);
+    try {
+      await googleLogin(credentialResponse.credential);
+      setTimeout(() => navigate(ROUTES.ACCOUNT, { replace: true }), 0);
+    } catch (err) {
+      const errorData = err.response?.data;
+      setError(errorData?.error || 'Google sign-in failed. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -113,6 +129,27 @@ const Login = () => {
               Sign In
             </Button>
           </form>
+
+          <div className="mt-5">
+            <div className="relative">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-border" />
+              </div>
+              <div className="relative flex justify-center text-xs">
+                <span className="bg-surface px-3 text-textSecondary">or continue with</span>
+              </div>
+            </div>
+            <div className="mt-4 flex justify-center">
+              <GoogleLogin
+                onSuccess={handleGoogleSuccess}
+                onError={() => setError('Google sign-in failed. Please try again.')}
+                theme="filled_black"
+                shape="rectangular"
+                text="signin_with"
+                width="100%"
+              />
+            </div>
+          </div>
 
           <div className="mt-6 text-center">
             <p className="text-textSecondary text-sm">

@@ -184,6 +184,25 @@ export const useAuthStore = create((set, get) => ({
     }
   },
 
+  // Google OAuth action
+  googleLogin: async (credential) => {
+    set({ loading: true });
+    try {
+      const response = await authService.googleLogin(credential);
+      const { user, accessToken, refreshToken } = response;
+
+      localStorage.setItem('accessToken', accessToken);
+      if (refreshToken) localStorage.setItem('refreshToken', refreshToken);
+      localStorage.setItem('user', JSON.stringify(user));
+
+      set({ user, accessToken, refreshToken, isAuthenticated: true, loading: false });
+      return response;
+    } catch (error) {
+      set({ user: null, accessToken: null, refreshToken: null, isAuthenticated: false, loading: false });
+      throw error;
+    }
+  },
+
   // Logout action
   logout: () => {
     // Clear localStorage

@@ -10,7 +10,8 @@ model User {
   id                   String                @id @default(uuid())
   email                String                @unique
   username             String                @unique
-  passwordHash         String
+  passwordHash         String?               // null for OAuth-only accounts
+  googleId             String?               @unique
   subscriptionPlan     String                @default("free")  // "free" | "lite" | "pro"
   telegramChatId       String?               @unique
   telegramUsername     String?
