@@ -5,7 +5,9 @@ import './i18n';
 import './index.css';
 import App from './App.jsx';
 
-const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
+const GOOGLE_CLIENT_ID =
+  import.meta.env.VITE_GOOGLE_CLIENT_ID ||
+  '852357331650-2gucpfcsnrs17ptck2jr3ioflqi7m6fq.apps.googleusercontent.com';
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
