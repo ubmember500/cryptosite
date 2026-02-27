@@ -6,7 +6,7 @@ import { watchlistService } from '../services/watchlistService';
 import { alertService } from '../services/alertService';
 import Card from '../components/common/Card';
 import { ROUTES } from '../utils/constants';
-import { User, Mail, Calendar, Bell, Star, PlusCircle, CreditCard } from 'lucide-react';
+import { User, Mail, Calendar, Bell, Star, CreditCard } from 'lucide-react';
 
 const Account = () => {
   const { t, i18n } = useTranslation();
@@ -110,26 +110,20 @@ const Account = () => {
           <div className="space-y-4">
             <div className="flex items-center justify-between p-4 bg-surfaceHover rounded-lg">
               <div className="flex items-center gap-3">
-                <Bell className="h-5 w-5 text-textSecondary" />
+                <Bell className="h-5 w-5" style={{ color: '#fbbf24' }} />
                 <span className="text-textPrimary">{t('Active alerts')}</span>
               </div>
               <span className="text-xl font-semibold text-textPrimary">{activeAlertsCount}</span>
             </div>
             <div className="flex items-center justify-between p-4 bg-surfaceHover rounded-lg">
               <div className="flex items-center gap-3">
-                <Star className="h-5 w-5 text-textSecondary" />
+                <Star className="h-5 w-5" style={{ color: '#a78bfa' }} />
                 <span className="text-textPrimary">{t('Watchlist items')}</span>
               </div>
               <span className="text-xl font-semibold text-textPrimary">{watchlistCount}</span>
             </div>
           </div>
           <div className="mt-4 pt-4 border-t border-border flex flex-col sm:flex-row gap-4">
-            <Link
-              to={ROUTES.ALERTS}
-              className="text-sm text-accent hover:text-accent/80 transition-colors inline-flex items-center gap-2"
-            >
-              <PlusCircle className="h-4 w-4" /> {t('Create Alert')}
-            </Link>
             <Link
               to={ROUTES.ALERTS}
               className="text-sm text-accent hover:text-accent/80 transition-colors"
