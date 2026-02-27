@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useNavigate } from 'react-router-dom';
-import { Search, Sun, Moon } from 'lucide-react';
+import { useNavigate, Link } from 'react-router-dom';
+import { Search, Sun, Moon, Settings } from 'lucide-react';
 import { useMarketStore } from '../../store/marketStore';
 import { useLanguageStore } from '../../store/languageStore';
 import { useThemeStore } from '../../store/themeStore';
@@ -103,6 +103,14 @@ const Navbar = () => {
                 <Moon className="h-5 w-5" />
               )}
             </button>
+
+          <Link
+              to="/settings"
+              className="p-1.5 rounded-full hover:text-textPrimary focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-surface focus:ring-accent"
+              aria-label="Settings"
+            >
+              <Settings className="h-5 w-5" style={{ color: '#2dd4bf' }} />
+            </Link>
 
           <UserAccountMenu chipClassName="border-border bg-surface px-2.5 py-1.5 hover:bg-surfaceHover focus:ring-accent focus:ring-offset-2 focus:ring-offset-surface" />
         </div>

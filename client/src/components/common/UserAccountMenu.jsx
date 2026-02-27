@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useNavigate } from 'react-router-dom';
-import { User, Bell, CreditCard, LogOut, TrendingUp, Bot, List, Layers, LayoutGrid } from 'lucide-react';
+import { User, Bell, CreditCard, LogOut, TrendingUp, Bot, List, Layers, LayoutGrid, Settings } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
 import UserAccountChip from './UserAccountChip';
 
@@ -86,6 +86,10 @@ const UserAccountMenu = ({ chipClassName = '', menuClassName = '' }) => {
           <Link to="/subscription" onClick={closeMenu} className="flex items-center gap-3 px-4 py-2.5 text-sm text-textPrimary hover:bg-surfaceHover transition-colors">
             <CreditCard className="h-4 w-4 shrink-0" style={{ color: '#f472b6' }} />
             {t('Subscription')}
+          </Link>
+          <Link to="/settings" onClick={closeMenu} className="flex items-center gap-3 px-4 py-2.5 text-sm text-textPrimary hover:bg-surfaceHover transition-colors">
+            <Settings className="h-4 w-4 shrink-0" style={{ color: '#2dd4bf' }} />
+            {t('Settings')}
           </Link>
           <a
             href="https://t.me/ManagerAlan"

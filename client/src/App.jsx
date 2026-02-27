@@ -34,6 +34,7 @@ import Subscription from './pages/Subscription';
 import Listings from './pages/Listings';
 import WallScanner from './pages/WallScanner';
 import MarketMap from './pages/MarketMap';
+import Settings from './pages/Settings';
 
 function App() {
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
@@ -159,6 +160,7 @@ function App() {
             <Route path="listings" element={<Listings />} />
             <Route path="wall-scanner" element={<WallScanner />} />
             <Route path="profile" element={<Profile />} />
+            <Route path="settings" element={<Settings />} />
           </Route>
 
           {/* Catch all - redirect to account or login */}
