@@ -235,6 +235,7 @@ const KLineChart = ({
   onLoadMoreHistory,
   showVolumeIndicator = false,
   stackVolumeInMainPane = false,
+  showInlineVolumeOverlay = false,
   showCenterWatermark = false,
   watermarkText = '',
   watermarkOpacity = 0.08,
@@ -372,6 +373,30 @@ const KLineChart = ({
   const TIMEFRAMES = ['1s', '5s', '15s', '1m', '5m', '15m', '30m', '1h', '4h', '1d'];
   const isTimeframeLeft = timeframePosition === 'left';
   const shouldShowHeader = !(compact && hideCompactHeader);
+  const inlineVolumeBars = useMemo(() => {
+    if (!showInlineVolumeOverlay || !Array.isArray(data) || data.length === 0) return [];
+
+    const tail = data.slice(-110);
+    const maxVolume = tail.reduce((max, candle) => {
+      const vol = Number(candle?.volume || 0);
+      return Number.isFinite(vol) && vol > max ? vol : max;
+    }, 0);
+
+    if (!Number.isFinite(maxVolume) || maxVolume <= 0) return [];
+
+    return tail.map((candle, index) => {
+      const open = Number(candle?.open || 0);
+      const close = Number(candle?.close || 0);
+      const volume = Number(candle?.volume || 0);
+      const ratio = Math.max(0.04, Math.min(1, volume / maxVolume));
+
+      return {
+        key: `${Number(candle?.time || index)}-${index}`,
+        ratio,
+        isUp: close >= open,
+      };
+    });
+  }, [data, showInlineVolumeOverlay]);
   const explicitAlertPrice = useMemo(() => {
     const value = Number(alertCurrentPrice);
     return Number.isFinite(value) && value > 0 ? String(value) : '';
@@ -1466,7 +1491,7 @@ const KLineChart = ({
   useEffect(() => {
     if (!chartRef.current || !isInitialized) return;
 
-    if (!showVolumeIndicator) {
+    if (!showVolumeIndicator || showInlineVolumeOverlay) {
       if (autoVolumeIndicatorIdRef.current) {
         removeIndicator(autoVolumeIndicatorIdRef.current);
         autoVolumeIndicatorIdRef.current = null;
@@ -1484,7 +1509,7 @@ const KLineChart = ({
     if (indicatorId) {
       autoVolumeIndicatorIdRef.current = indicatorId;
     }
-  }, [isInitialized, showVolumeIndicator, stackVolumeInMainPane, addIndicator, removeIndicator]);
+  }, [isInitialized, showVolumeIndicator, showInlineVolumeOverlay, stackVolumeInMainPane, addIndicator, removeIndicator]);
 
   // Resize chart when container size changes (window resize, layout change, different monitor resolution)
   // klinecharts uses container.clientWidth/clientHeight; calling resize() recaches bounding and redraws.
@@ -1898,6 +1923,18 @@ const KLineChart = ({
               >
                 {centerWatermarkLabel}
               </span>
+            </div>
+          ) : null}
+
+          {showInlineVolumeOverlay && inlineVolumeBars.length > 0 ? (
+            <div className="absolute left-2 right-2 bottom-1 h-[24%] pointer-events-none z-[9] flex items-end gap-[1px]">
+              {inlineVolumeBars.map((bar) => (
+                <div
+                  key={bar.key}
+                  className={cn('flex-1 min-w-0 rounded-sm', bar.isUp ? 'bg-success/45' : 'bg-danger/45')}
+                  style={{ height: `${Math.round(bar.ratio * 100)}%` }}
+                />
+              ))}
             </div>
           ) : null}
 

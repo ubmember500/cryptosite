@@ -248,8 +248,12 @@ const MarketMap = () => {
 
                   <div className="flex-1 min-h-0 relative">
                     <div className="absolute left-2 top-2 z-20 pointer-events-none select-none">
-                      <div className="text-[10px] leading-3 text-textSecondary">NATR: {row.activityScore.toFixed(3)}%</div>
-                      <div className="text-[10px] leading-3 text-textSecondary">VOL: {formattedVolume}</div>
+                      <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-accent/60 bg-surface/85 text-accent text-[10px] leading-3 font-semibold">
+                        <span>{row.activityScore.toFixed(2)}</span>
+                        <span>%</span>
+                        <span className="text-[11px] leading-3">🚀</span>
+                      </div>
+                      <div className="mt-0.5 text-[9px] leading-3 text-textSecondary">VOL {formattedVolume}</div>
                     </div>
 
                     <KLineChart
@@ -267,8 +271,7 @@ const MarketMap = () => {
                       isRealtimeConnected={isRealtimeConnected}
                       isRealtimeSubscribed={Array.isArray(activeRealtimeSymbols) && activeRealtimeSymbols.includes(row.symbol)}
                       hasMoreHistory={!!historyMeta.hasMoreHistory}
-                      showVolumeIndicator
-                      stackVolumeInMainPane
+                      showInlineVolumeOverlay
                       showCenterWatermark
                       watermarkText={row.symbol.replace(/(USDT|USDC|USD|BUSD|FDUSD|TUSD|USDE)$/i, '')}
                       watermarkOpacity={0.08}
