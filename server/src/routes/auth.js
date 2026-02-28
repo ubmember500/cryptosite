@@ -34,4 +34,25 @@ router.post('/refresh', authController.refresh);
 router.post('/forgot-password', forgotPasswordLimiter, authController.forgotPassword);
 router.post('/reset-password', authController.resetPassword);
 
+/**
+ * GET /api/auth/debug-email?to=<email>
+ * Diagnostic endpoint — tests each email provider and returns per-provider status.
+ * Protected by DEBUG_EMAIL_SECRET env var (must match ?secret= query param).
+ * Remove or disable once email is confirmed working.
+ */
+router.get('/debug-email', async (req, res) => {
+  const secret = process.env.DEBUG_EMAIL_SECRET || 'debug123';
+  if (req.query.secret !== secret) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  const to = req.query.to || 'test@example.com';
+  try {
+    const { debugEmailProviders } = require('../utils/email');
+    const results = await debugEmailProviders(to);
+    res.json(results);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

@@ -170,30 +170,49 @@ async function sendViaResend(toEmail, subject, text, html) {
 
   console.log('[Email/Resend] Sending to', toEmail, 'from', fromAddress);
 
-  // Use fetch-based HTTP call directly — avoids SDK version mismatches and
-  // gives us full control over error handling.
-  const res = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      from: fromAddress,
-      to: [toEmail],
-      subject,
-      html,
-      text,
-    }),
+  // Use Node built-in https (works on Node 14+, no fetch dependency).
+  const https = require('https');
+  const payload = JSON.stringify({
+    from: fromAddress,
+    to: [toEmail],
+    subject,
+    html,
+    text,
   });
 
-  const body = await res.json().catch(() => ({}));
-
-  if (!res.ok) {
-    const msg = body?.message || body?.error || JSON.stringify(body);
-    console.error('[Email/Resend] API error:', res.status, msg);
-    throw new Error(`Resend API ${res.status}: ${msg}`);
-  }
+  const body = await new Promise((resolve, reject) => {
+    const req = https.request(
+      {
+        hostname: 'api.resend.com',
+        path: '/emails',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Length': Buffer.byteLength(payload),
+        },
+        timeout: 15_000,
+      },
+      (res) => {
+        let data = '';
+        res.on('data', (chunk) => (data += chunk));
+        res.on('end', () => {
+          let parsed;
+          try { parsed = JSON.parse(data); } catch { parsed = { raw: data }; }
+          if (res.statusCode >= 200 && res.statusCode < 300) {
+            resolve(parsed);
+          } else {
+            const msg = parsed?.message || parsed?.error || data;
+            reject(new Error(`Resend API ${res.statusCode}: ${msg}`));
+          }
+        });
+      },
+    );
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('Resend API request timed out')); });
+    req.write(payload);
+    req.end();
+  });
 
   console.log('[Email/Resend] ✅ Password reset sent to', toEmail, '| id:', body.id);
 }
@@ -302,8 +321,48 @@ async function sendPasswordResetEmail(toEmail, resetLink) {
   throw new Error(`All email providers failed — ${errors.join(' | ')}`);
 }
 
+/**
+ * Diagnostic: try each email provider independently and report results.
+ * Returns a JSON-friendly object with per-provider status.
+ */
+async function debugEmailProviders(toEmail) {
+  const results = {
+    nodeVersion: process.version,
+    resendConfigured: isResendConfigured(),
+    smtpConfigured: isSmtpConfigured(),
+    frontendUrl: getFrontendUrl(),
+    resend: null,
+    smtp: null,
+  };
+
+  const subject = 'CryptoAlerts — email debug test';
+  const text = 'This is a diagnostic email from CryptoAlerts debug-email endpoint.';
+  const html = '<p>This is a <strong>diagnostic email</strong> from CryptoAlerts debug-email endpoint.</p>';
+
+  if (isResendConfigured()) {
+    try {
+      await sendViaResend(toEmail, subject, text, html);
+      results.resend = { ok: true };
+    } catch (err) {
+      results.resend = { ok: false, error: err.message };
+    }
+  }
+
+  if (isSmtpConfigured()) {
+    try {
+      await sendViaSmtp(toEmail, subject, text, html);
+      results.smtp = { ok: true };
+    } catch (err) {
+      results.smtp = { ok: false, error: err.message };
+    }
+  }
+
+  return results;
+}
+
 module.exports = {
   sendPasswordResetEmail,
+  debugEmailProviders,
   isEmailConfigured,
   isSmtpConfigured,
   isResendConfigured,
