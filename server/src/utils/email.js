@@ -276,6 +276,44 @@ function sendGridDelete(apiKey, path) {
 }
 
 /**
+ * Call a SendGrid API DELETE endpoint with JSON body.
+ */
+function sendGridDeleteWithBody(apiKey, path, bodyObj) {
+  const https = require('https');
+  const payload = JSON.stringify(bodyObj || {});
+  return new Promise((resolve, reject) => {
+    const req = https.request(
+      {
+        hostname: 'api.sendgrid.com',
+        path,
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(payload),
+        },
+        timeout: 15_000,
+      },
+      (res) => {
+        let data = '';
+        res.on('data', (chunk) => (data += chunk));
+        res.on('end', () => {
+          if (!data) {
+            return resolve({ status: res.statusCode, body: null });
+          }
+          try { resolve({ status: res.statusCode, body: JSON.parse(data) }); }
+          catch { resolve({ status: res.statusCode, body: data }); }
+        });
+      },
+    );
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('SendGrid API request timed out')); });
+    req.write(payload);
+    req.end();
+  });
+}
+
+/**
  * Check whether a recipient email is on SendGrid suppression lists.
  */
 async function getSendGridRecipientStatus(email) {
@@ -337,14 +375,14 @@ async function clearSendGridRecipientSuppressions(email, options = {}) {
   let clearedSpamReports = false;
 
   try {
-    const res = await sendGridDelete(apiKey, `/v3/suppression/blocks/${encoded}`);
+    const res = await sendGridDeleteWithBody(apiKey, '/v3/suppression/blocks', { emails: [String(email).trim().toLowerCase()] });
     clearedBlocks = res.status >= 200 && res.status < 300;
   } catch (err) {
     console.warn('[Email/SendGrid] Could not clear block suppression:', err.message);
   }
 
   try {
-    const res = await sendGridDelete(apiKey, `/v3/suppression/bounces/${encoded}`);
+    const res = await sendGridDeleteWithBody(apiKey, '/v3/suppression/bounces', { emails: [String(email).trim().toLowerCase()] });
     clearedBounces = res.status >= 200 && res.status < 300;
   } catch (err) {
     console.warn('[Email/SendGrid] Could not clear bounce suppression:', err.message);
@@ -352,14 +390,14 @@ async function clearSendGridRecipientSuppressions(email, options = {}) {
 
   if (includeRisky) {
     try {
-      const res = await sendGridDelete(apiKey, `/v3/suppression/invalid_emails/${encoded}`);
+      const res = await sendGridDeleteWithBody(apiKey, '/v3/suppression/invalid_emails', { emails: [String(email).trim().toLowerCase()] });
       clearedInvalidEmails = res.status >= 200 && res.status < 300;
     } catch (err) {
       console.warn('[Email/SendGrid] Could not clear invalid_email suppression:', err.message);
     }
 
     try {
-      const res = await sendGridDelete(apiKey, `/v3/suppression/spam_reports/${encoded}`);
+      const res = await sendGridDeleteWithBody(apiKey, '/v3/suppression/spam_reports', { emails: [String(email).trim().toLowerCase()] });
       clearedSpamReports = res.status >= 200 && res.status < 300;
     } catch (err) {
       console.warn('[Email/SendGrid] Could not clear spam_report suppression:', err.message);
