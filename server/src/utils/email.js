@@ -208,12 +208,16 @@ async function sendViaSmtp(toEmail, subject, text, html) {
   const port = getSmtpPort();
   const secure = getSmtpSecure();
   const user = getSmtpUser();
-  const pass = getSmtpPass();
+  const rawPass = getSmtpPass() || '';
+  const noSpacePass = rawPass.replace(/\s+/g, '');
+  const passCandidates = noSpacePass && noSpacePass !== rawPass
+    ? [rawPass, noSpacePass]
+    : [rawPass];
   const from = getMailFrom();
 
   console.log(`[Email/SMTP] Sending to ${toEmail} via ${host}:${port} (user: ${user})`);
 
-  const createTransporter = () =>
+  const createTransporter = (pass) =>
     nodemailer.createTransport({
       host,
       port,
@@ -224,20 +228,27 @@ async function sendViaSmtp(toEmail, subject, text, html) {
       socketTimeout: 15_000,       // 15 s per socket operation
     });
 
-  // Attempt with one retry
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    try {
-      const transporter = createTransporter();
-      await transporter.sendMail({ from, to: toEmail, subject, text, html });
-      console.log('[Email/SMTP] ✅ Password reset sent to', toEmail);
-      return;
-    } catch (err) {
-      console.error(`[Email/SMTP] Attempt ${attempt} failed:`, err.message);
-      if (attempt === 2) throw err;
-      // brief pause before retry
-      await new Promise((r) => setTimeout(r, 2000));
+  // Attempt with one retry per password candidate
+  let lastErr;
+  for (const candidatePass of passCandidates) {
+    const label = candidatePass === rawPass ? 'as-is' : 'without-spaces';
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const transporter = createTransporter(candidatePass);
+        await transporter.sendMail({ from, to: toEmail, subject, text, html });
+        console.log(`[Email/SMTP] ✅ Password reset sent to ${toEmail} (${label})`);
+        return;
+      } catch (err) {
+        lastErr = err;
+        console.error(`[Email/SMTP] Attempt ${attempt} failed (${label}):`, err.message);
+        if (attempt < 2) {
+          await new Promise((r) => setTimeout(r, 2000));
+        }
+      }
     }
   }
+
+  throw lastErr || new Error('SMTP send failed');
 }
 
 /**
