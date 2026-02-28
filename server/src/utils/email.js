@@ -337,10 +337,24 @@ async function getSendGridRecipientStatus(email) {
     sendGridGet(apiKey, `/v3/suppression/spam_reports/${encoded}`).catch(() => ({ status: 404 })),
   ]);
 
-  const blocks = blockRes.status === 200;
-  const bounces = bounceRes.status === 200;
-  const invalidEmails = invalidRes.status === 200;
-  const spamReports = spamRes.status === 200;
+  const hasSuppressionEntry = (res) => {
+    if (!res || res.status !== 200) return false;
+    const body = res.body;
+    if (body == null) return false;
+    if (Array.isArray(body)) return body.length > 0;
+    if (typeof body === 'object') {
+      if (Array.isArray(body.results)) return body.results.length > 0;
+      if (Array.isArray(body.errors)) return false;
+      return Object.keys(body).length > 0;
+    }
+    const text = String(body).trim();
+    return text !== '' && text !== '[]' && text !== '{}' && text !== 'null';
+  };
+
+  const blocks = hasSuppressionEntry(blockRes);
+  const bounces = hasSuppressionEntry(bounceRes);
+  const invalidEmails = hasSuppressionEntry(invalidRes);
+  const spamReports = hasSuppressionEntry(spamRes);
 
   return {
     email,
