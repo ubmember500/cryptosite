@@ -595,8 +595,14 @@ const KLineChart = ({
     }
 
     const transformedData = transformDataForKLineChart(dataRef.current);
+    // forward: true tells klinecharts "there may be older data to fetch when the
+    // user scrolls left". Without this flag klinecharts permanently sets
+    // _dataLoadMore.forward = false after the init load and NEVER calls
+    // getBars({ type:'forward' }) — so scroll-to-load-history never fires.
+    // We gate on transformedData.length so an empty init (chart created before
+    // data arrives) doesn't immediately fire a forward call with timestamp=null.
     callback(transformedData, {
-      forward: false,
+      forward: transformedData.length > 0 && !!hasMoreHistoryRef.current,
       backward: false,
     });
   }, [symbol, transformDataForKLineChart]);
