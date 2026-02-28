@@ -8,6 +8,7 @@ import ChartLayoutSelector, { CHART_LAYOUTS } from '../components/charts/ChartLa
 import RealtimeIndicator from '../components/market/RealtimeIndicator';
 import Input from '../components/common/Input';
 import UserAccountMenu from '../components/common/UserAccountMenu';
+import TopNav from '../components/common/TopNav';
 import { cn } from '../utils/cn';
 import CreateWatchlistModal from '../components/market/CreateWatchlistModal';
 import { Link, useNavigate } from 'react-router-dom';
@@ -338,11 +339,11 @@ const Market = () => {
       />
       <div className="flex flex-col h-screen bg-background overflow-hidden font-sans">
         {/* Page Global Header */}
-        <header className="flex items-center justify-between px-4 h-14 shrink-0 z-20 bg-surface border-b border-border">
+        <header className="flex items-center px-4 h-14 shrink-0 z-20 bg-surface border-b border-border gap-3">
           <button
             type="button"
             onClick={() => navigate(ROUTES.MARKET_MAP)}
-            className="group flex items-center gap-2.5 transition-all"
+            className="group flex items-center gap-2.5 transition-all shrink-0"
             title="Switch to Market Map"
           >
             <div className="p-1.5 rounded-lg border transition-colors" style={{ background: 'rgba(14,165,233,0.1)', borderColor: 'rgba(14,165,233,0.25)' }}>
@@ -353,7 +354,14 @@ const Market = () => {
             </span>
           </button>
 
-          <UserAccountMenu />
+          {/* Center: top navigation */}
+          <div className="flex-1 flex justify-center overflow-x-auto scrollbar-none">
+            <TopNav />
+          </div>
+
+          <div className="shrink-0">
+            <UserAccountMenu />
+          </div>
         </header>
 
         <div ref={splitContainerRef} className="flex flex-1 min-h-0 overflow-hidden">

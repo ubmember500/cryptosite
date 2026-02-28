@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useNavigate, Link } from 'react-router-dom';
-import { Search, Sun, Moon, Settings } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Search, Sun, Moon } from 'lucide-react';
 import { useMarketStore } from '../../store/marketStore';
 import { useLanguageStore } from '../../store/languageStore';
 import { useThemeStore } from '../../store/themeStore';
 import UserAccountMenu from '../common/UserAccountMenu';
+import TopNav from '../common/TopNav';
 import i18n from '../../i18n';
 
 const Navbar = () => {
@@ -46,34 +47,35 @@ const Navbar = () => {
 
   return (
     <header className="bg-surface border-b border-border shadow-sm z-10">
-      <div className="flex items-center justify-between h-16 px-6">
-        {/* Mobile menu button could go here */}
-        
-        {/* Search */}
-        <div className="flex-1 flex justify-center lg:justify-start">
-          <div className="w-full max-w-lg lg:max-w-xs">
-            <label htmlFor="search" className="sr-only">{t('Search')}</label>
-            <div className="relative">
-              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                <Search className="h-5 w-5 text-textSecondary" />
-              </div>
-              <form onSubmit={handleSearch}>
-                <input
-                  id="search"
-                  name="search"
-                  className="block w-full pl-10 pr-3 py-2 border border-border rounded-md leading-5 bg-surfaceHover text-textPrimary placeholder-textSecondary focus:outline-none focus:bg-surface focus:border-accent focus:ring-accent sm:text-sm transition-colors"
-                  placeholder={t('Search coins...')}
-                  type="search"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                />
-              </form>
+      <div className="flex items-center h-14 px-4 gap-3">
+        {/* Left: search */}
+        <div className="shrink-0 w-44">
+          <label htmlFor="search" className="sr-only">{t('Search')}</label>
+          <div className="relative">
+            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+              <Search className="h-4 w-4 text-textSecondary" />
             </div>
+            <form onSubmit={handleSearch}>
+              <input
+                id="search"
+                name="search"
+                className="block w-full pl-9 pr-2 py-1.5 border border-border rounded-md leading-5 bg-surfaceHover text-textPrimary placeholder-textSecondary focus:outline-none focus:bg-surface focus:border-accent focus:ring-accent text-xs transition-colors"
+                placeholder={t('Search coins...')}
+                type="search"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+            </form>
           </div>
         </div>
 
-        {/* Right side: language switcher, notifications, user */}
-        <div className="ml-4 flex items-center md:ml-6 space-x-4">
+        {/* Center: top navigation */}
+        <div className="flex-1 flex justify-center overflow-x-auto scrollbar-none">
+          <TopNav />
+        </div>
+
+        {/* Right: language switcher, theme toggle, user menu */}
+        <div className="shrink-0 flex items-center gap-2">
           <div className="flex items-center rounded-lg border border-border bg-surfaceHover/50 p-0.5" role="group" aria-label="Language">
             <button
               type="button"
@@ -92,25 +94,17 @@ const Navbar = () => {
           </div>
 
           <button
-              type="button"
-              onClick={toggleTheme}
-              className="p-1.5 rounded-full text-textSecondary hover:text-textPrimary focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-surface focus:ring-accent"
-              aria-label={theme === 'dark' ? t('Switch to light theme') : t('Switch to dark theme')}
-            >
-              {theme === 'dark' ? (
-                <Sun className="h-5 w-5" />
-              ) : (
-                <Moon className="h-5 w-5" />
-              )}
-            </button>
-
-          <Link
-              to="/settings"
-              className="p-1.5 rounded-full hover:text-textPrimary focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-surface focus:ring-accent"
-              aria-label="Settings"
-            >
-              <Settings className="h-5 w-5" style={{ color: '#2dd4bf' }} />
-            </Link>
+            type="button"
+            onClick={toggleTheme}
+            className="p-1.5 rounded-full text-textSecondary hover:text-textPrimary focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-surface focus:ring-accent"
+            aria-label={theme === 'dark' ? t('Switch to light theme') : t('Switch to dark theme')}
+          >
+            {theme === 'dark' ? (
+              <Sun className="h-4 w-4" />
+            ) : (
+              <Moon className="h-4 w-4" />
+            )}
+          </button>
 
           <UserAccountMenu chipClassName="border-border bg-surface px-2.5 py-1.5 hover:bg-surfaceHover focus:ring-accent focus:ring-offset-2 focus:ring-offset-surface" />
         </div>
