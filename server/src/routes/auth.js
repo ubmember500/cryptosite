@@ -55,4 +55,32 @@ router.get('/debug-email', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/auth/setup-sendgrid?secret=<secret>
+ * Diagnostic endpoint — lists verified SendGrid senders and helps fix sender issues.
+ * Protected by DEBUG_EMAIL_SECRET env var.
+ */
+router.get('/setup-sendgrid', async (req, res) => {
+  const secret = process.env.DEBUG_EMAIL_SECRET || 'debug123';
+  if (req.query.secret !== secret) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  try {
+    const { isSendGridConfigured, getVerifiedSendGridSenders, getSendGridApiKey } = require('../utils/email');
+    if (!isSendGridConfigured()) {
+      return res.json({ configured: false, message: 'SENDGRID_API_KEY not set' });
+    }
+    const senders = await getVerifiedSendGridSenders();
+    res.json({
+      configured: true,
+      verifiedSenders: senders,
+      hint: senders.length === 0
+        ? 'No verified senders found. Go to https://app.sendgrid.com/settings/sender_auth → "Verify a Single Sender" → verify your email address.'
+        : `Found ${senders.length} verified sender(s). The first one (${senders[0].fromEmail}) will be auto-used if SENDGRID_FROM is not set or not verified.`,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

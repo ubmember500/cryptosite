@@ -207,27 +207,61 @@ function buildResetEmailHtml(resetLink) {
 }
 
 /**
- * Send password reset email via SendGrid (Twilio) HTTP API.
- *
- * SendGrid free tier: 100 emails/day. Industry standard for transactional email.
- * No domain verification needed to start (single sender verification).
- * Sign up at sendgrid.com.
+ * Call a SendGrid API GET endpoint.
+ * Returns parsed JSON body.
  */
-async function sendViaSendGrid(toEmail, subject, text, html) {
+function sendGridGet(apiKey, path) {
+  const https = require('https');
+  return new Promise((resolve, reject) => {
+    const req = https.request(
+      {
+        hostname: 'api.sendgrid.com',
+        path,
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        timeout: 15_000,
+      },
+      (res) => {
+        let data = '';
+        res.on('data', (chunk) => (data += chunk));
+        res.on('end', () => {
+          try { resolve({ status: res.statusCode, body: JSON.parse(data) }); }
+          catch { resolve({ status: res.statusCode, body: data }); }
+        });
+      },
+    );
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('SendGrid API request timed out')); });
+    req.end();
+  });
+}
+
+/**
+ * Fetch verified senders from SendGrid.
+ * Returns an array of { fromEmail, fromName, verified } objects.
+ */
+async function getVerifiedSendGridSenders() {
   const apiKey = getSendGridApiKey();
-  const fromRaw = getSendGridFrom();
-
-  // Parse "Name <email>" format or plain email
-  let senderName = 'CryptoAlerts';
-  let senderEmail = fromRaw;
-  const match = fromRaw.match(/^(.+?)\s*<(.+?)>$/);
-  if (match) {
-    senderName = match[1].trim();
-    senderEmail = match[2].trim();
+  if (!apiKey) return [];
+  try {
+    const { body } = await sendGridGet(apiKey, '/v3/verified_senders');
+    const senders = body?.results || [];
+    return senders
+      .filter((s) => s.verified)
+      .map((s) => ({ fromEmail: s.from_email, fromName: s.from_name || s.nickname || 'CryptoAlerts' }));
+  } catch (err) {
+    console.error('[Email/SendGrid] Failed to fetch verified senders:', err.message);
+    return [];
   }
+}
 
-  console.log(`[Email/SendGrid] Sending to ${toEmail} from ${senderName} <${senderEmail}>`);
-
+/**
+ * Internal: actually send the email via SendGrid REST API.
+ */
+async function sendGridMailSend(apiKey, senderEmail, senderName, toEmail, subject, text, html) {
   const https = require('https');
   const payload = JSON.stringify({
     personalizations: [{ to: [{ email: toEmail }] }],
@@ -275,8 +309,66 @@ async function sendViaSendGrid(toEmail, subject, text, html) {
     req.write(payload);
     req.end();
   });
+}
 
-  console.log('[Email/SendGrid] ✅ Password reset sent to', toEmail);
+/**
+ * Send password reset email via SendGrid (Twilio) HTTP API.
+ *
+ * SendGrid free tier: 100 emails/day. Industry standard for transactional email.
+ * No domain verification needed to start (single sender verification).
+ * Sign up at sendgrid.com.
+ *
+ * Self-healing: if the configured "from" address is not verified, automatically
+ * fetches the list of verified senders from SendGrid and retries with the first
+ * verified sender it finds. This means it works out-of-the-box as soon as the
+ * user creates a SendGrid account (since the signup email is auto-verified).
+ */
+async function sendViaSendGrid(toEmail, subject, text, html) {
+  const apiKey = getSendGridApiKey();
+  const fromRaw = getSendGridFrom();
+
+  // Parse "Name <email>" format or plain email
+  let senderName = 'CryptoAlerts';
+  let senderEmail = fromRaw;
+  const match = fromRaw.match(/^(.+?)\s*<(.+?)>$/);
+  if (match) {
+    senderName = match[1].trim();
+    senderEmail = match[2].trim();
+  }
+
+  console.log(`[Email/SendGrid] Sending to ${toEmail} from ${senderName} <${senderEmail}>`);
+
+  try {
+    await sendGridMailSend(apiKey, senderEmail, senderName, toEmail, subject, text, html);
+    console.log('[Email/SendGrid] ✅ Password reset sent to', toEmail);
+    return;
+  } catch (firstErr) {
+    // If the error is specifically about unverified sender, try auto-detecting
+    if (!firstErr.message.includes('verified Sender Identity') && !firstErr.message.includes('Sender Identity')) {
+      throw firstErr;
+    }
+
+    console.warn(`[Email/SendGrid] Sender <${senderEmail}> is not verified. Auto-detecting verified senders...`);
+    const verifiedSenders = await getVerifiedSendGridSenders();
+
+    if (verifiedSenders.length === 0) {
+      console.error('[Email/SendGrid] No verified senders found in SendGrid account.');
+      throw new Error(
+        `SendGrid: from address <${senderEmail}> is not verified and no other verified senders found. ` +
+        'Go to https://app.sendgrid.com/settings/sender_auth → Verify a Single Sender → verify your email.'
+      );
+    }
+
+    const fallback = verifiedSenders[0];
+    console.log(`[Email/SendGrid] Found verified sender: ${fallback.fromName} <${fallback.fromEmail}>. Retrying...`);
+
+    try {
+      await sendGridMailSend(apiKey, fallback.fromEmail, fallback.fromName, toEmail, subject, text, html);
+      console.log(`[Email/SendGrid] ✅ Password reset sent to ${toEmail} (via auto-detected sender: ${fallback.fromEmail})`);
+    } catch (retryErr) {
+      throw retryErr;
+    }
+  }
 }
 
 /**
@@ -733,5 +825,7 @@ module.exports = {
   isSmtpConfigured,
   isResendConfigured,
   logEmailStatus,
+  getVerifiedSendGridSenders,
+  getSendGridApiKey,
   getResetLink: (token) => `${getFrontendUrl().replace(/\/$/, '')}/reset-password?token=${encodeURIComponent(token)}`,
 };
