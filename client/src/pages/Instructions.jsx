@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
+import i18n from '../i18n';
+import { useLanguageStore } from '../store/languageStore';
 import {
   TrendingUp, ArrowLeft, Menu, X, ChevronRight,
   LayoutGrid, Bell, Bot, Layers, List, Star,
@@ -10,20 +12,36 @@ import {
 /* ─────────────────────────────────────────────
    TABLE OF CONTENTS CONFIG
 ───────────────────────────────────────────── */
-const TOC = [
-  { id: 'welcome',        label: '👋 Welcome',            group: 'Getting Started' },
-  { id: 'market',         label: '📊 Market',              group: 'Features' },
-  { id: 'market-map',     label: '🗺️ Market Map',          group: 'Features' },
-  { id: 'alerts',         label: '🔔 Alerts Overview',     group: 'Features' },
-  { id: 'price-alerts',   label: '🎯 Price Alerts',        group: 'Features' },
-  { id: 'complex-alerts', label: '⚡ Complex Alerts',      group: 'Features' },
-  { id: 'telegram',       label: '📱 Telegram Bots',       group: 'Notifications' },
-  { id: 'wall-scanner',   label: '🧱 Wall Scanner',        group: 'Features' },
-  { id: 'listings',       label: '📋 Listings',            group: 'Features' },
-  { id: 'watchlist',      label: '⭐ Watchlist',           group: 'Tools' },
-  { id: 'subscription',   label: '💎 Subscription',        group: 'Account' },
-  { id: 'account',        label: '👤 Account & Profile',   group: 'Account' },
-];
+const TOC_BY_LANG = {
+  en: [
+    { id: 'welcome',        label: '👋 Welcome',            group: 'Getting Started' },
+    { id: 'market',         label: '📊 Market',              group: 'Features' },
+    { id: 'market-map',     label: '🗺️ Market Map',          group: 'Features' },
+    { id: 'alerts',         label: '🔔 Alerts Overview',     group: 'Features' },
+    { id: 'price-alerts',   label: '🎯 Price Alerts',        group: 'Features' },
+    { id: 'complex-alerts', label: '⚡ Complex Alerts',      group: 'Features' },
+    { id: 'telegram',       label: '📱 Telegram Bots',       group: 'Notifications' },
+    { id: 'wall-scanner',   label: '🧱 Wall Scanner',        group: 'Features' },
+    { id: 'listings',       label: '📋 Listings',            group: 'Features' },
+    { id: 'watchlist',      label: '⭐ Watchlist',           group: 'Tools' },
+    { id: 'subscription',   label: '💎 Subscription',        group: 'Account' },
+    { id: 'account',        label: '👤 Account & Profile',   group: 'Account' },
+  ],
+  ru: [
+    { id: 'welcome',        label: '👋 Добро пожаловать',    group: 'Начало работы' },
+    { id: 'market',         label: '📊 Рынок',               group: 'Функции' },
+    { id: 'market-map',     label: '🗺️ Карта рынка',         group: 'Функции' },
+    { id: 'alerts',         label: '🔔 Обзор оповещений',    group: 'Функции' },
+    { id: 'price-alerts',   label: '🎯 Ценовые оповещения',  group: 'Функции' },
+    { id: 'complex-alerts', label: '⚡ Сложные оповещения',   group: 'Функции' },
+    { id: 'telegram',       label: '📱 Telegram-боты',       group: 'Уведомления' },
+    { id: 'wall-scanner',   label: '🧱 Сканер стенок',       group: 'Функции' },
+    { id: 'listings',       label: '📋 Листинги',            group: 'Функции' },
+    { id: 'watchlist',      label: '⭐ Вотчлист',            group: 'Инструменты' },
+    { id: 'subscription',   label: '💎 Подписка',            group: 'Аккаунт' },
+    { id: 'account',        label: '👤 Аккаунт и профиль',   group: 'Аккаунт' },
+  ],
+};
 
 /* ─────────────────────────────────────────────
    SMALL REUSABLE COMPONENTS
@@ -78,6 +96,14 @@ const Instructions = () => {
   const [activeId, setActiveId] = useState('welcome');
   const [mobileOpen, setMobileOpen] = useState(false);
   const contentRef = useRef(null);
+  const language = useLanguageStore((state) => state.language);
+  const setLanguage = useLanguageStore((state) => state.setLanguage);
+  const currentTOC = TOC_BY_LANG[language] || TOC_BY_LANG.en;
+
+  const handleLanguageChange = (lang) => {
+    setLanguage(lang);
+    i18n.changeLanguage(lang);
+  };
 
   /* IntersectionObserver: highlight active TOC item while scrolling */
   useEffect(() => {
@@ -89,12 +115,12 @@ const Instructions = () => {
       },
       { rootMargin: '-10% 0px -80% 0px', threshold: 0 }
     );
-    TOC.forEach(({ id }) => {
+    currentTOC.forEach(({ id }) => {
       const el = document.getElementById(id);
       if (el) observer.observe(el);
     });
     return () => observer.disconnect();
-  }, []);
+  }, [currentTOC]);
 
   const scrollTo = (id) => {
     const el = document.getElementById(id);
@@ -103,7 +129,7 @@ const Instructions = () => {
   };
 
   /* Group TOC items */
-  const groups = TOC.reduce((acc, item) => {
+  const groups = currentTOC.reduce((acc, item) => {
     if (!acc[item.group]) acc[item.group] = [];
     acc[item.group].push(item);
     return acc;
@@ -130,17 +156,35 @@ const Instructions = () => {
               CryptoAlerts
             </span>
             <ChevronRight className="h-4 w-4 text-textSecondary" />
-            <span className="text-sm font-medium text-textSecondary">User Guide</span>
+            <span className="text-sm font-medium text-textSecondary">{language === 'ru' ? 'Руководство' : 'User Guide'}</span>
           </div>
         </div>
-        {/* Right: back to app */}
-        <Link
-          to="/account"
-          className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surfaceHover px-3 py-1.5 text-xs font-medium text-textSecondary hover:text-textPrimary hover:bg-surface transition-colors"
-        >
-          <ArrowLeft className="h-3.5 w-3.5" />
-          Back to App
-        </Link>
+        <div className="flex items-center gap-2">
+          <div className="flex items-center rounded-lg border border-border bg-surfaceHover/50 p-0.5" role="group" aria-label="Language">
+            <button
+              type="button"
+              onClick={() => handleLanguageChange('en')}
+              className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-offset-surface focus:ring-accent ${language === 'en' ? 'bg-accent text-white' : 'text-textSecondary hover:text-textPrimary'}`}
+            >
+              EN
+            </button>
+            <button
+              type="button"
+              onClick={() => handleLanguageChange('ru')}
+              className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-offset-surface focus:ring-accent ${language === 'ru' ? 'bg-accent text-white' : 'text-textSecondary hover:text-textPrimary'}`}
+            >
+              RUS
+            </button>
+          </div>
+
+          <Link
+            to="/account"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surfaceHover px-3 py-1.5 text-xs font-medium text-textSecondary hover:text-textPrimary hover:bg-surface transition-colors"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" />
+            {language === 'ru' ? 'Назад в приложение' : 'Back to App'}
+          </Link>
+        </div>
       </header>
 
       <div className="flex flex-1 overflow-hidden">
@@ -163,7 +207,7 @@ const Instructions = () => {
         >
           <div className="mb-4 px-2">
             <span className="text-[10px] font-bold uppercase tracking-widest text-textSecondary">
-              Documentation
+              {language === 'ru' ? 'Документация' : 'Documentation'}
             </span>
           </div>
 
@@ -206,10 +250,10 @@ const Instructions = () => {
           <section id="welcome">
             <div className="inline-flex items-center gap-2 rounded-full border border-accent/30 bg-accent/10 px-3 py-1 text-xs font-medium text-accent mb-4">
               <BookOpen className="h-3.5 w-3.5" />
-              User Guide — February 2026
+              {language === 'ru' ? 'Руководство — Февраль 2026' : 'User Guide — February 2026'}
             </div>
             <h1 className="text-4xl font-extrabold text-textPrimary mb-4 leading-tight">
-              👋 Welcome to CryptoAlerts
+              {language === 'ru' ? '👋 Добро пожаловать в CryptoAlerts' : '👋 Welcome to CryptoAlerts'}
             </h1>
             <p className="text-lg text-textSecondary leading-relaxed mb-6">
               CryptoAlerts is a <strong className="text-textPrimary">real-time cryptocurrency monitoring and alerting platform</strong> that connects
@@ -221,7 +265,7 @@ const Instructions = () => {
               No more watching multiple exchange tabs. Set your conditions once and let CryptoAlerts notify you the instant something happens.
             </Callout>
 
-            <SubHeading>Supported Exchanges</SubHeading>
+            <SubHeading>{language === 'ru' ? 'Поддерживаемые биржи' : 'Supported Exchanges'}</SubHeading>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-6">
               {['Binance', 'Bybit', 'OKX', 'Gate.io', 'MEXC', 'Bitget'].map((ex) => (
                 <div key={ex} className="flex items-center gap-2 rounded-lg border border-border bg-surface/60 px-3 py-2 text-sm font-medium text-textPrimary">
@@ -231,7 +275,7 @@ const Instructions = () => {
               ))}
             </div>
 
-            <SubHeading>What's inside</SubHeading>
+            <SubHeading>{language === 'ru' ? 'Что внутри' : "What's inside"}</SubHeading>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <FeatureCard icon={TrendingUp} color="#22d3ee" title="Live Market Charts" desc="Real-time candlestick charts for any token on any exchange, spot or futures." />
               <FeatureCard icon={LayoutGrid} color="#a78bfa" title="Market Map" desc="See the most volatile tokens right now, ranked by activity — updated every 5 seconds." />
@@ -732,10 +776,10 @@ const Instructions = () => {
 
           {/* Footer */}
           <div className="text-center text-xs text-textSecondary pb-8">
-            <p>CryptoAlerts User Guide · Last updated February 2026</p>
+            <p>{language === 'ru' ? 'Руководство CryptoAlerts · Обновлено в феврале 2026' : 'CryptoAlerts User Guide · Last updated February 2026'}</p>
             <Link to="/account" className="inline-flex items-center gap-1 mt-2 text-accent hover:underline">
               <ArrowLeft className="h-3 w-3" />
-              Back to the app
+              {language === 'ru' ? 'Назад в приложение' : 'Back to the app'}
             </Link>
           </div>
 
