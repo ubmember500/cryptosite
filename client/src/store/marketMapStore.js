@@ -8,10 +8,11 @@ const SUPPORTED_MARKET_MAP_EXCHANGES = ['binance', 'bybit'];
 const DEFAULT_MARKET_MAP_EXCHANGE = 'binance';
 const DEFAULT_EXCHANGE_TYPE = 'futures';
 const DEFAULT_INTERVAL = '5m';
-const DEFAULT_VISIBLE_KLINE_LIMIT = 720;
+const DEFAULT_VISIBLE_KLINE_LIMIT = 200;  // initial load — enough to fill a card
+const FAST_KLINE_LIMIT = 200;             // direct-exchange fetch limit
 const MIN_VISIBLE_KLINE_POINTS = 3;
-const VISIBLE_FETCH_CONCURRENCY = 6;
-const PREFETCH_VISIBLE_MULTIPLIER = 3;
+const VISIBLE_FETCH_CONCURRENCY = 16;     // used only for loadOlderVisibleHistory
+const PREFETCH_VISIBLE_MULTIPLIER = 1;    // no background over-fetch on initial load
 const CARD_CHANGE_HIGHLIGHT_MS = 12000;
 const VALID_SYMBOL_REGEX = /^[A-Z0-9]+$/;
 const DEFAULT_RANK_REFRESH_MS = 5000;
@@ -22,7 +23,7 @@ const BINANCE_FUTURES_BASE_URLS = [
   'https://www.binance.com/fapi/v1',
 ];
 const MARKET_MAP_CACHE_KEY = 'market-map-snapshot-v1';
-const MARKET_MAP_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
+const MARKET_MAP_CACHE_MAX_AGE_MS = 15 * 60 * 1000; // cache valid for 15 min — WS keeps data fresh
 
 const toFiniteNumber = (value) => {
   const parsed = Number(value);
@@ -798,22 +799,13 @@ export const useMarketMapStore = create((set, get) => ({
     const visible = get().visibleSymbols;
     if (!Array.isArray(visible) || visible.length === 0) return;
 
-    const rankedSymbols = Array.isArray(get().rankedSymbols) ? get().rankedSymbols : [];
-    const selectedCount = Number(get().selectedCount || visible.length || DEFAULT_COUNT);
-    const prefetchLimit = Math.max(
-      selectedCount,
-      Math.min(rankedSymbols.length || selectedCount, selectedCount * PREFETCH_VISIBLE_MULTIPLIER)
-    );
-    const targets = (rankedSymbols.length > 0 ? rankedSymbols.slice(0, prefetchLimit) : visible)
-      .filter((row) => row?.symbol);
-    const visibleSet = new Set(visible.map((row) => row.symbol));
-
     const selectedExchange = SUPPORTED_MARKET_MAP_EXCHANGES.includes(get().selectedExchange)
       ? get().selectedExchange
       : DEFAULT_MARKET_MAP_EXCHANGE;
     const isBinance = selectedExchange === 'binance';
     const isBybit = selectedExchange === 'bybit';
 
+    // ── Step 1: mark visible cards as loading unless already cached ─────────
     set((state) => {
       const nextLoading = { ...state.cardLoadingBySymbol };
       const nextErrors = { ...state.cardErrorBySymbol };
@@ -824,7 +816,6 @@ export const useMarketMapStore = create((set, get) => ({
           ? state.klinesBySymbol[row.symbol]
           : [];
         const hasUsableCache = cached.length >= MIN_VISIBLE_KLINE_POINTS;
-
         nextLoading[row.symbol] = !hasUsableCache;
         nextErrors[row.symbol] = null;
         nextHistoryReady[row.symbol] = hasUsableCache;
@@ -837,68 +828,46 @@ export const useMarketMapStore = create((set, get) => ({
       };
     });
 
-    await mapWithConcurrency(
-      targets,
-      async (row) => {
-        const isVisibleCard = visibleSet.has(row.symbol);
-        const cachedBeforeFetch = get().klinesBySymbol[row.symbol] || [];
-        if (!isVisibleCard && Array.isArray(cachedBeforeFetch) && cachedBeforeFetch.length >= MIN_VISIBLE_KLINE_POINTS) {
-          return null;
-        }
+    // ── Step 2: direct-exchange fetch — bypasses backend for speed ──────────
+    //   • Binance → Vercel edge function /api/binance-klines (no server roundtrip)
+    //   • Bybit   → api.bybit.com directly
+    //   All visible cards fetched in parallel with Promise.all
+    const fetchDirect = async (symbol) => {
+      if (isBinance) {
+        return fetchBinanceFuturesKlinesDirect(symbol, DEFAULT_INTERVAL, FAST_KLINE_LIMIT);
+      }
+      if (isBybit) {
+        return fetchBybitFuturesKlinesDirect(symbol, DEFAULT_INTERVAL, FAST_KLINE_LIMIT);
+      }
+      // Fallback for any future exchange: backend API
+      const response = await api.get(`/market/${selectedExchange}/klines`, {
+        params: {
+          symbol,
+          exchangeType: DEFAULT_EXCHANGE_TYPE,
+          interval: DEFAULT_INTERVAL,
+          limit: FAST_KLINE_LIMIT,
+        },
+      });
+      return Array.isArray(response?.data?.klines) ? response.data.klines : [];
+    };
 
+    await Promise.all(
+      visible.map(async (row) => {
+        const { symbol } = row;
         try {
-          const response = await api.get(`/market/${selectedExchange}/klines`, {
-            params: {
-              symbol: row.symbol,
-              exchangeType: DEFAULT_EXCHANGE_TYPE,
-              interval: DEFAULT_INTERVAL,
-              limit: DEFAULT_VISIBLE_KLINE_LIMIT,
-            },
-          });
+          const klines = await fetchDirect(symbol);
 
-          let klines = Array.isArray(response?.data?.klines) ? response.data.klines : [];
-
-          if (isBinance && klines.length < MIN_VISIBLE_KLINE_POINTS) {
-            try {
-              const directKlines = await fetchBinanceFuturesKlinesDirect(
-                row.symbol,
-                DEFAULT_INTERVAL,
-                DEFAULT_VISIBLE_KLINE_LIMIT
-              );
-              if (Array.isArray(directKlines) && directKlines.length > klines.length) {
-                klines = directKlines;
-              }
-            } catch {
-              // Keep backend result/error path
-            }
-          }
-
-          if (isBybit && klines.length < MIN_VISIBLE_KLINE_POINTS) {
-            try {
-              const directKlines = await fetchBybitFuturesKlinesDirect(
-                row.symbol,
-                DEFAULT_INTERVAL,
-                DEFAULT_VISIBLE_KLINE_LIMIT
-              );
-              if (Array.isArray(directKlines) && directKlines.length > klines.length) {
-                klines = directKlines;
-              }
-            } catch {
-              // Keep backend result/error path
-            }
-          }
-
-          if (klines.length < MIN_VISIBLE_KLINE_POINTS) {
-            throw new Error(`Insufficient chart data returned for ${row.symbol}`);
+          if (!Array.isArray(klines) || klines.length < MIN_VISIBLE_KLINE_POINTS) {
+            throw new Error(`Insufficient chart data returned for ${symbol}`);
           }
 
           set((state) => {
-            const queuedRealtime = state.queuedRealtimeBySymbol[row.symbol];
+            const queuedRealtime = state.queuedRealtimeBySymbol[symbol];
             const mergedWithQueued = queuedRealtime
               ? mergeCandlesByTime(klines, [queuedRealtime])
               : klines;
 
-            const prevKlines = state.klinesBySymbol[row.symbol] || [];
+            const prevKlines = state.klinesBySymbol[symbol] || [];
             const nextKlines = areKlinesEquivalent(prevKlines, mergedWithQueued)
               ? prevKlines
               : mergedWithQueued;
@@ -907,11 +876,11 @@ export const useMarketMapStore = create((set, get) => ({
             return {
               klinesBySymbol: {
                 ...state.klinesBySymbol,
-                [row.symbol]: nextKlines,
+                [symbol]: nextKlines,
               },
               chartHistoryBySymbol: {
                 ...state.chartHistoryBySymbol,
-                [row.symbol]: {
+                [symbol]: {
                   earliestTime,
                   hasMoreHistory: nextKlines.length > 0,
                   loadingOlder: false,
@@ -919,72 +888,48 @@ export const useMarketMapStore = create((set, get) => ({
               },
               cardLoadingBySymbol: {
                 ...state.cardLoadingBySymbol,
-                [row.symbol]: false,
+                [symbol]: false,
               },
               cardErrorBySymbol: {
                 ...state.cardErrorBySymbol,
-                [row.symbol]: null,
+                [symbol]: null,
               },
               historyReadyBySymbol: {
                 ...state.historyReadyBySymbol,
-                [row.symbol]: true,
+                [symbol]: true,
               },
               queuedRealtimeBySymbol: {
                 ...state.queuedRealtimeBySymbol,
-                [row.symbol]: null,
+                [symbol]: null,
               },
               dataUpdatedAtBySymbol: {
                 ...state.dataUpdatedAtBySymbol,
-                [row.symbol]: Date.now(),
+                [symbol]: Date.now(),
               },
             };
           });
         } catch (error) {
-          const fallbackCached = get().klinesBySymbol[row.symbol] || [];
-          if (!isVisibleCard || (Array.isArray(fallbackCached) && fallbackCached.length >= MIN_VISIBLE_KLINE_POINTS)) {
+          const fallbackCached = get().klinesBySymbol[symbol] || [];
+          if (Array.isArray(fallbackCached) && fallbackCached.length >= MIN_VISIBLE_KLINE_POINTS) {
+            // Already have cached data — just clear the loading spinner
             set((state) => ({
-              cardLoadingBySymbol: {
-                ...state.cardLoadingBySymbol,
-                [row.symbol]: false,
-              },
-              cardErrorBySymbol: {
-                ...state.cardErrorBySymbol,
-                [row.symbol]: null,
-              },
-              historyReadyBySymbol: {
-                ...state.historyReadyBySymbol,
-                [row.symbol]: true,
+              cardLoadingBySymbol: { ...state.cardLoadingBySymbol, [symbol]: false },
+              cardErrorBySymbol:   { ...state.cardErrorBySymbol,   [symbol]: null },
+              historyReadyBySymbol:{ ...state.historyReadyBySymbol,[symbol]: true },
+            }));
+          } else {
+            set((state) => ({
+              cardLoadingBySymbol:  { ...state.cardLoadingBySymbol,  [symbol]: false },
+              cardErrorBySymbol:    { ...state.cardErrorBySymbol,    [symbol]: error?.message || `Failed to load ${symbol}` },
+              historyReadyBySymbol: { ...state.historyReadyBySymbol, [symbol]: false },
+              chartHistoryBySymbol: {
+                ...state.chartHistoryBySymbol,
+                [symbol]: { ...(state.chartHistoryBySymbol[symbol] || {}), loadingOlder: false },
               },
             }));
-            return null;
           }
-
-          set((state) => ({
-            cardLoadingBySymbol: {
-              ...state.cardLoadingBySymbol,
-              [row.symbol]: false,
-            },
-            cardErrorBySymbol: {
-              ...state.cardErrorBySymbol,
-              [row.symbol]: error?.message || `Failed to load ${row.symbol} chart`,
-            },
-            historyReadyBySymbol: {
-              ...state.historyReadyBySymbol,
-              [row.symbol]: false,
-            },
-            chartHistoryBySymbol: {
-              ...state.chartHistoryBySymbol,
-              [row.symbol]: {
-                ...(state.chartHistoryBySymbol[row.symbol] || {}),
-                loadingOlder: false,
-              },
-            },
-          }));
         }
-
-        return null;
-      },
-      VISIBLE_FETCH_CONCURRENCY
+      })
     );
 
     get().persistSnapshot();
