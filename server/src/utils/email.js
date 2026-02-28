@@ -12,6 +12,13 @@
  */
 
 const nodemailer = require('nodemailer');
+const dns = require('dns');
+
+// Force IPv4 DNS resolution — Render/Railway containers often cannot
+// route to IPv6 endpoints (Gmail SMTP ENETUNREACH on 2607:f8b0:...).
+try { dns.setDefaultResultOrder('ipv4first'); } catch { /* Node < 16.4 */ }
+
+const EMAIL_CODE_VERSION = '2026-02-28-v4';
 
 /* ---------- helpers that read env on every call (no stale cache) ---------- */
 
@@ -330,6 +337,7 @@ async function sendPasswordResetEmail(toEmail, resetLink) {
  */
 async function debugEmailProviders(toEmail) {
   const results = {
+    codeVersion: EMAIL_CODE_VERSION,
     nodeVersion: process.version,
     resendConfigured: isResendConfigured(),
     smtpConfigured: isSmtpConfigured(),
