@@ -1,7 +1,7 @@
 import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { NavLink, Link } from 'react-router-dom';
-import { Bell, TrendingUp, User, LogOut, Bot, CreditCard, List, Layers, LayoutGrid, Settings } from 'lucide-react';
+import { Bell, TrendingUp, User, LogOut, Bot, CreditCard, List, Layers, LayoutGrid, Settings, BookOpen } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
 import { cn } from '../../utils/cn';
 
@@ -18,6 +18,7 @@ const Sidebar = () => {
     { path: '/market-map',    labelKey: 'Market Map',    icon: LayoutGrid, iconColor: '#a78bfa' }, // violet-400
     { path: '/telegram-bots', labelKey: 'Telegram Bots', icon: Bot,        iconColor: '#38bdf8' }, // sky-400
     { path: '/subscription',  labelKey: 'Subscription',  icon: CreditCard, iconColor: '#f472b6' }, // pink-400
+    { path: '/instructions',  labelKey: 'User Guide',    icon: BookOpen,   iconColor: '#e879f9' }, // fuchsia-400
     { path: '/settings',      labelKey: 'Settings',      icon: Settings,   iconColor: '#2dd4bf' }, // teal-400
   ];
 

@@ -35,6 +35,7 @@ import Listings from './pages/Listings';
 import WallScanner from './pages/WallScanner';
 import MarketMap from './pages/MarketMap';
 import Settings from './pages/Settings';
+import Instructions from './pages/Instructions';
 
 function App() {
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
@@ -139,6 +140,7 @@ function App() {
           {/* Public Market route */}
           <Route path="/market" element={<Market />} />
           <Route path="/market-map" element={<MarketMap />} />
+          <Route path="/instructions" element={<Instructions />} />
 
           {/* Protected routes */}
           <Route
