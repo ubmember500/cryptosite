@@ -373,38 +373,47 @@ async function clearSendGridRecipientSuppressions(email, options = {}) {
   let clearedBounces = false;
   let clearedInvalidEmails = false;
   let clearedSpamReports = false;
+  const details = {};
 
   try {
     const res = await sendGridDeleteWithBody(apiKey, '/v3/suppression/blocks', { emails: [String(email).trim().toLowerCase()] });
     clearedBlocks = res.status >= 200 && res.status < 300;
+    details.blocks = { status: res.status, body: res.body };
   } catch (err) {
     console.warn('[Email/SendGrid] Could not clear block suppression:', err.message);
+    details.blocks = { error: err.message };
   }
 
   try {
     const res = await sendGridDeleteWithBody(apiKey, '/v3/suppression/bounces', { emails: [String(email).trim().toLowerCase()] });
     clearedBounces = res.status >= 200 && res.status < 300;
+    details.bounces = { status: res.status, body: res.body };
   } catch (err) {
     console.warn('[Email/SendGrid] Could not clear bounce suppression:', err.message);
+    details.bounces = { error: err.message };
   }
 
   if (includeRisky) {
     try {
       const res = await sendGridDeleteWithBody(apiKey, '/v3/suppression/invalid_emails', { emails: [String(email).trim().toLowerCase()] });
       clearedInvalidEmails = res.status >= 200 && res.status < 300;
+      details.invalidEmails = { status: res.status, body: res.body };
     } catch (err) {
       console.warn('[Email/SendGrid] Could not clear invalid_email suppression:', err.message);
+      details.invalidEmails = { error: err.message };
     }
 
     try {
       const res = await sendGridDeleteWithBody(apiKey, '/v3/suppression/spam_reports', { emails: [String(email).trim().toLowerCase()] });
       clearedSpamReports = res.status >= 200 && res.status < 300;
+      details.spamReports = { status: res.status, body: res.body };
     } catch (err) {
       console.warn('[Email/SendGrid] Could not clear spam_report suppression:', err.message);
+      details.spamReports = { error: err.message };
     }
   }
 
-  return { clearedBlocks, clearedBounces, clearedInvalidEmails, clearedSpamReports };
+  return { clearedBlocks, clearedBounces, clearedInvalidEmails, clearedSpamReports, details };
 }
 
 /**
