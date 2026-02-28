@@ -1,27 +1,57 @@
-﻿const bybitService = require('./bybitService');
+﻿const WebSocket = require('ws');
+const bybitService = require('./bybitService');
 
-const SNAPSHOT_INTERVAL_MS = 10000;
+// Ring-buffer config (live 5-second snapshots via WebSocket)
+const SNAPSHOT_INTERVAL_MS = 5000;
 const WINDOW_MS = 5 * 60 * 1000;
 const RETENTION_MS = 7 * 60 * 1000;
 const STALE_AFTER_MS = 45000;
-const MAX_POINTS_PER_SYMBOL = 80;
-const MIN_POINTS_IN_WINDOW = 2;
+const MAX_POINTS_PER_SYMBOL = 180;
+const MIN_POINTS_IN_WINDOW = 3;
+const MAX_LAST_POINT_AGE_MS = 20000;
 const CACHE_TTL_MS = 30 * 1000;
 const CANDIDATE_COUNT = 200;
 const KLINE_CANDLES = 3;
 const KLINE_CONCURRENCY = 30;
-const MIN_LIVE_SCORED = 50;
+// Min scored symbols from live WS buffer before we use it over on-demand
+const MIN_LIVE_SCORED = 20;
+
+// WebSocket constants
+const WS_TICKER_URL = 'wss://stream.bybit.com/v5/public/linear';
+const WS_PING_INTERVAL_MS = 20000;
+const WS_RECONNECT_BASE_MS = 3000;
+const WS_RECONNECT_MAX_MS = 30000;
+const WS_SUBSCRIBE_BATCH_SIZE = 10;
+const WS_SUBSCRIBE_BATCH_DELAY_MS = 50;
+
+// Background snapshot interval (keeps volumeBySymbol / natrBySymbol fresh
+// even when the WS feed is new and hasn't seen all symbols yet)
+const FULL_SNAPSHOT_REFRESH_MS = 15000;
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 class BybitMarketMapService {
   constructor() {
     this.priceHistoryBySymbol = new Map();
     this.volumeBySymbol = new Map();
     this.natrBySymbol = new Map();
+    // Stores the last merged ticker state per symbol (Bybit sends deltas)
+    this.lastTickerStateBySymbol = new Map();
     this.lastTickAt = 0;
     this.lastError = null;
     this.isTicking = false;
     this.timer = null;
+    this.fullSnapshotTimer = null;
     this.started = false;
+
+    // WebSocket state
+    this.ws = null;
+    this.wsReconnectTimer = null;
+    this.wsReconnectAttempts = 0;
+    this.lastWsMessageAt = 0;
+    this.wsPingTimer = null;
+
+    // On-demand kline ranking cache (cold-start / WS-unavailable fallback)
     this.onDemandCache = null;
     this.isComputingOnDemand = false;
     this.onDemandError = null;
@@ -30,13 +60,203 @@ class BybitMarketMapService {
   start() {
     if (this.started) return;
     this.started = true;
+    this.startWsStream();
+    // Background REST snapshot keeps volumeBySymbol / natrBySymbol populated
+    // while the WS feed is warming up and for symbols the WS hasn't streamed yet.
     this.tick().catch(() => {});
-    this.timer = setInterval(() => { this.tick().catch(() => {}); }, SNAPSHOT_INTERVAL_MS);
+    this.fullSnapshotTimer = setInterval(() => {
+      this.tick().catch(() => {});
+    }, FULL_SNAPSHOT_REFRESH_MS);
+    // Trim stale ring-buffer entries periodically
+    this.timer = setInterval(() => {
+      const nowTs = Date.now();
+      for (const [symbol, history] of this.priceHistoryBySymbol.entries()) {
+        const trimmed = this.trimHistory(history, nowTs);
+        if (trimmed.length === 0) {
+          this.priceHistoryBySymbol.delete(symbol);
+          this.volumeBySymbol.delete(symbol);
+          this.natrBySymbol.delete(symbol);
+          this.lastTickerStateBySymbol.delete(symbol);
+          continue;
+        }
+        this.priceHistoryBySymbol.set(symbol, trimmed);
+      }
+    }, SNAPSHOT_INTERVAL_MS);
   }
 
   stop() {
+    if (this.wsPingTimer) { clearInterval(this.wsPingTimer); this.wsPingTimer = null; }
+    if (this.wsReconnectTimer) { clearTimeout(this.wsReconnectTimer); this.wsReconnectTimer = null; }
+    if (this.ws) {
+      try { this.ws.removeAllListeners(); } catch {}
+      try {
+        if (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING) {
+          this.ws.close();
+        }
+      } catch {}
+      this.ws = null;
+    }
     if (this.timer) { clearInterval(this.timer); this.timer = null; }
+    if (this.fullSnapshotTimer) { clearInterval(this.fullSnapshotTimer); this.fullSnapshotTimer = null; }
     this.started = false;
+  }
+
+  // ─── WebSocket stream ────────────────────────────────────────────────────────
+
+  startWsStream() {
+    if (!this.started) return;
+    if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
+      return;
+    }
+
+    const ws = new WebSocket(WS_TICKER_URL);
+    this.ws = ws;
+
+    ws.on('open', () => {
+      this.wsReconnectAttempts = 0;
+      this.lastError = null;
+      console.log('[BybitMarketMap] WS ticker stream connected');
+      this.subscribeToAllTickers().catch((err) => {
+        console.warn('[BybitMarketMap] WS subscribe error:', err?.message);
+      });
+      // Start heartbeat pings
+      if (this.wsPingTimer) clearInterval(this.wsPingTimer);
+      this.wsPingTimer = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          try { ws.send(JSON.stringify({ op: 'ping' })); } catch {}
+        }
+      }, WS_PING_INTERVAL_MS);
+    });
+
+    ws.on('message', (raw) => {
+      try {
+        const payload = JSON.parse(String(raw));
+        // Skip pong and subscribe ack messages
+        if (payload?.op === 'pong' || payload?.op === 'subscribe') return;
+        if (payload?.topic) {
+          this.handleWsTickerPayload(payload);
+        }
+      } catch (error) {
+        this.lastError = error?.message || 'Failed to parse Bybit WS payload';
+      }
+    });
+
+    ws.on('error', (error) => {
+      this.lastError = error?.message || 'Bybit WS stream error';
+      console.warn('[BybitMarketMap] WS error:', this.lastError);
+    });
+
+    ws.on('close', () => {
+      if (this.wsPingTimer) { clearInterval(this.wsPingTimer); this.wsPingTimer = null; }
+      if (this.ws === ws) { this.ws = null; }
+      if (this.started) { this.scheduleWsReconnect(); }
+    });
+  }
+
+  scheduleWsReconnect() {
+    if (!this.started) return;
+    if (this.wsReconnectTimer) return;
+
+    this.wsReconnectAttempts += 1;
+    const delay = Math.min(
+      WS_RECONNECT_BASE_MS * (2 ** Math.max(0, this.wsReconnectAttempts - 1)),
+      WS_RECONNECT_MAX_MS
+    );
+
+    this.wsReconnectTimer = setTimeout(() => {
+      this.wsReconnectTimer = null;
+      this.startWsStream();
+    }, delay);
+
+    console.warn(`[BybitMarketMap] WS reconnect scheduled in ${delay}ms`);
+  }
+
+  async subscribeToAllTickers() {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+
+    let symbols;
+    try {
+      const tokens = await bybitService.fetchTokensWithNATR('futures');
+      symbols = (tokens || [])
+        .map((t) => (typeof t?.fullSymbol === 'string' ? t.fullSymbol : null))
+        .filter(Boolean)
+        .filter((s) => s.endsWith('USDT'));
+    } catch (err) {
+      console.warn('[BybitMarketMap] Could not fetch symbol list for WS subscribe:', err?.message);
+      return;
+    }
+
+    const topics = symbols.map((s) => `tickers.${s}`);
+    let subscribed = 0;
+
+    for (let i = 0; i < topics.length; i += WS_SUBSCRIBE_BATCH_SIZE) {
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) break;
+      const batch = topics.slice(i, i + WS_SUBSCRIBE_BATCH_SIZE);
+      try {
+        this.ws.send(JSON.stringify({ op: 'subscribe', args: batch }));
+        subscribed += batch.length;
+      } catch {}
+      if (i + WS_SUBSCRIBE_BATCH_SIZE < topics.length) {
+        await sleep(WS_SUBSCRIBE_BATCH_DELAY_MS);
+      }
+    }
+
+    console.log(`[BybitMarketMap] WS subscribed to ${subscribed} ticker topics`);
+  }
+
+  handleWsTickerPayload(payload) {
+    // topic format: "tickers.BTCUSDT"
+    const topic = typeof payload?.topic === 'string' ? payload.topic : null;
+    if (!topic || !topic.startsWith('tickers.')) return;
+
+    const symbol = topic.slice('tickers.'.length);
+    if (!symbol || !symbol.endsWith('USDT')) return;
+
+    const incoming = payload?.data || {};
+
+    // Bybit sends full snapshots first, then deltas with only changed fields.
+    // Merge into last known state so we always have a complete picture.
+    const prev = this.lastTickerStateBySymbol.get(symbol) || {};
+    const merged = { ...prev, ...incoming };
+    this.lastTickerStateBySymbol.set(symbol, merged);
+
+    const lastPrice = Number(merged.lastPrice);
+    const volume24h = Number(merged.volume24h);
+    const highPrice24h = Number(merged.highPrice24h);
+    const lowPrice24h = Number(merged.lowPrice24h);
+
+    if (Number.isFinite(volume24h) && volume24h > 0) {
+      this.volumeBySymbol.set(symbol, volume24h);
+    }
+
+    if (
+      Number.isFinite(highPrice24h) && Number.isFinite(lowPrice24h) &&
+      Number.isFinite(lastPrice) && lastPrice > 0 && highPrice24h > 0 && lowPrice24h > 0
+    ) {
+      const instantNatr = ((highPrice24h - lowPrice24h) / lastPrice) * 100;
+      if (Number.isFinite(instantNatr) && instantNatr > 0) {
+        this.natrBySymbol.set(symbol, instantNatr);
+      }
+    }
+
+    if (!Number.isFinite(lastPrice) || lastPrice <= 0) return;
+
+    const nowTs = Date.now();
+    const existing = this.trimHistory(this.priceHistoryBySymbol.get(symbol), nowTs);
+    const last = existing[existing.length - 1];
+    const shouldAppend = !last || nowTs - Number(last.ts || 0) >= SNAPSHOT_INTERVAL_MS - 1000;
+
+    if (shouldAppend) {
+      existing.push({ ts: nowTs, price: lastPrice });
+    } else {
+      // Keep sample timestamp stable within interval so we accumulate enough
+      // distinct time-points for the 5m window
+      last.price = lastPrice;
+    }
+
+    this.priceHistoryBySymbol.set(symbol, existing.slice(-MAX_POINTS_PER_SYMBOL));
+    this.lastWsMessageAt = nowTs;
+    this.lastError = null;
   }
 
   async tick() {
@@ -55,10 +275,15 @@ class BybitMarketMapService {
         if (Number.isFinite(volume24h)) this.volumeBySymbol.set(symbol, volume24h);
         const natr = Number(token?.natr);
         if (Number.isFinite(natr) && natr > 0) this.natrBySymbol.set(symbol, natr);
+        // Only append price point from REST if WS hasn't streamed this symbol recently
+        const wsHistory = this.priceHistoryBySymbol.get(symbol);
+        const lastWsPointTs = wsHistory?.length ? Number(wsHistory[wsHistory.length - 1]?.ts || 0) : 0;
+        const wsFreshForSymbol = nowTs - lastWsPointTs < SNAPSHOT_INTERVAL_MS * 3;
+        if (wsFreshForSymbol) continue; // WS is covering this symbol — skip REST injection
         if (!Number.isFinite(lastPrice) || lastPrice <= 0) continue;
         const existing = this.trimHistory(this.priceHistoryBySymbol.get(symbol), nowTs);
         const last = existing[existing.length - 1];
-        const shouldAppend = !last || nowTs - Number(last.ts || 0) >= SNAPSHOT_INTERVAL_MS - 1000;
+        const shouldAppend = !last || nowTs - Number(last.ts || 0) >= FULL_SNAPSHOT_REFRESH_MS - 1000;
         if (shouldAppend) { existing.push({ ts: nowTs, price: lastPrice }); }
         else if (Number(last.price) !== lastPrice) { last.price = lastPrice; last.ts = nowTs; }
         this.priceHistoryBySymbol.set(symbol, existing.slice(-MAX_POINTS_PER_SYMBOL));
@@ -68,6 +293,7 @@ class BybitMarketMapService {
           this.priceHistoryBySymbol.delete(symbol);
           this.volumeBySymbol.delete(symbol);
           this.natrBySymbol.delete(symbol);
+          this.lastTickerStateBySymbol.delete(symbol);
         }
       }
       this.lastTickAt = nowTs;
@@ -94,6 +320,8 @@ class BybitMarketMapService {
     if (safe.length < MIN_POINTS_IN_WINDOW) return null;
     const inWindow = safe.filter((p) => Number(p?.ts) >= nowTs - WINDOW_MS);
     if (inWindow.length < MIN_POINTS_IN_WINDOW) return null;
+    const lastPointTs = Number(inWindow[inWindow.length - 1]?.ts || 0);
+    if (!Number.isFinite(lastPointTs) || nowTs - lastPointTs > MAX_LAST_POINT_AGE_MS) return null;
     const prices = inWindow.map((p) => p.price);
     const high = Math.max(...prices); const low = Math.min(...prices); const last = prices[prices.length - 1];
     if (!Number.isFinite(last) || last <= 0) return null;
@@ -233,9 +461,66 @@ class BybitMarketMapService {
   }
 
   async getRanking({ limit } = {}) {
-    // Always use on-demand kline-based ranking (see binanceMarketMapService for rationale).
-    this.start(); // keep background tick for diagnostics only
+    this.start(); // idempotent
 
+    const nowTs = Date.now();
+
+    // Prefer real-time WS-based 5m volatility ranking when feed is fresh.
+    const hasFreshWsFeed = this.lastWsMessageAt > 0 && nowTs - this.lastWsMessageAt <= STALE_AFTER_MS;
+    const { scoredRows, scoredCount } = this.getRankingFromBuffer();
+
+    if (hasFreshWsFeed && scoredCount >= MIN_LIVE_SCORED) {
+      const scoredSet = new Set(scoredRows.map((row) => row.symbol));
+      const monitoredSymbols = new Set([
+        ...Array.from(this.volumeBySymbol.keys()),
+        ...Array.from(this.natrBySymbol.keys()),
+        ...Array.from(this.priceHistoryBySymbol.keys()),
+      ]);
+
+      // Include monitored-but-not-yet-scored symbols as warmup rows
+      const warmupRows = Array.from(monitoredSymbols)
+        .filter((symbol) => !scoredSet.has(symbol))
+        .map((symbol) => ({
+          symbol,
+          activityScore: 0,
+          activityMetric: 'natr24h_warmup',
+          volume24h: Number(this.volumeBySymbol.get(symbol) || 0),
+          warmup: true,
+        }))
+        .sort((a, b) => {
+          if (b.volume24h !== a.volume24h) return b.volume24h - a.volume24h;
+          return a.symbol.localeCompare(b.symbol);
+        });
+
+      const rows = [...scoredRows, ...warmupRows];
+      const totalCount = rows.length;
+      const warmupRatio = totalCount > 0 ? scoredRows.length / totalCount : 0;
+      const max = Number.isFinite(Number(limit)) && Number(limit) > 0 ? Number(limit) : rows.length;
+
+      console.log(
+        `[BybitMarketMap] getRanking -> live ws path, ${scoredRows.length} scored, top: ` +
+        scoredRows.slice(0, 3).map((r) => `${r.symbol}=${r.activityScore.toFixed(3)}%`).join(', ')
+      );
+
+      return {
+        rows: rows.slice(0, max),
+        totalCount,
+        scoredCount: scoredRows.length,
+        warmupRatio,
+        isStale: false,
+        updatedAt: this.lastWsMessageAt ? new Date(this.lastWsMessageAt).toISOString() : new Date().toISOString(),
+        lastError: null,
+        contract: {
+          type: '5m-natr',
+          formula: '(highest_5m - lowest_5m) / last_price * 100',
+          windowMinutes: 5,
+          sampleIntervalMs: SNAPSHOT_INTERVAL_MS,
+          minPointsInWindow: MIN_POINTS_IN_WINDOW,
+        },
+      };
+    }
+
+    // Cold-start fallback: on-demand kline ranking
     const computed = await this.computeOnDemandRanking();
     if (!computed) {
       return {

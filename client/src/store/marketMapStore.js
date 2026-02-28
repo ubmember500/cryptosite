@@ -179,6 +179,53 @@ const fetchBinanceFuturesKlinesDirect = async (symbol, interval = '5m', limit = 
   throw lastError || new Error('Failed to fetch Binance futures klines directly');
 };
 
+const BYBIT_FUTURES_BASE_URL = 'https://api.bybit.com';
+// Bybit interval mapping (5m → '5', 1h → '60', etc.)
+const BYBIT_INTERVAL_MAP = { '1m': '1', '5m': '5', '15m': '15', '30m': '30', '1h': '60', '4h': '240', '1d': 'D' };
+
+const fetchBybitFuturesKlinesDirect = async (symbol, interval = '5m', limit = DEFAULT_VISIBLE_KLINE_LIMIT, before = null) => {
+  const bybitInterval = BYBIT_INTERVAL_MAP[interval] || '5';
+  const hasBefore = before !== null && Number.isFinite(Number(before)) && Number(before) > 0;
+
+  const params = new URLSearchParams({
+    category: 'linear',
+    symbol: String(symbol || '').toUpperCase(),
+    interval: bybitInterval,
+    limit: String(limit),
+    ...(hasBefore ? { end: String(Math.floor(Number(before)) - 1) } : {}),
+  });
+
+  const response = await fetch(`${BYBIT_FUTURES_BASE_URL}/v5/market/kline?${params.toString()}`);
+  if (!response.ok) {
+    throw new Error(`Bybit direct klines HTTP ${response.status}`);
+  }
+  const data = await response.json();
+  if (data?.retCode !== 0) {
+    throw new Error(data?.retMsg || 'Bybit API error');
+  }
+
+  const rawList = data?.result?.list || [];
+  // Bybit returns newest-first; reverse to chronological order
+  const klines = rawList
+    .map((arr) => {
+      const startTimeMs = parseInt(arr[0], 10);
+      const time = Math.floor(startTimeMs / 1000);
+      const open = parseFloat(arr[1]);
+      const high = parseFloat(arr[2]);
+      const low = parseFloat(arr[3]);
+      const close = parseFloat(arr[4]);
+      const volume = parseFloat(arr[5]) || 0;
+      if (!Number.isFinite(time) || !Number.isFinite(open) || !Number.isFinite(high) || !Number.isFinite(low) || !Number.isFinite(close)) {
+        return null;
+      }
+      return { time, open, high, low, close, volume };
+    })
+    .filter(Boolean)
+    .reverse();
+
+  return klines;
+};
+
 export const useMarketMapStore = create((set, get) => ({
   selectedExchange: DEFAULT_MARKET_MAP_EXCHANGE,
   cadence: {
@@ -765,6 +812,7 @@ export const useMarketMapStore = create((set, get) => ({
       ? get().selectedExchange
       : DEFAULT_MARKET_MAP_EXCHANGE;
     const isBinance = selectedExchange === 'binance';
+    const isBybit = selectedExchange === 'bybit';
 
     set((state) => {
       const nextLoading = { ...state.cardLoadingBySymbol };
@@ -813,6 +861,21 @@ export const useMarketMapStore = create((set, get) => ({
           if (isBinance && klines.length < MIN_VISIBLE_KLINE_POINTS) {
             try {
               const directKlines = await fetchBinanceFuturesKlinesDirect(
+                row.symbol,
+                DEFAULT_INTERVAL,
+                DEFAULT_VISIBLE_KLINE_LIMIT
+              );
+              if (Array.isArray(directKlines) && directKlines.length > klines.length) {
+                klines = directKlines;
+              }
+            } catch {
+              // Keep backend result/error path
+            }
+          }
+
+          if (isBybit && klines.length < MIN_VISIBLE_KLINE_POINTS) {
+            try {
+              const directKlines = await fetchBybitFuturesKlinesDirect(
                 row.symbol,
                 DEFAULT_INTERVAL,
                 DEFAULT_VISIBLE_KLINE_LIMIT
@@ -982,6 +1045,21 @@ export const useMarketMapStore = create((set, get) => ({
       if (selectedExchange === 'binance' && older.length === 0) {
         try {
           const directFetched = await fetchBinanceFuturesKlinesDirect(
+            safeSymbol,
+            DEFAULT_INTERVAL,
+            DEFAULT_VISIBLE_KLINE_LIMIT,
+            beforeTimestamp
+          );
+          const directOlder = directFetched.filter((kline) => Number(kline.time) < beforeSeconds);
+          if (directOlder.length > older.length) {
+            older = directOlder;
+          }
+        } catch {
+          // Keep backend older candles if any
+        }
+      } else if (selectedExchange === 'bybit' && older.length === 0) {
+        try {
+          const directFetched = await fetchBybitFuturesKlinesDirect(
             safeSymbol,
             DEFAULT_INTERVAL,
             DEFAULT_VISIBLE_KLINE_LIMIT,
