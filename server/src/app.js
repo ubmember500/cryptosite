@@ -56,6 +56,7 @@ app.use('/api/alerts', require('./routes/alerts'));
 app.use('/api/telegram', require('./routes/telegram'));
 app.use('/api/subscription', require('./routes/subscription'));
 app.use('/api/activity', require('./routes/activity'));
+app.use('/admin', require('./routes/adminActivityPage'));
 
 // Error handler (must be last)
 app.use(errorHandler);
