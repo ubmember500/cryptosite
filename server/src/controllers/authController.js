@@ -5,6 +5,7 @@ const prisma = require('../utils/prisma');
 const { generateAccessToken, generateRefreshToken, verifyRefreshToken } = require('../utils/jwt');
 const { registerSchema, loginSchema } = require('../utils/validators');
 const { sendPasswordResetEmail, getResetLink } = require('../utils/email');
+const { recordSingleActivity } = require('../services/activityService');
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
@@ -67,6 +68,16 @@ async function register(req, res, next) {
       accessToken,
       refreshToken,
     });
+
+    recordSingleActivity({
+      userId: user.id,
+      sessionId: `auth-${user.id}`,
+      eventType: 'register',
+      pagePath: '/register',
+      metadata: { method: 'email' },
+    }).catch((err) => {
+      console.warn('[activity] register tracking failed:', err.message);
+    });
   } catch (error) {
     next(error);
   }
@@ -115,6 +126,16 @@ async function login(req, res, next) {
       },
       accessToken,
       refreshToken,
+    });
+
+    recordSingleActivity({
+      userId: user.id,
+      sessionId: `auth-${user.id}`,
+      eventType: 'login',
+      pagePath: '/login',
+      metadata: { method: 'email' },
+    }).catch((err) => {
+      console.warn('[activity] login tracking failed:', err.message);
     });
   } catch (error) {
     next(error);
@@ -424,6 +445,16 @@ async function googleAuth(req, res, next) {
     const refreshToken = generateRefreshToken(user.id);
 
     res.json({ user, accessToken, refreshToken });
+
+    recordSingleActivity({
+      userId: user.id,
+      sessionId: `auth-${user.id}`,
+      eventType: 'login',
+      pagePath: '/login',
+      metadata: { method: 'google' },
+    }).catch((err) => {
+      console.warn('[activity] google login tracking failed:', err.message);
+    });
   } catch (error) {
     next(error);
   }

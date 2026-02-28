@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from './store/authStore';
 import { useAlertStore } from './store/alertStore';
 import { useThemeStore } from './store/themeStore';
 import { useToastStore } from './store/toastStore';
 import { useSocket } from './hooks/useSocket';
 import { playAlertSound } from './utils/alertSound';
+import { initActivityTracking, trackPageView, trackClick } from './services/activityService';
 import Layout from './components/layout/Layout';
 import ProtectedRoute from './components/common/ProtectedRoute';
 import Toast from './components/common/Toast';
@@ -36,6 +37,63 @@ import WallScanner from './pages/WallScanner';
 import MarketMap from './pages/MarketMap';
 import Settings from './pages/Settings';
 import Instructions from './pages/Instructions';
+
+function ActivityTracker() {
+  const location = useLocation();
+
+  useEffect(() => {
+    const cleanup = initActivityTracking();
+    return cleanup;
+  }, []);
+
+  useEffect(() => {
+    const path = `${location.pathname}${location.search || ''}`;
+    trackPageView(path);
+  }, [location.pathname, location.search]);
+
+  useEffect(() => {
+    let lastClickKey = '';
+    let lastClickAt = 0;
+
+    const onDocumentClick = (event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+
+      const interactive = target.closest('button,a,[role="button"],input[type="checkbox"],input[type="radio"],.cursor-pointer');
+      if (!interactive) return;
+
+      const elementTag = interactive.tagName.toLowerCase();
+      const label =
+        interactive.getAttribute('aria-label') ||
+        interactive.getAttribute('title') ||
+        interactive.textContent ||
+        '';
+      const cleanLabel = String(label).replace(/\s+/g, ' ').trim().slice(0, 140);
+      const pagePath = `${window.location.pathname}${window.location.search || ''}`;
+
+      const key = `${pagePath}|${elementTag}|${cleanLabel}`;
+      const now = Date.now();
+      if (key === lastClickKey && now - lastClickAt < 600) {
+        return;
+      }
+      lastClickKey = key;
+      lastClickAt = now;
+
+      trackClick({
+        pagePath,
+        element: elementTag,
+        label: cleanLabel || undefined,
+      });
+    };
+
+    document.addEventListener('click', onDocumentClick, true);
+    return () => {
+      document.removeEventListener('click', onDocumentClick, true);
+    };
+  }, []);
+
+  return null;
+}
 
 function App() {
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
@@ -119,6 +177,7 @@ function App() {
   return (
     <BrowserRouter>
       <ThemeSync />
+      <ActivityTracker />
       <div className="min-h-screen bg-background text-textPrimary">
         <Routes>
           {/* Public routes */}
