@@ -2,9 +2,10 @@
  * Send password reset link by email.
  *
  * Priority:
- *   1. Brevo API   — set BREVO_API_KEY  (easiest — free, no domain needed)
- *   2. Resend API  — set RESEND_API_KEY  (needs verified domain to send to others)
- *   3. SMTP        — set SMTP_HOST, SMTP_USER, SMTP_PASS  (blocked on most cloud hosts)
+ *   1. Brevo API    — set BREVO_API_KEY  (free, no domain needed — requires account activation)
+ *   2. Mailjet API  — set MAILJET_API_KEY + MAILJET_API_SECRET  (free 200/day, instant activation)
+ *   3. Resend API   — set RESEND_API_KEY  (needs verified domain to send to others)
+ *   4. SMTP         — set SMTP_HOST, SMTP_USER, SMTP_PASS  (blocked on most cloud hosts)
  *
  * See server/EMAIL_SETUP.md for setup instructions.
  *
@@ -19,7 +20,7 @@ const dns = require('dns');
 // route to IPv6 endpoints (Gmail SMTP ENETUNREACH on 2607:f8b0:...).
 try { dns.setDefaultResultOrder('ipv4first'); } catch { /* Node < 16.4 */ }
 
-const EMAIL_CODE_VERSION = '2026-02-28-v6';
+const EMAIL_CODE_VERSION = '2026-02-28-v7';
 
 /* ---------- helpers that read env on every call (no stale cache) ---------- */
 
@@ -40,6 +41,13 @@ function getBrevoFrom() {
   // Brevo requires a verified sender email (not domain). The email you
   // signed up with is auto-verified, or add more at brevo.com/senders.
   return process.env.BREVO_FROM || process.env.MAIL_FROM || process.env.SMTP_USER || 'noreply@cryptoalerts.app';
+}
+
+// --- Mailjet ---
+function getMailjetApiKey()    { return process.env.MAILJET_API_KEY; }
+function getMailjetApiSecret() { return process.env.MAILJET_API_SECRET; }
+function getMailjetFrom() {
+  return process.env.MAILJET_FROM || process.env.MAIL_FROM || process.env.SMTP_USER || 'noreply@cryptoalerts.app';
 }
 
 // --- Resend ---
@@ -66,6 +74,10 @@ function isBrevoConfigured() {
   return Boolean(getBrevoApiKey());
 }
 
+function isMailjetConfigured() {
+  return Boolean(getMailjetApiKey() && getMailjetApiSecret());
+}
+
 function isResendConfigured() {
   return Boolean(getResendApiKey());
 }
@@ -75,7 +87,7 @@ function isSmtpConfigured() {
 }
 
 function isEmailConfigured() {
-  return isBrevoConfigured() || isResendConfigured() || isSmtpConfigured();
+  return isBrevoConfigured() || isMailjetConfigured() || isResendConfigured() || isSmtpConfigured();
 }
 
 /**
@@ -84,12 +96,14 @@ function isEmailConfigured() {
 function logEmailStatus() {
   if (isBrevoConfigured()) {
     console.log(`📧 Password reset: emails will be sent via Brevo API (from: ${getBrevoFrom()}).`);
+  } else if (isMailjetConfigured()) {
+    console.log(`📧 Password reset: emails will be sent via Mailjet API (from: ${getMailjetFrom()}).`);
   } else if (isResendConfigured()) {
     console.log(`📧 Password reset: emails will be sent via Resend API (from: ${getResendFrom()}).`);
   } else if (isSmtpConfigured()) {
     console.log(`📧 Password reset: emails will be sent via SMTP (${getSmtpHost()}:${getSmtpPort()}).`);
   } else {
-    console.log('📧 Password reset: ⚠️  no email provider configured! Add BREVO_API_KEY (easiest) or RESEND_API_KEY or SMTP_* vars to server/.env (see server/EMAIL_SETUP.md).');
+    console.log('📧 Password reset: ⚠️  no email provider configured! Add MAILJET_API_KEY+MAILJET_API_SECRET (easiest) or BREVO_API_KEY or RESEND_API_KEY or SMTP_* vars to server/.env (see server/EMAIL_SETUP.md).');
   }
   console.log(`📧 Reset links will point to: ${getFrontendUrl()}`);
 }
@@ -244,6 +258,90 @@ async function sendViaBrevo(toEmail, subject, text, html) {
   });
 
   console.log('[Email/Brevo] ✅ Password reset sent to', toEmail, '| messageId:', body.messageId);
+}
+
+/**
+ * Send password reset email via Mailjet HTTP API.
+ *
+ * Mailjet free tier: 200 emails/day, 6 000/month.
+ * Only requires verified sender email — no domain verification.
+ * Typically activates immediately after email verification (no manual review).
+ * Sign up at mailjet.com.
+ */
+async function sendViaMailjet(toEmail, subject, text, html) {
+  const apiKey = getMailjetApiKey();
+  const apiSecret = getMailjetApiSecret();
+  const fromRaw = getMailjetFrom();
+
+  // Parse "Name <email>" format or plain email
+  let senderName = 'CryptoAlerts';
+  let senderEmail = fromRaw;
+  const match = fromRaw.match(/^(.+?)\s*<(.+?)>$/);
+  if (match) {
+    senderName = match[1].trim();
+    senderEmail = match[2].trim();
+  }
+
+  console.log(`[Email/Mailjet] Sending to ${toEmail} from ${senderName} <${senderEmail}>`);
+
+  const https = require('https');
+  const payload = JSON.stringify({
+    Messages: [
+      {
+        From: { Email: senderEmail, Name: senderName },
+        To: [{ Email: toEmail }],
+        Subject: subject,
+        TextPart: text,
+        HTMLPart: html,
+      },
+    ],
+  });
+
+  // Mailjet uses Basic auth: base64(apiKey:apiSecret)
+  const authHeader = 'Basic ' + Buffer.from(`${apiKey}:${apiSecret}`).toString('base64');
+
+  const body = await new Promise((resolve, reject) => {
+    const req = https.request(
+      {
+        hostname: 'api.mailjet.com',
+        path: '/v3.1/send',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: authHeader,
+          'Content-Length': Buffer.byteLength(payload),
+        },
+        timeout: 15_000,
+      },
+      (res) => {
+        let data = '';
+        res.on('data', (chunk) => (data += chunk));
+        res.on('end', () => {
+          let parsed;
+          try { parsed = JSON.parse(data); } catch { parsed = { raw: data }; }
+          if (res.statusCode >= 200 && res.statusCode < 300) {
+            resolve(parsed);
+          } else {
+            const msg = parsed?.ErrorMessage || parsed?.Message || parsed?.error || data;
+            reject(new Error(`Mailjet API ${res.statusCode}: ${msg}`));
+          }
+        });
+      },
+    );
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('Mailjet API request timed out')); });
+    req.write(payload);
+    req.end();
+  });
+
+  const msgResult = body?.Messages?.[0];
+  const status = msgResult?.Status;
+  if (status === 'error') {
+    const errMsg = msgResult?.Errors?.map((e) => e.ErrorMessage).join('; ') || 'unknown error';
+    throw new Error(`Mailjet delivery error: ${errMsg}`);
+  }
+
+  console.log('[Email/Mailjet] ✅ Password reset sent to', toEmail, '| status:', status);
 }
 
 /**
@@ -403,7 +501,7 @@ async function sendPasswordResetEmail(toEmail, resetLink) {
 
   const errors = [];
 
-  // 1. Brevo (best free option — no domain verification needed)
+  // 1. Brevo (free, no domain needed — may require manual account activation)
   if (isBrevoConfigured()) {
     try {
       await sendViaBrevo(toEmail, subject, text, html);
@@ -414,7 +512,18 @@ async function sendPasswordResetEmail(toEmail, resetLink) {
     }
   }
 
-  // 2. Resend (needs verified domain to send to non-owner emails)
+  // 2. Mailjet (free 200/day, instant activation, no domain needed)
+  if (isMailjetConfigured()) {
+    try {
+      await sendViaMailjet(toEmail, subject, text, html);
+      return;
+    } catch (err) {
+      errors.push(`Mailjet: ${err.message}`);
+      console.error('[Email] Mailjet failed:', err.message);
+    }
+  }
+
+  // 3. Resend (needs verified domain to send to non-owner emails)
   if (isResendConfigured()) {
     try {
       await sendViaResend(toEmail, subject, text, html);
@@ -425,7 +534,7 @@ async function sendPasswordResetEmail(toEmail, resetLink) {
     }
   }
 
-  // 3. SMTP (blocked on most cloud hosts — Render, Railway, etc.)
+  // 4. SMTP (blocked on most cloud hosts — Render, Railway, etc.)
   if (isSmtpConfigured()) {
     try {
       await sendViaSmtp(toEmail, subject, text, html);
@@ -436,9 +545,9 @@ async function sendPasswordResetEmail(toEmail, resetLink) {
     }
   }
 
-  if (!isBrevoConfigured() && !isResendConfigured() && !isSmtpConfigured()) {
+  if (!isBrevoConfigured() && !isMailjetConfigured() && !isResendConfigured() && !isSmtpConfigured()) {
     throw new Error(
-      'No email provider configured. Set BREVO_API_KEY (easiest) or RESEND_API_KEY or SMTP_* in server/.env (see server/EMAIL_SETUP.md).'
+      'No email provider configured. Set MAILJET_API_KEY+MAILJET_API_SECRET (easiest) or BREVO_API_KEY or RESEND_API_KEY or SMTP_* in server/.env (see server/EMAIL_SETUP.md).'
     );
   }
 
@@ -453,10 +562,12 @@ async function debugEmailProviders(toEmail) {
     codeVersion: EMAIL_CODE_VERSION,
     nodeVersion: process.version,
     brevoConfigured: isBrevoConfigured(),
+    mailjetConfigured: isMailjetConfigured(),
     resendConfigured: isResendConfigured(),
     smtpConfigured: isSmtpConfigured(),
     frontendUrl: getFrontendUrl(),
     brevo: null,
+    mailjet: null,
     resend: null,
     smtp: null,
   };
@@ -471,6 +582,15 @@ async function debugEmailProviders(toEmail) {
       results.brevo = { ok: true };
     } catch (err) {
       results.brevo = { ok: false, error: err.message };
+    }
+  }
+
+  if (isMailjetConfigured()) {
+    try {
+      await sendViaMailjet(toEmail, subject, text, html);
+      results.mailjet = { ok: true };
+    } catch (err) {
+      results.mailjet = { ok: false, error: err.message };
     }
   }
 
@@ -500,6 +620,7 @@ module.exports = {
   debugEmailProviders,
   isEmailConfigured,
   isBrevoConfigured,
+  isMailjetConfigured,
   isSmtpConfigured,
   isResendConfigured,
   logEmailStatus,

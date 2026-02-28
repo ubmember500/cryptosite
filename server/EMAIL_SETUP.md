@@ -1,19 +1,49 @@
 ﻿# Email setup — Forgot Password
 
-The forgot-password feature emails a secure reset link to users. Three providers are supported:
+The forgot-password feature emails a secure reset link to users. Four providers are supported:
 
-- **Brevo** (recommended — free, NO domain verification needed, 300 emails/day)
+- **Mailjet** (recommended — free 200/day, instant activation, no domain needed)
+- **Brevo** (free 300/day, no domain needed — but new accounts may need manual activation)
 - **Resend** (needs a verified custom domain to send to real users)
 - **SMTP / Gmail** (blocked on most cloud hosts — good for local dev only)
 
-Priority: Brevo → Resend → SMTP (first configured provider wins).
+Priority: Brevo → Mailjet → Resend → SMTP (first configured provider wins).
 
 ---
 
-## Option 1 — Brevo (recommended — easiest setup)
+## Option 1 — Mailjet (recommended — fastest to get working)
 
-Brevo (formerly Sendinblue) works via HTTPS API, so it's not blocked by
-cloud providers. Free tier gives 300 emails/day. **No domain needed.**
+Mailjet uses HTTPS API (port 443), so it's not blocked by cloud providers.
+Free tier: 200 emails/day, 6 000/month. **No domain needed.**
+Account activates **instantly** after email verification (no manual review).
+
+1. Create a free account at [mailjet.com](https://www.mailjet.com).
+2. Go to **Account Settings** → **REST API** → **API Key Management**.
+   You'll see an **API Key** and a **Secret Key**.
+3. Add both to Render env vars (and `server/.env` locally):
+
+```env
+MAILJET_API_KEY=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+MAILJET_API_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+FRONTEND_URL=https://your-frontend.vercel.app
+```
+
+4. _(Optional)_ Set a custom sender address:
+```env
+MAILJET_FROM=CryptoAlerts <yourname@gmail.com>
+```
+By default it uses `MAIL_FROM` or `SMTP_USER`. The sender email must be
+verified in Mailjet (your sign-up email is auto-verified).
+
+5. Deploy / restart. Done!
+
+---
+
+## Option 2 — Brevo (free, but may need activation)
+
+Brevo (formerly Sendinblue) also uses HTTPS API. Free tier: 300 emails/day.
+**No domain needed**, but new accounts sometimes require manual activation
+(you get a 403 "account not yet activated" — contact Brevo support to speed it up).
 
 1. Create a free account at [brevo.com](https://www.brevo.com).
 2. Go to **SMTP & API** → **API Keys** → create one (starts with `xkeysib-`).
@@ -35,7 +65,7 @@ verified in Brevo (your sign-up email is auto-verified).
 
 ---
 
-## Option 2 — Resend (requires custom domain)
+## Option 3 — Resend (requires custom domain)
 
 > **Note:** Resend's free plan is in sandbox mode — it can only send to
 > the account owner's email until you verify your own domain.
@@ -53,7 +83,7 @@ FRONTEND_URL=https://your-frontend.vercel.app
 
 ---
 
-## Option 3 — Gmail SMTP (local development only)
+## Option 4 — Gmail SMTP (local development only)
 
 > **Warning:** Gmail SMTP is blocked from Render, Railway, and most cloud
 > providers (SMTP ports 25/465/587 are firewalled). Use for local dev only.
