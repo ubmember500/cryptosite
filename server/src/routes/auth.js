@@ -277,4 +277,46 @@ router.get('/debug-user-email', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/auth/test-gmail-api?email=<email>&secret=<secret>
+ * Quick test: sends a test email via Gmail REST API only.
+ * Returns detailed success/failure info.
+ */
+router.get('/test-gmail-api', async (req, res) => {
+  const secret = process.env.DEBUG_EMAIL_SECRET || 'debug123';
+  if (req.query.secret !== secret) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  const to = String(req.query.email || '').trim();
+  if (!to) {
+    return res.status(400).json({ error: 'email query param required' });
+  }
+
+  try {
+    const { isGmailApiConfigured, sendViaGmailApi } = require('../utils/email');
+    if (!isGmailApiConfigured()) {
+      return res.json({
+        configured: false,
+        hint: 'Set GMAIL_CLIENT_SECRET + GMAIL_REFRESH_TOKEN + GMAIL_USER in Render env vars. Run: node server/scripts/setup-gmail-email.js',
+        envCheck: {
+          GMAIL_CLIENT_ID: Boolean(process.env.GMAIL_CLIENT_ID || process.env.GOOGLE_CLIENT_ID),
+          GMAIL_CLIENT_SECRET: Boolean(process.env.GMAIL_CLIENT_SECRET || process.env.GOOGLE_CLIENT_SECRET),
+          GMAIL_REFRESH_TOKEN: Boolean(process.env.GMAIL_REFRESH_TOKEN),
+          GMAIL_USER: Boolean(process.env.GMAIL_USER || process.env.SMTP_USER),
+        },
+      });
+    }
+
+    const subject = 'CryptoAlerts — Gmail API test';
+    const text = `This is a test email sent via Gmail REST API to ${to}.`;
+    const html = `<p>This is a <strong>Gmail REST API test</strong> email sent to <code>${to}</code>.</p><p>If you received this, Gmail API email sending is working!</p>`;
+
+    await sendViaGmailApi(to, subject, text, html);
+    return res.json({ ok: true, to, message: 'Email sent via Gmail REST API. Check inbox!' });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 module.exports = router;

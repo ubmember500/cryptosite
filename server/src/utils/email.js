@@ -2,11 +2,13 @@
  * Send password reset link by email.
  *
  * Priority:
- *   1. SendGrid API — set SENDGRID_API_KEY  (free 100/day, industry standard, fast delivery)
- *   2. Brevo API    — set BREVO_API_KEY  (free 300/day, no domain needed — requires account activation)
- *   3. Mailjet API  — set MAILJET_API_KEY + MAILJET_API_SECRET  (free 200/day, instant activation)
- *   4. Resend API   — set RESEND_API_KEY  (needs verified domain to send to others)
- *   5. SMTP         — set SMTP_HOST, SMTP_USER, SMTP_PASS  (blocked on most cloud hosts)
+ *   1. Gmail API   — set GMAIL_CLIENT_ID + GMAIL_CLIENT_SECRET + GMAIL_REFRESH_TOKEN + GMAIL_USER
+ *                    (HTTPS port 443, bypasses SMTP blocks, sends FROM Gmail = 100% deliverability)
+ *   2. SendGrid API — set SENDGRID_API_KEY  (free 100/day — may silently drop on free tier)
+ *   3. Brevo API    — set BREVO_API_KEY  (free 300/day, no domain needed — requires account activation)
+ *   4. Mailjet API  — set MAILJET_API_KEY + MAILJET_API_SECRET  (free 200/day, instant activation)
+ *   5. Resend API   — set RESEND_API_KEY  (needs verified domain to send to others)
+ *   6. SMTP         — set SMTP_HOST, SMTP_USER, SMTP_PASS  (blocked on most cloud hosts)
  *
  * See server/EMAIL_SETUP.md for setup instructions.
  *
@@ -16,12 +18,14 @@
 
 const nodemailer = require('nodemailer');
 const dns = require('dns');
+const https = require('https');
+const crypto = require('crypto');
 
 // Force IPv4 DNS resolution — Render/Railway containers often cannot
 // route to IPv6 endpoints (Gmail SMTP ENETUNREACH on 2607:f8b0:...).
 try { dns.setDefaultResultOrder('ipv4first'); } catch { /* Node < 16.4 */ }
 
-const EMAIL_CODE_VERSION = '2026-02-28-v8';
+const EMAIL_CODE_VERSION = '2026-03-01-v9';
 
 /* ---------- helpers that read env on every call (no stale cache) ---------- */
 
@@ -35,6 +39,12 @@ function getFrontendUrl() {
     'http://localhost:5173'
   );
 }
+
+// --- Gmail REST API (HTTPS, port 443 — bypasses SMTP port blocks) ---
+function getGmailClientId()     { return process.env.GMAIL_CLIENT_ID || process.env.GOOGLE_CLIENT_ID; }
+function getGmailClientSecret() { return process.env.GMAIL_CLIENT_SECRET || process.env.GOOGLE_CLIENT_SECRET; }
+function getGmailRefreshToken() { return process.env.GMAIL_REFRESH_TOKEN; }
+function getGmailUser()         { return process.env.GMAIL_USER || process.env.SMTP_USER; }
 
 // --- SendGrid (Twilio) ---
 function getSendGridApiKey() { return process.env.SENDGRID_API_KEY; }
@@ -77,6 +87,10 @@ function getSmtpUser()   { return process.env.SMTP_USER; }
 function getSmtpPass()   { return process.env.SMTP_PASS; }
 function getMailFrom()   { return process.env.MAIL_FROM || process.env.SMTP_USER || 'CryptoAlerts <noreply@cryptoalerts.app>'; }
 
+function isGmailApiConfigured() {
+  return Boolean(getGmailClientId() && getGmailClientSecret() && getGmailRefreshToken() && getGmailUser());
+}
+
 function isSendGridConfigured() {
   return Boolean(getSendGridApiKey());
 }
@@ -98,14 +112,16 @@ function isSmtpConfigured() {
 }
 
 function isEmailConfigured() {
-  return isSendGridConfigured() || isBrevoConfigured() || isMailjetConfigured() || isResendConfigured() || isSmtpConfigured();
+  return isGmailApiConfigured() || isSendGridConfigured() || isBrevoConfigured() || isMailjetConfigured() || isResendConfigured() || isSmtpConfigured();
 }
 
 /**
  * Call once at server startup to log which email provider is active.
  */
 function logEmailStatus() {
-  if (isSendGridConfigured()) {
+  if (isGmailApiConfigured()) {
+    console.log(`📧 Password reset: emails will be sent via Gmail REST API (from: ${getGmailUser()}).`);
+  } else if (isSendGridConfigured()) {
     console.log(`📧 Password reset: emails will be sent via SendGrid API (from: ${getSendGridFrom()}).`);
   } else if (isBrevoConfigured()) {
     console.log(`📧 Password reset: emails will be sent via Brevo API (from: ${getBrevoFrom()}).`);
@@ -116,7 +132,7 @@ function logEmailStatus() {
   } else if (isSmtpConfigured()) {
     console.log(`📧 Password reset: emails will be sent via SMTP (${getSmtpHost()}:${getSmtpPort()}).`);
   } else {
-    console.log('📧 Password reset: ⚠️  no email provider configured! Add SENDGRID_API_KEY (recommended) or BREVO_API_KEY or MAILJET_API_KEY+MAILJET_API_SECRET or RESEND_API_KEY or SMTP_* vars to server/.env (see server/EMAIL_SETUP.md).');
+    console.log('📧 Password reset: ⚠️  no email provider configured! Add GMAIL_CLIENT_SECRET + GMAIL_REFRESH_TOKEN + GMAIL_USER (recommended) or SENDGRID_API_KEY or BREVO_API_KEY or SMTP_* vars to server/.env (see server/EMAIL_SETUP.md).');
   }
   console.log(`📧 Reset links will point to: ${getFrontendUrl()}`);
 }
@@ -514,6 +530,166 @@ async function sendGridMailSend(apiKey, senderEmail, senderName, toEmail, subjec
  * verified sender it finds. This means it works out-of-the-box as soon as the
  * user creates a SendGrid account (since the signup email is auto-verified).
  */
+
+/* ======================================================================
+ *  GMAIL REST API — HIGHEST PRIORITY
+ *  Uses HTTPS (port 443) so it works on Render/Railway/any cloud host
+ *  that blocks SMTP ports 25/587/465.
+ *  Sends from Gmail's own infrastructure → 100% deliverability.
+ * ====================================================================== */
+
+/**
+ * Exchange a refresh_token for a fresh access_token via Google OAuth2.
+ */
+function gmailRefreshAccessToken(clientId, clientSecret, refreshToken) {
+  const postData = new URLSearchParams({
+    client_id: clientId,
+    client_secret: clientSecret,
+    refresh_token: refreshToken,
+    grant_type: 'refresh_token',
+  }).toString();
+
+  return new Promise((resolve, reject) => {
+    const req = https.request(
+      {
+        hostname: 'oauth2.googleapis.com',
+        path: '/token',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Content-Length': Buffer.byteLength(postData),
+        },
+        timeout: 15_000,
+      },
+      (res) => {
+        let data = '';
+        res.on('data', (chunk) => (data += chunk));
+        res.on('end', () => {
+          try {
+            const parsed = JSON.parse(data);
+            if (res.statusCode >= 200 && res.statusCode < 300 && parsed.access_token) {
+              resolve(parsed.access_token);
+            } else {
+              const msg = parsed?.error_description || parsed?.error || data;
+              reject(new Error(`Google OAuth token refresh ${res.statusCode}: ${msg}`));
+            }
+          } catch {
+            reject(new Error(`Google OAuth token refresh: invalid response — ${data.slice(0, 200)}`));
+          }
+        });
+      },
+    );
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('Google OAuth token refresh timed out')); });
+    req.write(postData);
+    req.end();
+  });
+}
+
+/**
+ * Build a RFC 2822 MIME message with multipart/alternative (plain + HTML).
+ * Returns a base64url-encoded string ready for the Gmail API.
+ */
+function buildGmailRawMessage(from, to, subject, textBody, htmlBody) {
+  const boundary = `boundary_${crypto.randomBytes(16).toString('hex')}`;
+  const lines = [
+    `From: ${from}`,
+    `To: ${to}`,
+    `Subject: =?UTF-8?B?${Buffer.from(subject).toString('base64')}?=`,
+    'MIME-Version: 1.0',
+    `Content-Type: multipart/alternative; boundary="${boundary}"`,
+    '',
+    `--${boundary}`,
+    'Content-Type: text/plain; charset=UTF-8',
+    'Content-Transfer-Encoding: base64',
+    '',
+    Buffer.from(textBody).toString('base64'),
+    '',
+    `--${boundary}`,
+    'Content-Type: text/html; charset=UTF-8',
+    'Content-Transfer-Encoding: base64',
+    '',
+    Buffer.from(htmlBody).toString('base64'),
+    '',
+    `--${boundary}--`,
+  ];
+  const raw = lines.join('\r\n');
+  // Gmail API needs web-safe base64 (base64url)
+  return Buffer.from(raw)
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+}
+
+/**
+ * Send email via Gmail REST API (HTTPS, port 443).
+ * Requires: GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN, GMAIL_USER.
+ *
+ * One-time setup: run `node server/scripts/setup-gmail-email.js` to get the refresh token.
+ */
+async function sendViaGmailApi(toEmail, subject, text, html) {
+  const clientId = getGmailClientId();
+  const clientSecret = getGmailClientSecret();
+  const refreshToken = getGmailRefreshToken();
+  const gmailUser = getGmailUser();
+
+  console.log(`[Email/GmailAPI] Sending to ${toEmail} from ${gmailUser} via Gmail REST API (HTTPS)`);
+
+  // Step 1: Get a fresh access token
+  let accessToken;
+  try {
+    accessToken = await gmailRefreshAccessToken(clientId, clientSecret, refreshToken);
+    console.log('[Email/GmailAPI] Access token obtained successfully');
+  } catch (err) {
+    console.error('[Email/GmailAPI] Token refresh failed:', err.message);
+    throw new Error(`Gmail API token refresh failed: ${err.message}`);
+  }
+
+  // Step 2: Build the MIME message
+  const fromHeader = `CryptoAlerts <${gmailUser}>`;
+  const raw = buildGmailRawMessage(fromHeader, toEmail, subject, text, html);
+
+  // Step 3: Send via Gmail API
+  const payload = JSON.stringify({ raw });
+
+  const result = await new Promise((resolve, reject) => {
+    const req = https.request(
+      {
+        hostname: 'gmail.googleapis.com',
+        path: `/gmail/v1/users/me/messages/send`,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Length': Buffer.byteLength(payload),
+        },
+        timeout: 30_000,
+      },
+      (res) => {
+        let data = '';
+        res.on('data', (chunk) => (data += chunk));
+        res.on('end', () => {
+          let parsed;
+          try { parsed = JSON.parse(data); } catch { parsed = { raw: data }; }
+          if (res.statusCode >= 200 && res.statusCode < 300) {
+            resolve(parsed);
+          } else {
+            const msg = parsed?.error?.message || parsed?.error?.errors?.[0]?.message || data;
+            reject(new Error(`Gmail API ${res.statusCode}: ${msg}`));
+          }
+        });
+      },
+    );
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('Gmail API request timed out')); });
+    req.write(payload);
+    req.end();
+  });
+
+  console.log(`[Email/GmailAPI] ✅ Email sent to ${toEmail} | messageId: ${result.id} | threadId: ${result.threadId}`);
+}
+
 async function sendViaSendGrid(toEmail, subject, text, html) {
   const apiKey = getSendGridApiKey();
   const fromRaw = getSendGridFrom();
@@ -892,7 +1068,18 @@ async function sendPasswordResetEmail(toEmail, resetLink) {
 
   const errors = [];
 
-  // 1. SendGrid (industry standard, free 100/day, fast delivery)
+  // 1. Gmail REST API (HTTPS port 443 — not blocked by any cloud host, 100% deliverability)
+  if (isGmailApiConfigured()) {
+    try {
+      await sendViaGmailApi(toEmail, subject, text, html);
+      return;
+    } catch (err) {
+      errors.push(`GmailAPI: ${err.message}`);
+      console.error('[Email] Gmail API failed:', err.message);
+    }
+  }
+
+  // 2. SendGrid (industry standard, free 100/day — may silently drop on free tier shared IPs)
   if (isSendGridConfigured()) {
     try {
       await sendViaSendGrid(toEmail, subject, text, html);
@@ -903,7 +1090,7 @@ async function sendPasswordResetEmail(toEmail, resetLink) {
     }
   }
 
-  // 2. Brevo (free 300/day, no domain needed — may require manual account activation)
+  // 3. Brevo (free 300/day, no domain needed — may require manual account activation)
   if (isBrevoConfigured()) {
     try {
       await sendViaBrevo(toEmail, subject, text, html);
@@ -947,9 +1134,9 @@ async function sendPasswordResetEmail(toEmail, resetLink) {
     }
   }
 
-  if (!isSendGridConfigured() && !isBrevoConfigured() && !isMailjetConfigured() && !isResendConfigured() && !isSmtpConfigured()) {
+  if (!isGmailApiConfigured() && !isSendGridConfigured() && !isBrevoConfigured() && !isMailjetConfigured() && !isResendConfigured() && !isSmtpConfigured()) {
     throw new Error(
-      'No email provider configured. Set SENDGRID_API_KEY (recommended) or BREVO_API_KEY or MAILJET_API_KEY+MAILJET_API_SECRET or RESEND_API_KEY or SMTP_* in server/.env (see server/EMAIL_SETUP.md).'
+      'No email provider configured. Set GMAIL_CLIENT_ID + GMAIL_CLIENT_SECRET + GMAIL_REFRESH_TOKEN + GMAIL_USER (recommended) or SENDGRID_API_KEY or BREVO_API_KEY or SMTP_* in server/.env (see server/EMAIL_SETUP.md).'
     );
   }
 
@@ -963,12 +1150,14 @@ async function debugEmailProviders(toEmail) {
   const results = {
     codeVersion: EMAIL_CODE_VERSION,
     nodeVersion: process.version,
+    gmailApiConfigured: isGmailApiConfigured(),
     sendgridConfigured: isSendGridConfigured(),
     brevoConfigured: isBrevoConfigured(),
     mailjetConfigured: isMailjetConfigured(),
     resendConfigured: isResendConfigured(),
     smtpConfigured: isSmtpConfigured(),
     frontendUrl: getFrontendUrl(),
+    gmailApi: null,
     sendgrid: null,
     brevo: null,
     mailjet: null,
@@ -979,6 +1168,15 @@ async function debugEmailProviders(toEmail) {
   const subject = 'CryptoAlerts — email debug test';
   const text = 'This is a diagnostic email from CryptoAlerts debug-email endpoint.';
   const html = '<p>This is a <strong>diagnostic email</strong> from CryptoAlerts debug-email endpoint.</p>';
+
+  if (isGmailApiConfigured()) {
+    try {
+      await sendViaGmailApi(toEmail, subject, text, html);
+      results.gmailApi = { ok: true };
+    } catch (err) {
+      results.gmailApi = { ok: false, error: err.message };
+    }
+  }
 
   if (isSendGridConfigured()) {
     try {
@@ -1032,6 +1230,7 @@ module.exports = {
   sendPasswordResetEmail,
   debugEmailProviders,
   isEmailConfigured,
+  isGmailApiConfigured,
   isSendGridConfigured,
   isBrevoConfigured,
   isMailjetConfigured,
@@ -1042,5 +1241,6 @@ module.exports = {
   getSendGridRecipientStatus,
   clearSendGridRecipientSuppressions,
   getSendGridApiKey,
+  sendViaGmailApi,
   getResetLink: (token) => `${getFrontendUrl().replace(/\/$/, '')}/reset-password?token=${encodeURIComponent(token)}`,
 };
