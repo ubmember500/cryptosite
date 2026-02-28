@@ -508,12 +508,13 @@ const CryptoChart = ({
         if (chartContainerRef.current && !chartRef.current) {
           try {
             console.log('[CryptoChart] Creating chart with fallback dimensions as timeout fallback');
+            const fallbackTheme = getThemePalette();
             const chart = createChart(chartContainerRef.current, {
               width: fallbackWidth,
               height: fallbackHeight,
               layout: {
-                background: { color: '#0d1117' },
-                textColor: '#e0e0e0',
+                background: { color: fallbackTheme.surfaceDark },
+                textColor: fallbackTheme.textPrimary,
                 fontSize: 12,
                 fontFamily: 'Inter, system-ui, sans-serif',
               },
@@ -2638,7 +2639,7 @@ const CryptoChart = ({
         {/* Chart Container */}
         <div className="flex-1 min-h-0 flex flex-col">
           <div 
-            className="flex-1 min-h-[300px] bg-[#0d1117] rounded-lg border border-border"
+            className="flex-1 min-h-[300px] bg-surfaceDark rounded-lg border border-border"
             style={{ 
               display: 'flex',
               flexDirection: 'column',
@@ -2654,7 +2655,7 @@ const CryptoChart = ({
               className="w-full h-full"
               style={{ 
                 position: 'relative',
-                backgroundColor: '#0d1117',
+                backgroundColor: 'var(--color-surface-dark)',
                 cursor: (internalMeasurementMode || activeDrawingTool) ? 'crosshair' : 'default',
                 width: '100%',
                 height: '100%',
@@ -2666,7 +2667,7 @@ const CryptoChart = ({
             >
             {/* Show "No data" overlay when data is empty, but keep container rendered for initialization */}
             {(!data || data.length === 0) && (
-              <div className="absolute inset-0 flex items-center justify-center bg-[#0d1117] z-10">
+              <div className="absolute inset-0 flex items-center justify-center bg-surfaceDark z-10">
                 <div className="text-center">
                   <p className="text-textSecondary text-sm">No chart data available</p>
                   <p className="text-textSecondary text-xs mt-1">{symbol} • {timeframe}</p>

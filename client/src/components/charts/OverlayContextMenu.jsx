@@ -81,7 +81,7 @@ const OverlayContextMenu = ({
       style={{ left: `${adjustedPos.x}px`, top: `${adjustedPos.y}px` }}
     >
       {isMeasurementOverlay ? (
-        <div className="flex items-center bg-[#1c1f26] border border-[#2d3139] rounded-lg shadow-2xl h-9 select-none">
+        <div className="flex items-center bg-surface border border-border rounded-lg shadow-2xl h-9 select-none">
           <button
             onClick={onDelete}
             className="flex items-center justify-center w-9 h-9 text-gray-400 hover:bg-red-600/20 hover:text-red-400 rounded-lg transition-colors"
@@ -91,12 +91,12 @@ const OverlayContextMenu = ({
           </button>
         </div>
       ) : (
-      <div className="flex items-center gap-0 bg-[#1c1f26] border border-[#2d3139] rounded-lg shadow-2xl h-9 select-none">
+      <div className="flex items-center gap-0 bg-surface border border-border rounded-lg shadow-2xl h-9 select-none">
         {/* Color dot */}
         <div className="relative">
           <button
             onClick={() => setShowColorPicker(!showColorPicker)}
-            className="flex items-center justify-center w-9 h-9 hover:bg-[#2d3139] rounded-l-lg transition-colors"
+            className="flex items-center justify-center w-9 h-9 hover:bg-surfaceHover rounded-l-lg transition-colors"
             title="Change color"
           >
             <span
@@ -106,7 +106,7 @@ const OverlayContextMenu = ({
           </button>
 
           {showColorPicker && (
-            <div className="absolute top-full left-0 mt-1 p-2 bg-[#1c1f26] border border-[#2d3139] rounded-lg shadow-xl grid grid-cols-4 gap-1.5 z-10">
+            <div className="absolute top-full left-0 mt-1 p-2 bg-surface border border-border rounded-lg shadow-xl grid grid-cols-4 gap-1.5 z-10">
               {COLORS.map((color) => (
                 <button
                   key={color}
@@ -128,35 +128,35 @@ const OverlayContextMenu = ({
         </div>
 
         {/* Separator */}
-        <div className="w-px h-5 bg-[#2d3139]" />
+        <div className="w-px h-5 bg-border" />
 
         {/* Drag/move handle icon */}
         <button
-          className="flex items-center justify-center w-8 h-9 text-gray-400 hover:bg-[#2d3139] hover:text-gray-200 transition-colors cursor-grab"
+          className="flex items-center justify-center w-8 h-9 text-textSecondary hover:bg-surfaceHover hover:text-textPrimary transition-colors cursor-grab"
           title="Move overlay"
         >
           <GripHorizontal className="w-3.5 h-3.5" />
         </button>
 
         {/* Separator */}
-        <div className="w-px h-5 bg-[#2d3139]" />
+        <div className="w-px h-5 bg-border" />
 
         {/* Thickness input with up/down arrows */}
         <div className="flex items-center h-9 px-1">
-          <div className="flex items-center bg-[#13151a] rounded-md border border-[#2d3139] h-7">
-            <span className="text-xs text-gray-300 font-medium px-2 min-w-[32px] text-center tabular-nums">
+          <div className="flex items-center bg-surfaceDark rounded-md border border-border h-7">
+            <span className="text-xs text-textPrimary font-medium px-2 min-w-[32px] text-center tabular-nums">
               {currentSize}px
             </span>
-            <div className="flex flex-col border-l border-[#2d3139]">
+            <div className="flex flex-col border-l border-border">
               <button
                 onClick={incrementSize}
-                className="flex items-center justify-center w-5 h-3.5 text-gray-500 hover:text-gray-200 hover:bg-[#2d3139] rounded-tr-md transition-colors"
+                className="flex items-center justify-center w-5 h-3.5 text-textSecondary hover:text-textPrimary hover:bg-surfaceHover rounded-tr-md transition-colors"
               >
                 <ChevronUp className="w-3 h-3" />
               </button>
               <button
                 onClick={decrementSize}
-                className="flex items-center justify-center w-5 h-3.5 text-gray-500 hover:text-gray-200 hover:bg-[#2d3139] rounded-br-md transition-colors"
+                className="flex items-center justify-center w-5 h-3.5 text-textSecondary hover:text-textPrimary hover:bg-surfaceHover rounded-br-md transition-colors"
               >
                 <ChevronDown className="w-3 h-3" />
               </button>
@@ -165,7 +165,7 @@ const OverlayContextMenu = ({
         </div>
 
         {/* Separator */}
-        <div className="w-px h-5 bg-[#2d3139]" />
+        <div className="w-px h-5 bg-border" />
 
         {/* Delete button */}
         <button

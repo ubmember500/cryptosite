@@ -1,36 +1,8 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+@import './styles/themes.css';
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
-/* Theme: dark (default) and light */
-:root {
-  --color-background: #111214;
-  --color-surface: #18191e;
-  --color-surface-hover: #1e2028;
-  --color-surface-dark: #0e0f11;
-  --color-border: #26272e;
-  --color-text-primary: #e2e8f2;
-  --color-text-secondary: #6b7280;
-  --color-accent: #0ea5e9;
-  --color-success: #10d9a0;
-  --color-danger: #f43f5e;
-  --color-warning: #f59e0b;
-}
-
-[data-theme="light"] {
-  --color-background: #f0f2f5;
-  --color-surface: #ffffff;
-  --color-surface-hover: #e8eaed;
-  --color-surface-dark: #e4e6eb;
-  --color-border: #dadce0;
-  --color-text-primary: #1c1e21;
-  --color-text-secondary: #65676b;
-  --color-accent: #2962ff;
-  --color-success: #00c853;
-  --color-danger: #ff1744;
-  --color-warning: #ffa726;
-}
 
 @layer base {
   body {

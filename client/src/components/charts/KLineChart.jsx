@@ -2290,7 +2290,7 @@ const KLineChart = ({
                     className={cn(
                       'flex items-center justify-between gap-2 min-w-[140px] max-w-[220px]',
                       'px-2.5 py-1.5 rounded-md text-xs',
-                      'bg-[#1e293b] border border-[#475569] text-textPrimary shadow-lg'
+                      'bg-surfaceDark border border-border text-textPrimary shadow-lg'
                     )}
                   >
                     <span className="truncate font-medium" title={label}>
@@ -2302,7 +2302,7 @@ const KLineChart = ({
                       className={cn(
                         'flex-shrink-0 p-1 rounded transition-colors',
                         'text-textSecondary hover:text-white hover:bg-danger',
-                        'focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-1 focus:ring-offset-[#1e293b]'
+                        'focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-1 focus:ring-offset-surfaceDark'
                       )}
                       title="Remove indicator"
                       aria-label={`Remove ${label}`}

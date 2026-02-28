@@ -275,5 +275,13 @@
   "Active now": "Активен сейчас",
   "Stale": "Устарело",
   "5m activity": "Активность 5м",
-  "No chart data for this symbol yet": "Для этого символа пока нет данных графика"
+  "No chart data for this symbol yet": "Для этого символа пока нет данных графика",
+  "Themes": "Темы",
+  "Themes subtitle": "Выберите одну из 25 визуальных тем в стилях tech, bold и professional.",
+  "Theme filter all": "Все",
+  "Theme filter dark": "Тёмные",
+  "Theme filter light": "Светлые",
+  "Theme style tech": "Tech",
+  "Theme style bold": "Bold",
+  "Theme style professional": "Professional"
 }

@@ -275,5 +275,13 @@
   "Active now": "Active now",
   "Stale": "Stale",
   "5m activity": "5m activity",
-  "No chart data for this symbol yet": "No chart data for this symbol yet"
+  "No chart data for this symbol yet": "No chart data for this symbol yet",
+  "Themes": "Themes",
+  "Themes subtitle": "Choose from 25 curated visual themes across tech, bold, and professional styles.",
+  "Theme filter all": "All",
+  "Theme filter dark": "Dark",
+  "Theme filter light": "Light",
+  "Theme style tech": "Tech",
+  "Theme style bold": "Bold",
+  "Theme style professional": "Professional"
 }

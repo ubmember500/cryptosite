@@ -5,6 +5,7 @@ import { Search, Sun, Moon } from 'lucide-react';
 import { useMarketStore } from '../../store/marketStore';
 import { useLanguageStore } from '../../store/languageStore';
 import { useThemeStore } from '../../store/themeStore';
+import { isDarkTheme } from '../../config/themes';
 import UserAccountMenu from '../common/UserAccountMenu';
 import TopNav from '../common/TopNav';
 import i18n from '../../i18n';
@@ -19,6 +20,7 @@ const Navbar = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const navigate = useNavigate();
+  const currentIsDark = isDarkTheme(theme);
 
   const handleLanguageChange = (lang) => {
     setLanguage(lang);
@@ -97,9 +99,9 @@ const Navbar = () => {
             type="button"
             onClick={toggleTheme}
             className="p-1.5 rounded-full text-textSecondary hover:text-textPrimary focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-surface focus:ring-accent"
-            aria-label={theme === 'dark' ? t('Switch to light theme') : t('Switch to dark theme')}
+            aria-label={currentIsDark ? t('Switch to light theme') : t('Switch to dark theme')}
           >
-            {theme === 'dark' ? (
+            {currentIsDark ? (
               <Sun className="h-4 w-4" />
             ) : (
               <Moon className="h-4 w-4" />
