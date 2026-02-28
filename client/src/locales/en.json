@@ -68,8 +68,6 @@
   "Instrument": "Instrument",
   "24h %": "24h %",
   "NATR": "NATR",
-  "5m Avg Vol": "AVG 5M%",
-  "5m Avg Vol tooltip": "Average volatility of one 5-minute candle over the last 14 five-minute candles, as a percentage.",
   "Vol 24h": "Vol 24h",
   "Vol 24h sort hint": "Click to sort: highest to lowest or lowest to highest",
   "Vol 24h sort high to low": "Sorted highest to lowest. Click for lowest to highest.",

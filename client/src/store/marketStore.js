@@ -380,7 +380,6 @@ const normalizeMarketTokenMetrics = (token) => {
   };
 
   normalized.natr = calculateInstantNatr(normalized);
-  normalized.avg5mVol = null; // populated async by enrichTokensWithNatr14
   return normalized;
 };
 
@@ -462,7 +461,7 @@ const enrichTokensWithNatr14 = async (tokens) => {
       const cachedNatr = getCachedNatr14(fullSymbol);
       if (cachedNatr != null) {
         const cachedToken = tokens.find((token) => token.fullSymbol === fullSymbol);
-        if (cachedToken) cachedToken.avg5mVol = cachedNatr;
+        if (cachedToken) cachedToken.natr = cachedNatr;
         continue;
       }
 
@@ -476,8 +475,7 @@ const enrichTokensWithNatr14 = async (tokens) => {
         if (natr14 != null) {
           const tokenToUpdate = tokens.find((token) => token.fullSymbol === fullSymbol);
           if (tokenToUpdate) {
-            // avg5mVol: avg((H-L)/close*100) over last 14 x 5m candles (the "Nutter filter" metric)
-            tokenToUpdate.avg5mVol = natr14;
+            tokenToUpdate.natr = natr14;
           }
           setCachedNatr14(fullSymbol, natr14);
         }

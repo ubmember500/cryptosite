@@ -2,7 +2,7 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useMarketStore } from '../../store/marketStore';
 import { useMarketFlags, FLAG_COLORS } from '../../hooks/useMarketFlags';
-import { ChevronUp, ChevronDown, Flag, Info } from 'lucide-react';
+import { ChevronUp, ChevronDown, Flag } from 'lucide-react';
 import { cn } from '../../utils/cn';
 import LoadingSpinner from '../common/LoadingSpinner';
 import TokenContextMenu from './TokenContextMenu';
@@ -34,7 +34,6 @@ const BinanceMarketTable = ({ onTokenSelect, highlightToken }) => {
   const [sortConfig, setSortConfig] = useState({ key: 'volume24h', direction: 'desc' });
   const [sortByFlag, setSortByFlag] = useState(false);
   const [hoveredRow, setHoveredRow] = useState(null);
-  const [showAvgVolTooltip, setShowAvgVolTooltip] = useState(false);
   const [openPopoverFor, setOpenPopoverFor] = useState(null);
   const [contextMenu, setContextMenu] = useState(null); // { x, y, token }
   const popoverRef = useRef(null);
@@ -112,7 +111,7 @@ const BinanceMarketTable = ({ onTokenSelect, highlightToken }) => {
   };
 
   // Numeric columns: always compare as numbers (same logic for Binance, Bybit, OKX)
-  const NUMERIC_SORT_KEYS = ['volume24h', 'priceChangePercent24h', 'natr', 'avg5mVol'];
+  const NUMERIC_SORT_KEYS = ['volume24h', 'priceChangePercent24h', 'natr'];
 
   const compareValues = (key, aValue, bValue, direction) => {
     const isNumeric = NUMERIC_SORT_KEYS.includes(key);
@@ -280,32 +279,6 @@ const BinanceMarketTable = ({ onTokenSelect, highlightToken }) => {
               </div>
             </th>
             <th
-              className="px-4 py-3 text-right text-xs font-medium text-textSecondary uppercase tracking-wider"
-            >
-              <div className="flex items-center justify-end gap-1">
-                <button
-                  type="button"
-                  onClick={() => handleSort('avg5mVol')}
-                  className="flex items-center gap-1 hover:text-textPrimary group"
-                >
-                  {t('5m Avg Vol')}
-                  <SortIcon columnKey="avg5mVol" />
-                </button>
-                <div
-                  className="relative flex-shrink-0"
-                  onMouseEnter={() => setShowAvgVolTooltip(true)}
-                  onMouseLeave={() => setShowAvgVolTooltip(false)}
-                >
-                  <Info className="h-3 w-3 text-textSecondary cursor-help" />
-                  {showAvgVolTooltip && (
-                    <div className="absolute bottom-full right-0 mb-2 w-64 p-3 bg-surface border border-border rounded-lg shadow-xl text-xs text-textPrimary z-50 whitespace-normal text-left leading-relaxed pointer-events-none">
-                      {t('5m Avg Vol tooltip')}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </th>
-            <th
               className="px-4 py-3 text-right text-xs font-medium text-textSecondary uppercase tracking-wider cursor-pointer hover:text-textPrimary group"
               onClick={() => handleSort('volume24h')}
               title={sortConfig.key === 'volume24h'
@@ -410,18 +383,6 @@ const BinanceMarketTable = ({ onTokenSelect, highlightToken }) => {
                   >
                     {token.natr?.toFixed(2) || '0.00'}%
                   </span>
-                </td>
-                <td className="px-4 py-3 whitespace-nowrap text-right">
-                  {token.avg5mVol != null ? (
-                    <span
-                      className="font-semibold"
-                      style={{ color: '#a78bfa', textShadow: '0 0 8px rgba(167,139,250,0.45)' }}
-                    >
-                      {token.avg5mVol.toFixed(2)}%
-                    </span>
-                  ) : (
-                    <span className="text-textSecondary opacity-40 text-xs">—</span>
-                  )}
                 </td>
                 <td className="px-4 py-3 whitespace-nowrap text-right">
                   <span
