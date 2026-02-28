@@ -344,7 +344,7 @@ async function getSiteActivitySummary(days = 30) {
   const todayStart = startOfUtcDay(now);
   const tomorrowStart = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
 
-  const [dailyTableRows, fallbackRangeEvents, topPages, totalUsers, loggedOnUsersTodayRows, uniqueVisitorsTodayRows, anonymousVisitorsTodayRows, clicksToday, uniqueVisitorsRangeRows] = await Promise.all([
+  const [dailyTableRows, fallbackRangeEvents, topPages, topElements, totalUsers, loggedOnUsersTodayRows, uniqueVisitorsTodayRows, anonymousVisitorsTodayRows, clicksToday, uniqueVisitorsRangeRows, visitorEventsRange] = await Promise.all([
     safeRun(
       () =>
         prisma.siteDailyActivity.findMany({
@@ -386,6 +386,21 @@ async function getSiteActivitySummary(days = 30) {
           },
           _count: { pagePath: true },
           orderBy: { _count: { pagePath: 'desc' } },
+          take: 10,
+        }),
+      []
+    ),
+    safeRun(
+      () =>
+        prisma.userActivityEvent.groupBy({
+          by: ['element'],
+          where: {
+            eventType: 'click',
+            occurredAt: { gte: start },
+            element: { not: null },
+          },
+          _count: { element: true },
+          orderBy: { _count: { element: 'desc' } },
           take: 10,
         }),
       []
@@ -448,6 +463,20 @@ async function getSiteActivitySummary(days = 30) {
         }),
       []
     ),
+    safeRun(
+      () =>
+        prisma.userActivityEvent.findMany({
+          where: {
+            occurredAt: { gte: start },
+            sessionId: { not: null },
+          },
+          select: {
+            occurredAt: true,
+            sessionId: true,
+          },
+        }),
+      []
+    ),
   ]);
 
   const dailySource = Array.isArray(dailyTableRows)
@@ -455,28 +484,47 @@ async function getSiteActivitySummary(days = 30) {
     : buildDailyFromEvents(fallbackRangeEvents, start, now);
 
   const daily = normalizeDailyRange(dailySource, start, now);
+  const visitorsByDay = new Map();
+  for (const row of visitorEventsRange) {
+    const dayKey = startOfUtcDay(row.occurredAt).getTime();
+    if (!visitorsByDay.has(dayKey)) {
+      visitorsByDay.set(dayKey, new Set());
+    }
+    visitorsByDay.get(dayKey).add(row.sessionId);
+  }
+
+  const dailyWithVisitors = daily.map((row) => {
+    const dayKey = startOfUtcDay(row.day).getTime();
+    const visitorSet = visitorsByDay.get(dayKey);
+    return {
+      ...row,
+      uniqueVisitors: visitorSet ? visitorSet.size : 0,
+    };
+  });
 
   const todayKey = startOfUtcDay(now).getTime();
-  const today = daily.find((d) => new Date(d.day).getTime() === todayKey) || {
+  const today = dailyWithVisitors.find((d) => new Date(d.day).getTime() === todayKey) || {
     day: startOfUtcDay(now),
     uniqueUsers: 0,
+    uniqueVisitors: 0,
     eventCount: 0,
     pageViewCount: 0,
     clickCount: 0,
     loginCount: 0,
   };
 
-  const last7 = daily.slice(-7);
+  const last7 = dailyWithVisitors.slice(-7);
   const sum7 = last7.reduce(
     (acc, item) => {
       acc.uniqueUsers += item.uniqueUsers;
+      acc.uniqueVisitors += item.uniqueVisitors || 0;
       acc.eventCount += item.eventCount;
       acc.pageViewCount += item.pageViewCount;
       acc.clickCount += item.clickCount;
       acc.loginCount += item.loginCount;
       return acc;
     },
-    { uniqueUsers: 0, eventCount: 0, pageViewCount: 0, clickCount: 0, loginCount: 0 }
+    { uniqueUsers: 0, uniqueVisitors: 0, eventCount: 0, pageViewCount: 0, clickCount: 0, loginCount: 0 }
   );
 
   const divisor = Math.max(1, last7.length);
@@ -493,15 +541,20 @@ async function getSiteActivitySummary(days = 30) {
     today,
     last7Average: {
       uniqueUsers: Number((sum7.uniqueUsers / divisor).toFixed(2)),
+      uniqueVisitors: Number((sum7.uniqueVisitors / divisor).toFixed(2)),
       eventCount: Number((sum7.eventCount / divisor).toFixed(2)),
       pageViewCount: Number((sum7.pageViewCount / divisor).toFixed(2)),
       clickCount: Number((sum7.clickCount / divisor).toFixed(2)),
       loginCount: Number((sum7.loginCount / divisor).toFixed(2)),
     },
-    daily,
+    daily: dailyWithVisitors,
     topPages: topPages.map((row) => ({
       pagePath: row.pagePath,
       views: row._count?.pagePath || 0,
+    })),
+    topElements: topElements.map((row) => ({
+      element: row.element,
+      clicks: row._count?.element || 0,
     })),
   };
 }

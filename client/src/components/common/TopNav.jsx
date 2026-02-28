@@ -3,7 +3,7 @@ import { NavLink } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
   Bell, List, Layers, TrendingUp, LayoutGrid,
-  Bot, CreditCard, BookOpen, Settings,
+  Bot, CreditCard, BookOpen, Settings, BarChart3,
 } from 'lucide-react';
 
 const NAV_ITEMS = [
@@ -15,6 +15,7 @@ const NAV_ITEMS = [
   { path: '/telegram-bots', labelKey: 'Telegram',      icon: Bot,        color: '#38bdf8' },
   { path: '/subscription',  labelKey: 'Subscription',  icon: CreditCard, color: '#f472b6' },
   { path: '/instructions',  labelKey: 'User Guide',    icon: BookOpen,   color: '#e879f9' },
+  { path: '/activity',      labelKey: 'Activity',      icon: BarChart3,  color: '#60a5fa' },
   { path: '/settings',      labelKey: 'Settings',      icon: Settings,   color: '#2dd4bf' },
 ];
 

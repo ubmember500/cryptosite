@@ -37,6 +37,7 @@ import WallScanner from './pages/WallScanner';
 import MarketMap from './pages/MarketMap';
 import Settings from './pages/Settings';
 import Instructions from './pages/Instructions';
+import ActivityDashboard from './pages/ActivityDashboard';
 
 function ActivityTracker() {
   const location = useLocation();
@@ -222,6 +223,7 @@ function App() {
             <Route path="wall-scanner" element={<WallScanner />} />
             <Route path="profile" element={<Profile />} />
             <Route path="settings" element={<Settings />} />
+            <Route path="activity" element={<ActivityDashboard />} />
           </Route>
 
           {/* Catch all - redirect to account or login */}
