@@ -9,6 +9,7 @@ const bybitMarketMapService = require('./services/bybitMarketMapService');
 const { startAlertEngine, stopAlertEngine } = require('./services/alertEngine');
 const priceWatcher = require('./services/priceWatcher');
 const telegramPolling = require('./services/telegramPolling');
+const { ensureActivitySchema } = require('./services/activityService');
 
 const PORT = process.env.PORT || 5000;
 
@@ -26,6 +27,13 @@ async function bootstrap() {
     try {
       console.log(`🚀 Server running on port ${PORT}`);
       console.log('📡 Socket.IO initialized');
+
+      try {
+        await ensureActivitySchema();
+        console.log('📈 Activity schema ready');
+      } catch (schemaErr) {
+        console.warn('[activity] schema bootstrap skipped:', schemaErr.message);
+      }
 
       await startAlertEngine();
       console.log('⏰ Alert engine started');
