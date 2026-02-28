@@ -401,8 +401,8 @@ export const THEME_DEFINITIONS = [
   },
 ];
 
-export const DEFAULT_THEME_ID = 'void';
-export const DEFAULT_DARK_THEME_ID = 'void';
+export const DEFAULT_THEME_ID = 'mecha';
+export const DEFAULT_DARK_THEME_ID = 'mecha';
 export const DEFAULT_LIGHT_THEME_ID = 'paper';
 
 export const THEME_IDS = THEME_DEFINITIONS.map((theme) => theme.id);

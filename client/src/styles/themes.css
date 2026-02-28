@@ -1,5 +1,18 @@
 /* Theme variables */
-:root,
+:root {
+  --color-background: #15181d;
+  --color-surface: #222730;
+  --color-surface-hover: #303744;
+  --color-surface-dark: #0e1115;
+  --color-border: #353c48;
+  --color-text-primary: #e7edf6;
+  --color-text-secondary: #9da8b7;
+  --color-accent: #f59e0b;
+  --color-success: #fb923c;
+  --color-danger: #ef4444;
+  --color-warning: #f97316;
+}
+
 [data-theme='void'] {
   --color-background: #0a0a0f;
   --color-surface: #111118;
