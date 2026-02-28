@@ -6,35 +6,52 @@
  *   2. SMTP        — set SMTP_HOST, SMTP_USER, SMTP_PASS, MAIL_FROM  (e.g. Gmail)
  *
  * See server/EMAIL_SETUP.md for setup instructions.
+ *
+ * NOTE — env vars are read lazily (via helpers) so that hot-reloads and
+ * late dotenv calls always pick up the latest values.
  */
 
 const nodemailer = require('nodemailer');
 
-const FRONTEND_URL =
-  process.env.FRONTEND_URL ||
-  String(process.env.FRONTEND_URLS || '')
-    .split(',')
-    .map((origin) => origin.trim())
-    .find(Boolean) ||
-  'http://localhost:5173';
+/* ---------- helpers that read env on every call (no stale cache) ---------- */
+
+function getFrontendUrl() {
+  return (
+    process.env.FRONTEND_URL ||
+    String(process.env.FRONTEND_URLS || '')
+      .split(',')
+      .map((o) => o.trim())
+      .find(Boolean) ||
+    'http://localhost:5173'
+  );
+}
 
 // --- Resend ---
-const RESEND_API_KEY = process.env.RESEND_API_KEY;
+function getResendApiKey() { return process.env.RESEND_API_KEY; }
+/**
+ * Resend "from" address.
+ * Without domain verification, Resend only allows sending from
+ * "onboarding@resend.dev".  Set RESEND_FROM to override once you
+ * verify your own domain.
+ */
+function getResendFrom() {
+  return process.env.RESEND_FROM || 'CryptoAlerts <onboarding@resend.dev>';
+}
 
 // --- SMTP (Gmail / any SMTP server) ---
-const SMTP_HOST = process.env.SMTP_HOST;
-const SMTP_PORT = parseInt(process.env.SMTP_PORT || '587', 10);
-const SMTP_SECURE = process.env.SMTP_SECURE === 'true';
-const SMTP_USER = process.env.SMTP_USER;
-const SMTP_PASS = process.env.SMTP_PASS;
-const MAIL_FROM = process.env.MAIL_FROM || process.env.SMTP_USER || 'CryptoAlerts <noreply@cryptoalerts.app>';
+function getSmtpHost()   { return process.env.SMTP_HOST; }
+function getSmtpPort()   { return parseInt(process.env.SMTP_PORT || '587', 10); }
+function getSmtpSecure() { return process.env.SMTP_SECURE === 'true'; }
+function getSmtpUser()   { return process.env.SMTP_USER; }
+function getSmtpPass()   { return process.env.SMTP_PASS; }
+function getMailFrom()   { return process.env.MAIL_FROM || process.env.SMTP_USER || 'CryptoAlerts <noreply@cryptoalerts.app>'; }
 
 function isResendConfigured() {
-  return Boolean(RESEND_API_KEY);
+  return Boolean(getResendApiKey());
 }
 
 function isSmtpConfigured() {
-  return Boolean(SMTP_HOST && SMTP_USER && SMTP_PASS);
+  return Boolean(getSmtpHost() && getSmtpUser() && getSmtpPass());
 }
 
 function isEmailConfigured() {
@@ -46,12 +63,13 @@ function isEmailConfigured() {
  */
 function logEmailStatus() {
   if (isResendConfigured()) {
-    console.log('📧 Password reset: emails will be sent via Resend API.');
+    console.log(`📧 Password reset: emails will be sent via Resend API (from: ${getResendFrom()}).`);
   } else if (isSmtpConfigured()) {
-    console.log(`📧 Password reset: emails will be sent via SMTP (${SMTP_HOST}:${SMTP_PORT}).`);
+    console.log(`📧 Password reset: emails will be sent via SMTP (${getSmtpHost()}:${getSmtpPort()}).`);
   } else {
-    console.log('📧 Password reset: no email provider configured. Add RESEND_API_KEY or SMTP_* vars to server/.env (see server/EMAIL_SETUP.md).');
+    console.log('📧 Password reset: ⚠️  no email provider configured! Add RESEND_API_KEY or SMTP_* vars to server/.env (see server/EMAIL_SETUP.md).');
   }
+  console.log(`📧 Reset links will point to: ${getFrontendUrl()}`);
 }
 
 /**
@@ -140,52 +158,86 @@ function buildResetEmailHtml(resetLink) {
 }
 
 /**
- * Send password reset email via Resend API.
+ * Send password reset email via Resend HTTP API.
+ *
+ * Uses RESEND_FROM env var (default: "CryptoAlerts <onboarding@resend.dev>").
+ * The "onboarding@resend.dev" sender works on ALL Resend plans without
+ * domain verification — it's the recommended way to get started quickly.
  */
 async function sendViaResend(toEmail, subject, text, html) {
-  const { Resend } = require('resend');
-  const resend = new Resend(RESEND_API_KEY);
+  const apiKey = getResendApiKey();
+  const fromAddress = getResendFrom();
 
-  const fromAddress = MAIL_FROM.includes('@') && !MAIL_FROM.includes('<')
-    ? `CryptoAlerts <${MAIL_FROM}>`
-    : MAIL_FROM;
+  console.log('[Email/Resend] Sending to', toEmail, 'from', fromAddress);
 
-  const { error } = await resend.emails.send({
-    from: fromAddress,
-    to: [toEmail],
-    subject,
-    html,
-    text,
+  // Use fetch-based HTTP call directly — avoids SDK version mismatches and
+  // gives us full control over error handling.
+  const res = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      from: fromAddress,
+      to: [toEmail],
+      subject,
+      html,
+      text,
+    }),
   });
 
-  if (error) {
-    console.error('[Email] Resend error:', error);
-    throw new Error(`Resend error: ${error.message || JSON.stringify(error)}`);
+  const body = await res.json().catch(() => ({}));
+
+  if (!res.ok) {
+    const msg = body?.message || body?.error || JSON.stringify(body);
+    console.error('[Email/Resend] API error:', res.status, msg);
+    throw new Error(`Resend API ${res.status}: ${msg}`);
   }
 
-  console.log('[Email] Password reset sent via Resend to', toEmail);
+  console.log('[Email/Resend] ✅ Password reset sent to', toEmail, '| id:', body.id);
 }
 
 /**
  * Send password reset email via SMTP (nodemailer).
+ * Includes a connection timeout and one automatic retry so transient
+ * cloud-provider hiccups (e.g. Render cold-start DNS) don't break it.
  */
 async function sendViaSmtp(toEmail, subject, text, html) {
-  const transporter = nodemailer.createTransport({
-    host: SMTP_HOST,
-    port: SMTP_PORT,
-    secure: SMTP_SECURE,
-    auth: { user: SMTP_USER, pass: SMTP_PASS },
-  });
+  const host = getSmtpHost();
+  const port = getSmtpPort();
+  const secure = getSmtpSecure();
+  const user = getSmtpUser();
+  const pass = getSmtpPass();
+  const from = getMailFrom();
 
-  await transporter.sendMail({
-    from: MAIL_FROM,
-    to: toEmail,
-    subject,
-    text,
-    html,
-  });
+  console.log(`[Email/SMTP] Sending to ${toEmail} via ${host}:${port} (user: ${user})`);
 
-  console.log('[Email] Password reset sent via SMTP to', toEmail);
+  const createTransporter = () =>
+    nodemailer.createTransport({
+      host,
+      port,
+      secure,
+      auth: { user, pass },
+      connectionTimeout: 10_000,   // 10 s to establish TCP
+      greetingTimeout: 10_000,     // 10 s for SMTP greeting
+      socketTimeout: 15_000,       // 15 s per socket operation
+    });
+
+  // Attempt with one retry
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const transporter = createTransporter();
+      await transporter.sendMail({ from, to: toEmail, subject, text, html });
+      console.log('[Email/SMTP] ✅ Password reset sent to', toEmail);
+      return;
+    } catch (err) {
+      console.error(`[Email/SMTP] Attempt ${attempt} failed:`, err.message);
+      if (attempt === 2) throw err;
+      // brief pause before retry
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+  }
 }
 
 /**
@@ -207,29 +259,36 @@ async function sendPasswordResetEmail(toEmail, resetLink) {
   ].join('\n');
   const html = buildResetEmailHtml(resetLink);
 
+  const errors = [];
+
   if (isResendConfigured()) {
     try {
       await sendViaResend(toEmail, subject, text, html);
-      return;
+      return; // success
     } catch (err) {
+      errors.push(`Resend: ${err.message}`);
       console.error('[Email] Resend failed, will try SMTP fallback if configured:', err.message);
-      if (!isSmtpConfigured()) throw err;
     }
   }
 
   if (isSmtpConfigured()) {
     try {
       await sendViaSmtp(toEmail, subject, text, html);
-      return;
+      return; // success
     } catch (err) {
+      errors.push(`SMTP: ${err.message}`);
       console.error('[Email] SMTP failed:', err.message);
-      throw err;
     }
   }
 
-  throw new Error(
-    'No email provider configured. Add RESEND_API_KEY or SMTP_HOST/SMTP_USER/SMTP_PASS to server/.env (see server/EMAIL_SETUP.md).'
-  );
+  if (!isResendConfigured() && !isSmtpConfigured()) {
+    throw new Error(
+      'No email provider configured. Set RESEND_API_KEY (easiest) or SMTP_HOST/SMTP_USER/SMTP_PASS in server/.env (see server/EMAIL_SETUP.md).'
+    );
+  }
+
+  // Both providers were tried and failed
+  throw new Error(`All email providers failed — ${errors.join(' | ')}`);
 }
 
 module.exports = {
@@ -238,5 +297,5 @@ module.exports = {
   isSmtpConfigured,
   isResendConfigured,
   logEmailStatus,
-  getResetLink: (token) => `${FRONTEND_URL.replace(/\/$/, '')}/reset-password?token=${encodeURIComponent(token)}`,
+  getResetLink: (token) => `${getFrontendUrl().replace(/\/$/, '')}/reset-password?token=${encodeURIComponent(token)}`,
 };
