@@ -468,7 +468,6 @@ async function getSiteActivitySummary(days = 30) {
         prisma.userActivityEvent.findMany({
           where: {
             occurredAt: { gte: start },
-            sessionId: { not: null },
           },
           select: {
             occurredAt: true,
