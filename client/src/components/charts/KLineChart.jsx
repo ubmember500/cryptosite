@@ -389,12 +389,10 @@ const KLineChart = ({
   const [drawingsVisible, setDrawingsVisible] = useState(true);
   const [magnetMode, setMagnetMode] = useState('normal'); // 'normal' | 'weak_magnet' | 'strong_magnet'
 
-  // Text annotation tool state
-  const [textInputVisible, setTextInputVisible] = useState(false);
+  // Text annotation tool state (click chart, then type directly from keyboard)
   const [pendingTextValue, setPendingTextValue] = useState('');
   const [textDraftOverlayId, setTextDraftOverlayId] = useState(null);
   const textPlacementArmedRef = useRef(false);
-  const textInputRef = useRef(null);
 
   // Indicators state management
   const [indicators, setIndicators] = useState([]); // Store indicator configs: [{ id, name, params, visible, isStack }]
@@ -458,9 +456,7 @@ const KLineChart = ({
           textPlacementArmedRef.current = false;
           setTextDraftOverlayId(overlay.id);
           setPendingTextValue(typeof overlay.extendData === 'string' ? overlay.extendData : '');
-          setTextInputVisible(true);
           setActiveDrawingTool(DRAWING_TOOLS.SIMPLE_ANNOTATION);
-          setTimeout(() => textInputRef.current?.focus(), 40);
           return;
         }
         setActiveDrawingTool(null);
@@ -853,7 +849,6 @@ const KLineChart = ({
       }
       setTextDraftOverlayId(null);
       setActiveDrawingTool(null);
-      setTextInputVisible(false);
       setPendingTextValue('');
       return;
     }
@@ -866,40 +861,36 @@ const KLineChart = ({
       }
       setTextDraftOverlayId(null);
       setActiveDrawingTool(null);
-      setTextInputVisible(false);
       setPendingTextValue('');
       return;
     }
 
     // Text tool flow: click T -> click chart to place arrow -> type text (live on chart)
     if (toolbarId === 'text') {
-      if (textInputVisible || textPlacementArmedRef.current || textDraftOverlayId) {
+      if (textPlacementArmedRef.current || textDraftOverlayId) {
         textPlacementArmedRef.current = false;
         if (textDraftOverlayId) {
           removeOverlay(textDraftOverlayId);
         }
         setTextDraftOverlayId(null);
-        setTextInputVisible(false);
         setPendingTextValue('');
         setActiveDrawingTool(null);
         return;
       }
       textPlacementArmedRef.current = true;
       setTextDraftOverlayId(null);
-      setTextInputVisible(false);
       setPendingTextValue('');
       setDrawingTool(DRAWING_TOOLS.SIMPLE_ANNOTATION, '');
       return;
     }
 
     // If switching to another tool while text input is open, close the text input
-    if (textInputVisible || textPlacementArmedRef.current || textDraftOverlayId) {
+    if (textPlacementArmedRef.current || textDraftOverlayId) {
       textPlacementArmedRef.current = false;
       if (textDraftOverlayId) {
         removeOverlay(textDraftOverlayId);
       }
       setTextDraftOverlayId(null);
-      setTextInputVisible(false);
       setPendingTextValue('');
     }
 
@@ -908,7 +899,7 @@ const KLineChart = ({
   };
 
   /**
-   * Submit the typed text and enter interactive placement mode for simpleAnnotation.
+   * Finalize the current text annotation.
    */
   const handleTextInputSubmit = () => {
     const text = pendingTextValue.trim();
@@ -927,13 +918,12 @@ const KLineChart = ({
 
     textPlacementArmedRef.current = false;
     setTextDraftOverlayId(null);
-    setTextInputVisible(false);
     setPendingTextValue('');
     setActiveDrawingTool(null);
   };
 
   /**
-   * Cancel the text input without placing any annotation.
+   * Cancel typing and delete the current text annotation.
    */
   const handleTextInputCancel = () => {
     textPlacementArmedRef.current = false;
@@ -941,7 +931,6 @@ const KLineChart = ({
       removeOverlay(textDraftOverlayId);
     }
     setTextDraftOverlayId(null);
-    setTextInputVisible(false);
     setPendingTextValue('');
     setActiveDrawingTool(null);
   };
@@ -949,8 +938,7 @@ const KLineChart = ({
   /**
    * Live update text content while the user types.
    */
-  const handleTextInputChange = (e) => {
-    const value = e.target.value;
+  const handleTextInputChange = (value) => {
     setPendingTextValue(value);
 
     if (!textDraftOverlayId || !chartRef.current) return;
@@ -963,6 +951,47 @@ const KLineChart = ({
       console.error('[KLineChart] Failed to update annotation text:', error);
     }
   };
+
+  // Direct keyboard typing for text annotations (no popup input)
+  useEffect(() => {
+    if (!textDraftOverlayId) return;
+
+    const handleKeyDown = (event) => {
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        handleTextInputSubmit();
+        return;
+      }
+
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        handleTextInputCancel();
+        return;
+      }
+
+      if (event.key === 'Delete') {
+        event.preventDefault();
+        handleTextInputCancel();
+        return;
+      }
+
+      if (event.key === 'Backspace') {
+        event.preventDefault();
+        handleTextInputChange(pendingTextValue.slice(0, -1));
+        return;
+      }
+
+      if (event.key.length === 1) {
+        event.preventDefault();
+        handleTextInputChange(`${pendingTextValue}${event.key}`);
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [textDraftOverlayId, pendingTextValue]);
 
   /**
    * Create an overlay (drawing tool) on the chart.
@@ -2038,7 +2067,7 @@ const KLineChart = ({
         <ChartToolbar
           onToolSelect={handleToolSelect}
           activeTool={
-            textInputVisible
+            (textPlacementArmedRef.current || !!textDraftOverlayId)
               ? 'text'
               : activeDrawingTool
               ? mapOverlayTypeToToolbarId(activeDrawingTool)
@@ -2193,42 +2222,6 @@ const KLineChart = ({
         />
 
         <div className="relative flex-1 min-w-0 min-h-0">
-          {/* Text annotation input panel — shown when user clicks the T (text) tool */}
-          {!compact && textInputVisible && (
-            <div className="absolute z-50 left-4 top-4 w-64 bg-surface border border-border rounded-lg shadow-xl p-3">
-              <div className="text-xs font-semibold text-textPrimary mb-1">Edit text on chart</div>
-              <div className="text-xs text-textSecondary mb-2">Text updates live on the placed label while you type.</div>
-              <input
-                ref={textInputRef}
-                type="text"
-                autoFocus
-                className="w-full bg-background border border-border rounded px-2 py-1.5 text-sm text-textPrimary placeholder-textSecondary focus:outline-none focus:ring-1 focus:ring-accent"
-                placeholder="e.g. Support, Buy here…"
-                value={pendingTextValue}
-                onChange={handleTextInputChange}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') { e.preventDefault(); handleTextInputSubmit(); }
-                  if (e.key === 'Escape') handleTextInputCancel();
-                }}
-              />
-              <div className="flex gap-2 mt-2">
-                <button
-                  type="button"
-                  onClick={handleTextInputSubmit}
-                  className="flex-1 py-1.5 text-xs font-medium bg-accent text-white rounded hover:bg-accent/90 transition-colors focus:outline-none focus:ring-1 focus:ring-accent"
-                >
-                  Apply
-                </button>
-                <button
-                  type="button"
-                  onClick={handleTextInputCancel}
-                  className="px-3 py-1.5 text-xs font-medium text-textSecondary hover:text-textPrimary bg-surfaceHover rounded transition-colors focus:outline-none"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          )}
 
           <div
             ref={chartContainerRef}

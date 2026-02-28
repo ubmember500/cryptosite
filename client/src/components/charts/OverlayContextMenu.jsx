@@ -27,6 +27,7 @@ const OverlayContextMenu = ({
   const currentColor = overlay?.styles?.line?.color || '#22d3ee';
   const currentSize = overlay?.styles?.line?.size || 1;
   const isMeasurementOverlay = overlay?.type === 'rangeMeasurement' || overlay?.name === 'rangeMeasurement';
+  const isTextOverlay = overlay?.type === 'simpleAnnotation' || overlay?.name === 'simpleAnnotation';
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -84,7 +85,7 @@ const OverlayContextMenu = ({
           <button
             onClick={onDelete}
             className="flex items-center justify-center w-9 h-9 text-gray-400 hover:bg-red-600/20 hover:text-red-400 rounded-lg transition-colors"
-            title="Delete"
+            title={isTextOverlay ? 'Delete text' : 'Delete'}
           >
             <Trash2 className="w-4 h-4" />
           </button>
@@ -170,7 +171,7 @@ const OverlayContextMenu = ({
         <button
           onClick={onDelete}
           className="flex items-center justify-center w-9 h-9 text-gray-400 hover:bg-red-600/20 hover:text-red-400 rounded-r-lg transition-colors"
-          title="Delete"
+          title={isTextOverlay ? 'Delete text' : 'Delete'}
         >
           <Trash2 className="w-4 h-4" />
         </button>
