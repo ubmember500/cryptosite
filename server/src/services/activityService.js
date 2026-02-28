@@ -55,6 +55,96 @@ function classifyCounters(eventType) {
   };
 }
 
+function isMissingTableError(error) {
+  const code = typeof error?.code === 'string' ? error.code : '';
+  const message = String(error?.message || '').toLowerCase();
+  return code === 'P2021' || code === 'P2022' || message.includes('does not exist');
+}
+
+async function safeRun(task, fallbackValue) {
+  try {
+    return await task();
+  } catch (error) {
+    if (isMissingTableError(error)) {
+      return fallbackValue;
+    }
+    throw error;
+  }
+}
+
+function buildDailyFromEvents(events = [], start, now = new Date()) {
+  const startDay = startOfUtcDay(start);
+  const endDay = startOfUtcDay(now);
+  const byDay = new Map();
+
+  for (let cursor = new Date(startDay); cursor <= endDay; cursor = new Date(cursor.getTime() + 24 * 60 * 60 * 1000)) {
+    byDay.set(cursor.getTime(), {
+      day: new Date(cursor),
+      uniqueUsers: 0,
+      eventCount: 0,
+      pageViewCount: 0,
+      clickCount: 0,
+      loginCount: 0,
+      _uniqueUserIds: new Set(),
+    });
+  }
+
+  for (const event of events) {
+    const dayKey = startOfUtcDay(event.occurredAt).getTime();
+    const row = byDay.get(dayKey);
+    if (!row) continue;
+
+    row.eventCount += 1;
+    if (event.eventType === 'page_view') row.pageViewCount += 1;
+    if (event.eventType === 'click') row.clickCount += 1;
+    if (event.eventType === 'login') row.loginCount += 1;
+    if (event.userId) row._uniqueUserIds.add(event.userId);
+  }
+
+  return Array.from(byDay.values())
+    .sort((a, b) => new Date(a.day) - new Date(b.day))
+    .map((row) => ({
+      day: row.day,
+      uniqueUsers: row._uniqueUserIds.size,
+      eventCount: row.eventCount,
+      pageViewCount: row.pageViewCount,
+      clickCount: row.clickCount,
+      loginCount: row.loginCount,
+    }));
+}
+
+function normalizeDailyRange(daily = [], start, now = new Date()) {
+  const startDay = startOfUtcDay(start);
+  const endDay = startOfUtcDay(now);
+  const map = new Map(
+    daily.map((item) => [startOfUtcDay(item.day).getTime(), {
+      day: startOfUtcDay(item.day),
+      uniqueUsers: Number(item.uniqueUsers || 0),
+      eventCount: Number(item.eventCount || 0),
+      pageViewCount: Number(item.pageViewCount || 0),
+      clickCount: Number(item.clickCount || 0),
+      loginCount: Number(item.loginCount || 0),
+    }])
+  );
+
+  const rows = [];
+  for (let cursor = new Date(startDay); cursor <= endDay; cursor = new Date(cursor.getTime() + 24 * 60 * 60 * 1000)) {
+    const key = cursor.getTime();
+    rows.push(
+      map.get(key) || {
+        day: new Date(cursor),
+        uniqueUsers: 0,
+        eventCount: 0,
+        pageViewCount: 0,
+        clickCount: 0,
+        loginCount: 0,
+      }
+    );
+  }
+
+  return rows;
+}
+
 async function recordSingleActivity(input = {}) {
   const eventType = normalizeEventType(input.eventType);
   const userId = typeof input.userId === 'string' && input.userId.trim() ? input.userId.trim() : null;
@@ -68,93 +158,86 @@ async function recordSingleActivity(input = {}) {
   const day = startOfUtcDay(eventTime);
   const counters = classifyCounters(eventType);
 
-  await prisma.$transaction(async (tx) => {
-    await tx.userActivityEvent.create({
-      data: {
-        userId,
-        sessionId,
-        eventType,
-        pagePath,
-        label,
-        element,
-        metadata,
-        occurredAt: eventTime,
-      },
-    });
-
-    if (!userId) {
-      await tx.siteDailyActivity.upsert({
-        where: { day },
-        create: {
-          day,
-          eventCount: counters.eventCount,
-          pageViewCount: counters.pageViewCount,
-          clickCount: counters.clickCount,
-          loginCount: counters.loginCount,
-          uniqueUsers: 0,
-        },
-        update: {
-          eventCount: { increment: counters.eventCount },
-          pageViewCount: { increment: counters.pageViewCount },
-          clickCount: { increment: counters.clickCount },
-          loginCount: { increment: counters.loginCount },
-        },
-      });
-      return;
-    }
-
-    const existingDaily = await tx.userDailyActivity.findUnique({
-      where: {
-        userId_day: { userId, day },
-      },
-      select: { id: true },
-    });
-
-    if (existingDaily) {
-      await tx.userDailyActivity.update({
-        where: { userId_day: { userId, day } },
-        data: {
-          lastSeenAt: eventTime,
-          eventCount: { increment: counters.eventCount },
-          pageViewCount: { increment: counters.pageViewCount },
-          clickCount: { increment: counters.clickCount },
-          loginCount: { increment: counters.loginCount },
-        },
-      });
-    } else {
-      await tx.userDailyActivity.create({
+  await safeRun(
+    () =>
+      prisma.userActivityEvent.create({
         data: {
           userId,
-          day,
-          firstSeenAt: eventTime,
-          lastSeenAt: eventTime,
-          eventCount: counters.eventCount,
-          pageViewCount: counters.pageViewCount,
-          clickCount: counters.clickCount,
-          loginCount: counters.loginCount,
+          sessionId,
+          eventType,
+          pagePath,
+          label,
+          element,
+          metadata,
+          occurredAt: eventTime,
         },
-      });
-    }
+      }),
+    null
+  );
 
-    await tx.siteDailyActivity.upsert({
+  let isFirstDailyForUser = false;
+
+  if (userId) {
+    await safeRun(async () => {
+      const existingDaily = await prisma.userDailyActivity.findUnique({
+        where: {
+          userId_day: { userId, day },
+        },
+        select: { id: true },
+      });
+
+      if (existingDaily) {
+        await prisma.userDailyActivity.update({
+          where: { userId_day: { userId, day } },
+          data: {
+            lastSeenAt: eventTime,
+            eventCount: { increment: counters.eventCount },
+            pageViewCount: { increment: counters.pageViewCount },
+            clickCount: { increment: counters.clickCount },
+            loginCount: { increment: counters.loginCount },
+          },
+        });
+      } else {
+        isFirstDailyForUser = true;
+        await prisma.userDailyActivity.create({
+          data: {
+            userId,
+            day,
+            firstSeenAt: eventTime,
+            lastSeenAt: eventTime,
+            eventCount: counters.eventCount,
+            pageViewCount: counters.pageViewCount,
+            clickCount: counters.clickCount,
+            loginCount: counters.loginCount,
+          },
+        });
+      }
+      return existingDaily;
+    }, null);
+  }
+
+  await safeRun(async () => {
+    const uniqueUsersIncrement = userId && isFirstDailyForUser ? 1 : 0;
+
+    await prisma.siteDailyActivity.upsert({
       where: { day },
       create: {
         day,
-        uniqueUsers: existingDaily ? 0 : 1,
+        uniqueUsers: uniqueUsersIncrement,
         eventCount: counters.eventCount,
         pageViewCount: counters.pageViewCount,
         clickCount: counters.clickCount,
         loginCount: counters.loginCount,
       },
       update: {
-        uniqueUsers: { increment: existingDaily ? 0 : 1 },
+        uniqueUsers: { increment: uniqueUsersIncrement },
         eventCount: { increment: counters.eventCount },
         pageViewCount: { increment: counters.pageViewCount },
         clickCount: { increment: counters.clickCount },
         loginCount: { increment: counters.loginCount },
       },
     });
-  });
+  }, null);
 }
 
 async function recordActivityBatch(events = [], fallback = {}) {
@@ -179,69 +262,117 @@ async function getSiteActivitySummary(days = 30) {
   const todayStart = startOfUtcDay(now);
   const tomorrowStart = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
 
-  const [daily, topPages, totalUsers, loggedOnUsersTodayRows, uniqueVisitorsTodayRows, anonymousVisitorsTodayRows, clicksToday, uniqueVisitorsRangeRows] = await Promise.all([
-    prisma.siteDailyActivity.findMany({
-      where: { day: { gte: start } },
-      orderBy: { day: 'asc' },
-      select: {
-        day: true,
-        uniqueUsers: true,
-        eventCount: true,
-        pageViewCount: true,
-        clickCount: true,
-        loginCount: true,
-      },
-    }),
-    prisma.userActivityEvent.groupBy({
-      by: ['pagePath'],
-      where: {
-        eventType: 'page_view',
-        occurredAt: { gte: start },
-        pagePath: { not: null },
-      },
-      _count: { pagePath: true },
-      orderBy: { _count: { pagePath: 'desc' } },
-      take: 10,
-    }),
-    prisma.user.count(),
-    prisma.userActivityEvent.findMany({
-      where: {
-        eventType: 'login',
-        userId: { not: null },
-        occurredAt: { gte: todayStart, lt: tomorrowStart },
-      },
-      select: { userId: true },
-      distinct: ['userId'],
-    }),
-    prisma.userActivityEvent.findMany({
-      where: {
-        occurredAt: { gte: todayStart, lt: tomorrowStart },
-      },
-      select: { sessionId: true },
-      distinct: ['sessionId'],
-    }),
-    prisma.userActivityEvent.findMany({
-      where: {
-        userId: null,
-        occurredAt: { gte: todayStart, lt: tomorrowStart },
-      },
-      select: { sessionId: true },
-      distinct: ['sessionId'],
-    }),
-    prisma.userActivityEvent.count({
-      where: {
-        eventType: 'click',
-        occurredAt: { gte: todayStart, lt: tomorrowStart },
-      },
-    }),
-    prisma.userActivityEvent.findMany({
-      where: {
-        occurredAt: { gte: start },
-      },
-      select: { sessionId: true },
-      distinct: ['sessionId'],
-    }),
+  const [dailyTableRows, fallbackRangeEvents, topPages, totalUsers, loggedOnUsersTodayRows, uniqueVisitorsTodayRows, anonymousVisitorsTodayRows, clicksToday, uniqueVisitorsRangeRows] = await Promise.all([
+    safeRun(
+      () =>
+        prisma.siteDailyActivity.findMany({
+          where: { day: { gte: start } },
+          orderBy: { day: 'asc' },
+          select: {
+            day: true,
+            uniqueUsers: true,
+            eventCount: true,
+            pageViewCount: true,
+            clickCount: true,
+            loginCount: true,
+          },
+        }),
+      null
+    ),
+    safeRun(
+      () =>
+        prisma.userActivityEvent.findMany({
+          where: {
+            occurredAt: { gte: start },
+          },
+          select: {
+            occurredAt: true,
+            eventType: true,
+            userId: true,
+          },
+        }),
+      []
+    ),
+    safeRun(
+      () =>
+        prisma.userActivityEvent.groupBy({
+          by: ['pagePath'],
+          where: {
+            eventType: 'page_view',
+            occurredAt: { gte: start },
+            pagePath: { not: null },
+          },
+          _count: { pagePath: true },
+          orderBy: { _count: { pagePath: 'desc' } },
+          take: 10,
+        }),
+      []
+    ),
+    safeRun(() => prisma.user.count(), 0),
+    safeRun(
+      () =>
+        prisma.userActivityEvent.findMany({
+          where: {
+            eventType: 'login',
+            userId: { not: null },
+            occurredAt: { gte: todayStart, lt: tomorrowStart },
+          },
+          select: { userId: true },
+          distinct: ['userId'],
+        }),
+      []
+    ),
+    safeRun(
+      () =>
+        prisma.userActivityEvent.findMany({
+          where: {
+            occurredAt: { gte: todayStart, lt: tomorrowStart },
+          },
+          select: { sessionId: true },
+          distinct: ['sessionId'],
+        }),
+      []
+    ),
+    safeRun(
+      () =>
+        prisma.userActivityEvent.findMany({
+          where: {
+            userId: null,
+            occurredAt: { gte: todayStart, lt: tomorrowStart },
+          },
+          select: { sessionId: true },
+          distinct: ['sessionId'],
+        }),
+      []
+    ),
+    safeRun(
+      () =>
+        prisma.userActivityEvent.count({
+          where: {
+            eventType: 'click',
+            occurredAt: { gte: todayStart, lt: tomorrowStart },
+          },
+        }),
+      0
+    ),
+    safeRun(
+      () =>
+        prisma.userActivityEvent.findMany({
+          where: {
+            occurredAt: { gte: start },
+          },
+          select: { sessionId: true },
+          distinct: ['sessionId'],
+        }),
+      []
+    ),
   ]);
+
+  const dailySource = Array.isArray(dailyTableRows)
+    ? normalizeDailyRange(dailyTableRows, start, now)
+    : buildDailyFromEvents(fallbackRangeEvents, start, now);
+
+  const daily = normalizeDailyRange(dailySource, start, now);
 
   const todayKey = startOfUtcDay(now).getTime();
   const today = daily.find((d) => new Date(d.day).getTime() === todayKey) || {
