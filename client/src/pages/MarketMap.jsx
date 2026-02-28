@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { TrendingUp } from 'lucide-react';
@@ -6,10 +6,14 @@ import { useMarketMapStore } from '../store/marketMapStore';
 import { useSocket } from '../hooks/useSocket';
 import KLineChart from '../components/charts/KLineChart';
 import UserAccountMenu from '../components/common/UserAccountMenu';
+import Modal from '../components/common/Modal';
+import api from '../services/api';
 import { ROUTES } from '../utils/constants';
 
 const CARD_HIGHLIGHT_MS = 12000;
 const CARD_STALE_MS = 45000;
+const DETAIL_CHART_DEFAULT_INTERVAL = '15m';
+const DETAIL_CHART_LIMIT = 500;
 
 const formatCompactVolume = (value) => {
   const numberValue = Number(value);
@@ -87,6 +91,100 @@ const MarketMap = () => {
     onConnect: () => setRealtimeConnected(true),
     onDisconnect: () => setRealtimeConnected(false),
   });
+
+  const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
+  const [detailSymbol, setDetailSymbol] = useState(null);
+  const [detailInterval, setDetailInterval] = useState(DETAIL_CHART_DEFAULT_INTERVAL);
+  const [detailChartData, setDetailChartData] = useState([]);
+  const [detailChartLoading, setDetailChartLoading] = useState(false);
+  const [detailChartError, setDetailChartError] = useState(null);
+
+  const fetchDetailedChartData = useCallback(async ({ symbol, interval }) => {
+    const safeSymbol = String(symbol || '').toUpperCase();
+    if (!safeSymbol) return [];
+
+    const params = new URLSearchParams({
+      symbol: safeSymbol,
+      exchangeType: 'futures',
+      interval: interval || DETAIL_CHART_DEFAULT_INTERVAL,
+      limit: String(DETAIL_CHART_LIMIT),
+    });
+
+    const response = await api.get(`/market/${selectedExchange}/klines?${params.toString()}`);
+    const rawKlines = Array.isArray(response?.data?.klines) ? response.data.klines : [];
+
+    return rawKlines
+      .map((kline) => ({
+        time: Number(kline?.time),
+        open: Number(kline?.open),
+        high: Number(kline?.high),
+        low: Number(kline?.low),
+        close: Number(kline?.close),
+        volume: Number(kline?.volume || 0),
+      }))
+      .filter(
+        (kline) =>
+          Number.isFinite(kline.time) &&
+          Number.isFinite(kline.open) &&
+          Number.isFinite(kline.high) &&
+          Number.isFinite(kline.low) &&
+          Number.isFinite(kline.close)
+      );
+  }, [selectedExchange]);
+
+  const openDetailChart = useCallback((event, symbol, seedData = []) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setDetailSymbol(symbol);
+    setDetailInterval(DETAIL_CHART_DEFAULT_INTERVAL);
+    setDetailChartData(Array.isArray(seedData) ? seedData : []);
+    setDetailChartError(null);
+    setIsDetailModalOpen(true);
+  }, []);
+
+  const closeDetailChart = useCallback(() => {
+    setIsDetailModalOpen(false);
+    setDetailSymbol(null);
+    setDetailChartData([]);
+    setDetailChartError(null);
+    setDetailChartLoading(false);
+    setDetailInterval(DETAIL_CHART_DEFAULT_INTERVAL);
+  }, []);
+
+  useEffect(() => {
+    if (!isDetailModalOpen || !detailSymbol) return;
+
+    let cancelled = false;
+
+    const load = async () => {
+      setDetailChartLoading(true);
+      setDetailChartError(null);
+
+      try {
+        const klines = await fetchDetailedChartData({
+          symbol: detailSymbol,
+          interval: detailInterval,
+        });
+
+        if (cancelled) return;
+
+        setDetailChartData(klines);
+      } catch (error) {
+        if (cancelled) return;
+        setDetailChartError(error?.message || 'Failed to load detailed chart');
+      } finally {
+        if (!cancelled) {
+          setDetailChartLoading(false);
+        }
+      }
+    };
+
+    load();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isDetailModalOpen, detailSymbol, detailInterval, fetchDetailedChartData]);
 
   useEffect(() => {
     initialize();
@@ -271,29 +369,35 @@ const MarketMap = () => {
                     </div>
 
                     {hasData ? (
-                      <KLineChart
-                        data={symbolData}
-                        symbol={row.symbol}
-                        interval="5m"
-                        alertExchange={selectedExchange}
-                        alertMarket="futures"
-                        loading={false}
-                        error={null}
+                      <div
                         className="h-full"
-                        compact
-                        hideCompactHeader
-                        instanceId={`market-map-${row.symbol}`}
-                        isRealtimeConnected={isRealtimeConnected}
-                        isRealtimeSubscribed={Array.isArray(activeRealtimeSymbols) && activeRealtimeSymbols.includes(row.symbol)}
-                        hasMoreHistory={!!historyMeta.hasMoreHistory}
-                        showInlineVolumeOverlay
-                        showCenterWatermark
-                        watermarkText={row.symbol.replace(/(USDT|USDC|USD|BUSD|FDUSD|TUSD|USDE)$/i, '')}
-                        watermarkOpacity={0.08}
-                        onLoadMoreHistory={async ({ timestamp }) => {
-                          return loadOlderVisibleHistory(row.symbol, timestamp);
-                        }}
-                      />
+                        onContextMenu={(event) => openDetailChart(event, row.symbol, symbolData)}
+                        title="Right click to open detailed chart"
+                      >
+                        <KLineChart
+                          data={symbolData}
+                          symbol={row.symbol}
+                          interval="5m"
+                          alertExchange={selectedExchange}
+                          alertMarket="futures"
+                          loading={false}
+                          error={null}
+                          className="h-full"
+                          compact
+                          hideCompactHeader
+                          instanceId={`market-map-${row.symbol}`}
+                          isRealtimeConnected={isRealtimeConnected}
+                          isRealtimeSubscribed={Array.isArray(activeRealtimeSymbols) && activeRealtimeSymbols.includes(row.symbol)}
+                          hasMoreHistory={!!historyMeta.hasMoreHistory}
+                          showInlineVolumeOverlay
+                          showCenterWatermark
+                          watermarkText={row.symbol.replace(/(USDT|USDC|USD|BUSD|FDUSD|TUSD|USDE)$/i, '')}
+                          watermarkOpacity={0.08}
+                          onLoadMoreHistory={async ({ timestamp }) => {
+                            return loadOlderVisibleHistory(row.symbol, timestamp);
+                          }}
+                        />
+                      </div>
                     ) : cardError ? (
                       <div className="w-full h-full flex items-center justify-center">
                         <span className="text-[10px] text-danger/70 text-center px-2">{cardError}</span>
@@ -309,6 +413,35 @@ const MarketMap = () => {
           </div>
         </div>
       </div>
+
+      <Modal
+        isOpen={isDetailModalOpen}
+        onClose={closeDetailChart}
+        title={detailSymbol ? `${detailSymbol} • ${detailInterval}` : 'Detailed chart'}
+        size="xl"
+      >
+        <div className="w-full h-[70vh] min-h-[560px]">
+          <KLineChart
+            data={detailChartData}
+            symbol={detailSymbol || '—'}
+            interval={detailInterval}
+            onTimeframeChange={setDetailInterval}
+            alertExchange={selectedExchange}
+            alertMarket="futures"
+            loading={detailChartLoading}
+            error={detailChartError}
+            className="h-full"
+            compact={false}
+            instanceId={detailSymbol ? `market-map-detail-${detailSymbol}` : 'market-map-detail'}
+            isRealtimeConnected={isRealtimeConnected}
+            isRealtimeSubscribed={
+              detailInterval === '5m' &&
+              Array.isArray(activeRealtimeSymbols) &&
+              activeRealtimeSymbols.includes(detailSymbol)
+            }
+          />
+        </div>
+      </Modal>
     </div>
   );
 };
