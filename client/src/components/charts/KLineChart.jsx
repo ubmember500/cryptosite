@@ -392,6 +392,8 @@ const KLineChart = ({
   // Text annotation tool state
   const [textInputVisible, setTextInputVisible] = useState(false);
   const [pendingTextValue, setPendingTextValue] = useState('');
+  const [textDraftOverlayId, setTextDraftOverlayId] = useState(null);
+  const textPlacementArmedRef = useRef(false);
   const textInputRef = useRef(null);
 
   // Indicators state management
@@ -452,6 +454,15 @@ const KLineChart = ({
       }
       // Auto-exit drawing mode after placing a text annotation (simpleAnnotation is single-click)
       if (overlay.name === DRAWING_TOOLS.SIMPLE_ANNOTATION) {
+        if (textPlacementArmedRef.current) {
+          textPlacementArmedRef.current = false;
+          setTextDraftOverlayId(overlay.id);
+          setPendingTextValue(typeof overlay.extendData === 'string' ? overlay.extendData : '');
+          setTextInputVisible(true);
+          setActiveDrawingTool(DRAWING_TOOLS.SIMPLE_ANNOTATION);
+          setTimeout(() => textInputRef.current?.focus(), 40);
+          return;
+        }
         setActiveDrawingTool(null);
       }
     },
@@ -742,7 +753,14 @@ const KLineChart = ({
       'ray-line': DRAWING_TOOLS.RAY_LINE,
       'segment': DRAWING_TOOLS.SEGMENT,
       'horizontal-line': DRAWING_TOOLS.HORIZONTAL_STRAIGHT_LINE,
+      'horizontal-ray-line': DRAWING_TOOLS.HORIZONTAL_RAY_LINE,
+      'horizontal-segment': DRAWING_TOOLS.HORIZONTAL_SEGMENT,
       'vertical-line': DRAWING_TOOLS.VERTICAL_STRAIGHT_LINE,
+      'vertical-ray-line': DRAWING_TOOLS.VERTICAL_RAY_LINE,
+      'vertical-segment': DRAWING_TOOLS.VERTICAL_SEGMENT,
+      'price-line': DRAWING_TOOLS.PRICE_LINE,
+      'parallel-line': DRAWING_TOOLS.PARALLEL_LINE,
+      'parallel-channel': DRAWING_TOOLS.PARALLEL_STRAIGHT_LINE,
       // Shape tools from ShapeToolButton
       'circle': DRAWING_TOOLS.CIRCLE,
       'rectangle': DRAWING_TOOLS.PRICE_CHANNEL_LINE,
@@ -766,7 +784,13 @@ const KLineChart = ({
       [DRAWING_TOOLS.RAY_LINE]: 'ray-line',
       [DRAWING_TOOLS.SEGMENT]: 'segment',
       [DRAWING_TOOLS.HORIZONTAL_STRAIGHT_LINE]: 'horizontal-line',
+      [DRAWING_TOOLS.HORIZONTAL_RAY_LINE]: 'horizontal-ray-line',
+      [DRAWING_TOOLS.HORIZONTAL_SEGMENT]: 'horizontal-segment',
       [DRAWING_TOOLS.VERTICAL_STRAIGHT_LINE]: 'vertical-line',
+      [DRAWING_TOOLS.VERTICAL_RAY_LINE]: 'vertical-ray-line',
+      [DRAWING_TOOLS.VERTICAL_SEGMENT]: 'vertical-segment',
+      [DRAWING_TOOLS.PRICE_LINE]: 'price-line',
+      [DRAWING_TOOLS.PARALLEL_LINE]: 'parallel-line',
       [DRAWING_TOOLS.PRICE_CHANNEL_LINE]: 'rectangle',
       [DRAWING_TOOLS.PARALLEL_STRAIGHT_LINE]: 'parallelogram',
       [DRAWING_TOOLS.CIRCLE]: 'circle',
@@ -823,6 +847,11 @@ const KLineChart = ({
   const handleToolSelect = (toolbarId) => {
     // Deselect / null — cancel any active tool and hide text input
     if (toolbarId === null || toolbarId === undefined) {
+      textPlacementArmedRef.current = false;
+      if (textDraftOverlayId) {
+        removeOverlay(textDraftOverlayId);
+      }
+      setTextDraftOverlayId(null);
       setActiveDrawingTool(null);
       setTextInputVisible(false);
       setPendingTextValue('');
@@ -831,30 +860,45 @@ const KLineChart = ({
 
     if (toolbarId === 'crosshair') {
       console.log('[KLineChart] Crosshair tool selected (handled by chart)');
+      textPlacementArmedRef.current = false;
+      if (textDraftOverlayId) {
+        removeOverlay(textDraftOverlayId);
+      }
+      setTextDraftOverlayId(null);
       setActiveDrawingTool(null);
       setTextInputVisible(false);
       setPendingTextValue('');
       return;
     }
 
-    // Text tool: show inline text input first; overlay is created after the user types text
+    // Text tool flow: click T -> click chart to place arrow -> type text (live on chart)
     if (toolbarId === 'text') {
-      if (textInputVisible) {
-        // Clicking T again while the panel is open cancels it
+      if (textInputVisible || textPlacementArmedRef.current || textDraftOverlayId) {
+        textPlacementArmedRef.current = false;
+        if (textDraftOverlayId) {
+          removeOverlay(textDraftOverlayId);
+        }
+        setTextDraftOverlayId(null);
         setTextInputVisible(false);
         setPendingTextValue('');
         setActiveDrawingTool(null);
         return;
       }
-      setTextInputVisible(true);
+      textPlacementArmedRef.current = true;
+      setTextDraftOverlayId(null);
+      setTextInputVisible(false);
       setPendingTextValue('');
-      // Focus the input on next paint
-      setTimeout(() => textInputRef.current?.focus(), 50);
+      setDrawingTool(DRAWING_TOOLS.SIMPLE_ANNOTATION, '');
       return;
     }
 
     // If switching to another tool while text input is open, close the text input
-    if (textInputVisible) {
+    if (textInputVisible || textPlacementArmedRef.current || textDraftOverlayId) {
+      textPlacementArmedRef.current = false;
+      if (textDraftOverlayId) {
+        removeOverlay(textDraftOverlayId);
+      }
+      setTextDraftOverlayId(null);
       setTextInputVisible(false);
       setPendingTextValue('');
     }
@@ -868,24 +912,56 @@ const KLineChart = ({
    */
   const handleTextInputSubmit = () => {
     const text = pendingTextValue.trim();
+
+    if (textDraftOverlayId && chartRef.current) {
+      try {
+        chartRef.current.overrideOverlay({ id: textDraftOverlayId, extendData: text });
+      } catch (error) {
+        console.error('[KLineChart] Failed to apply text annotation:', error);
+      }
+    }
+
+    if (!text && textDraftOverlayId) {
+      removeOverlay(textDraftOverlayId);
+    }
+
+    textPlacementArmedRef.current = false;
+    setTextDraftOverlayId(null);
     setTextInputVisible(false);
     setPendingTextValue('');
-    if (text) {
-      // createOverlay without points → klinecharts enters interactive mode;
-      // user clicks chart to place the annotation with the typed text
-      setDrawingTool(DRAWING_TOOLS.SIMPLE_ANNOTATION, text);
-    } else {
-      setActiveDrawingTool(null);
-    }
+    setActiveDrawingTool(null);
   };
 
   /**
    * Cancel the text input without placing any annotation.
    */
   const handleTextInputCancel = () => {
+    textPlacementArmedRef.current = false;
+    if (textDraftOverlayId) {
+      removeOverlay(textDraftOverlayId);
+    }
+    setTextDraftOverlayId(null);
     setTextInputVisible(false);
     setPendingTextValue('');
     setActiveDrawingTool(null);
+  };
+
+  /**
+   * Live update text content while the user types.
+   */
+  const handleTextInputChange = (e) => {
+    const value = e.target.value;
+    setPendingTextValue(value);
+
+    if (!textDraftOverlayId || !chartRef.current) return;
+    try {
+      chartRef.current.overrideOverlay({
+        id: textDraftOverlayId,
+        extendData: value,
+      });
+    } catch (error) {
+      console.error('[KLineChart] Failed to update annotation text:', error);
+    }
   };
 
   /**
@@ -2120,8 +2196,8 @@ const KLineChart = ({
           {/* Text annotation input panel — shown when user clicks the T (text) tool */}
           {!compact && textInputVisible && (
             <div className="absolute z-50 left-4 top-4 w-64 bg-surface border border-border rounded-lg shadow-xl p-3">
-              <div className="text-xs font-semibold text-textPrimary mb-1">Add text to chart</div>
-              <div className="text-xs text-textSecondary mb-2">Type your annotation, then click a spot on the chart to place it.</div>
+              <div className="text-xs font-semibold text-textPrimary mb-1">Edit text on chart</div>
+              <div className="text-xs text-textSecondary mb-2">Text updates live on the placed label while you type.</div>
               <input
                 ref={textInputRef}
                 type="text"
@@ -2129,7 +2205,7 @@ const KLineChart = ({
                 className="w-full bg-background border border-border rounded px-2 py-1.5 text-sm text-textPrimary placeholder-textSecondary focus:outline-none focus:ring-1 focus:ring-accent"
                 placeholder="e.g. Support, Buy here…"
                 value={pendingTextValue}
-                onChange={(e) => setPendingTextValue(e.target.value)}
+                onChange={handleTextInputChange}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') { e.preventDefault(); handleTextInputSubmit(); }
                   if (e.key === 'Escape') handleTextInputCancel();
@@ -2141,7 +2217,7 @@ const KLineChart = ({
                   onClick={handleTextInputSubmit}
                   className="flex-1 py-1.5 text-xs font-medium bg-accent text-white rounded hover:bg-accent/90 transition-colors focus:outline-none focus:ring-1 focus:ring-accent"
                 >
-                  Place on chart
+                  Apply
                 </button>
                 <button
                   type="button"

@@ -2,11 +2,16 @@ import React, { useState, useRef, useEffect } from 'react';
 import { cn } from '../../utils/cn';
 import {
   Minus,
-  ChevronDown,
   MoveHorizontal,
   MoveVertical,
   Activity,
   Waypoints,
+  Slash,
+  Equal,
+  SeparatorHorizontal,
+  SeparatorVertical,
+  Gauge,
+  BetweenVerticalStart,
 } from 'lucide-react';
 
 /**
@@ -42,11 +47,60 @@ const LINE_TYPES = [
     icon: MoveHorizontal,
   },
   {
+    id: 'horizontalRayLine',
+    toolbarId: 'horizontal-ray-line',
+    name: 'Horizontal Ray',
+    description: 'Horizontal one-direction line',
+    icon: Slash,
+  },
+  {
+    id: 'horizontalSegment',
+    toolbarId: 'horizontal-segment',
+    name: 'Horizontal Segment',
+    description: 'Horizontal line segment',
+    icon: Equal,
+  },
+  {
     id: 'verticalStraightLine',
     toolbarId: 'vertical-line',
     name: 'Vertical Line',
     description: 'Vertical infinite line',
     icon: MoveVertical,
+  },
+  {
+    id: 'verticalRayLine',
+    toolbarId: 'vertical-ray-line',
+    name: 'Vertical Ray',
+    description: 'Vertical one-direction line',
+    icon: SeparatorVertical,
+  },
+  {
+    id: 'verticalSegment',
+    toolbarId: 'vertical-segment',
+    name: 'Vertical Segment',
+    description: 'Vertical line segment',
+    icon: SeparatorHorizontal,
+  },
+  {
+    id: 'priceLine',
+    toolbarId: 'price-line',
+    name: 'Price Line',
+    description: 'Horizontal line with price label',
+    icon: Gauge,
+  },
+  {
+    id: 'parallelLine',
+    toolbarId: 'parallel-line',
+    name: 'Parallel Line',
+    description: 'Two parallel lines',
+    icon: BetweenVerticalStart,
+  },
+  {
+    id: 'parallelStraightLine',
+    toolbarId: 'parallel-channel',
+    name: 'Parallel Channel',
+    description: 'Parallel channel / zone',
+    icon: BetweenVerticalStart,
   },
 ];
 
@@ -77,14 +131,10 @@ const LineToolButton = ({
 
   // Check if any line tool is active
   const isAnyLineActive = LINE_TYPES.some(type => activeTool === type.toolbarId);
-  const isCurrentLineActive = activeTool === selectedLineType.toolbarId;
 
-  const handleMainButtonClick = () => {
-    // Toggle the currently selected line tool
-    if (onToolSelect) {
-      const newTool = isCurrentLineActive ? null : selectedLineType.toolbarId;
-      onToolSelect(newTool);
-    }
+  const handleMainButtonClick = (e) => {
+    e.stopPropagation();
+    handleDropdownToggle(e);
   };
 
   const handleDropdownToggle = (e) => {
@@ -121,7 +171,7 @@ const LineToolButton = ({
           className={cn(
             'relative flex items-center justify-center h-16 w-16 rounded transition-colors duration-100',
             'focus:outline-none focus:ring-1 focus:ring-accent focus:ring-offset-1 focus:ring-offset-surface',
-            isCurrentLineActive
+            isAnyLineActive
               ? 'bg-accent/15 text-accent'
               : 'text-textSecondary hover:text-textPrimary hover:bg-surfaceHover'
           )}

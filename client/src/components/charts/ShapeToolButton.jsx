@@ -3,7 +3,6 @@ import { cn } from '../../utils/cn';
 import {
   Circle,
   Square,
-  ChevronDown,
   Shapes,
   Triangle,
 } from 'lucide-react';
@@ -65,13 +64,10 @@ const ShapeToolButton = ({
   }, [isOpen]);
 
   const isAnyShapeActive = SHAPE_TYPES.some((type) => activeTool === type.toolbarId);
-  const isCurrentShapeActive = activeTool === selectedShapeType.toolbarId;
 
-  const handleMainButtonClick = () => {
-    if (onToolSelect) {
-      const newTool = isCurrentShapeActive ? null : selectedShapeType.toolbarId;
-      onToolSelect(newTool);
-    }
+  const handleMainButtonClick = (e) => {
+    e.stopPropagation();
+    handleDropdownToggle(e);
   };
 
   const handleDropdownToggle = (e) => {
@@ -105,7 +101,7 @@ const ShapeToolButton = ({
           className={cn(
             'relative flex items-center justify-center h-16 w-16 rounded transition-colors duration-100',
             'focus:outline-none focus:ring-1 focus:ring-accent focus:ring-offset-1 focus:ring-offset-surface',
-            isCurrentShapeActive
+            isAnyShapeActive
               ? 'bg-accent/15 text-accent'
               : 'text-textSecondary hover:text-textPrimary hover:bg-surfaceHover'
           )}
