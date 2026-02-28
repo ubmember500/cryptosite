@@ -148,7 +148,7 @@ const ChartToolbar = ({
   ];
 
   // Shared button style — compact square icon button matching TradingView style
-  const btnBase = 'relative flex items-center justify-center h-8 w-8 rounded transition-colors duration-100 focus:outline-none focus:ring-1 focus:ring-accent focus:ring-offset-1 focus:ring-offset-surface';
+  const btnBase = 'relative flex items-center justify-center h-16 w-16 rounded transition-colors duration-100 focus:outline-none focus:ring-1 focus:ring-accent focus:ring-offset-1 focus:ring-offset-surface';
   const btnIdle = 'text-textSecondary hover:text-textPrimary hover:bg-surfaceHover';
   const btnActive = 'bg-accent/15 text-accent';
   const btnDanger = 'text-textSecondary hover:text-danger hover:bg-surfaceHover';
@@ -166,7 +166,7 @@ const ChartToolbar = ({
           if (tool.component) {
             const Component = tool.component;
             return (
-              <div key={tool.id} className="w-8 flex justify-center">
+              <div key={tool.id} className="w-16 flex justify-center">
                 <Component {...tool.props} />
               </div>
             );
@@ -181,14 +181,14 @@ const ChartToolbar = ({
               title={tool.description}
               className={cn(btnBase, isActive ? btnActive : btnIdle)}
             >
-              <Icon className="h-[15px] w-[15px]" />
+              <Icon className="h-7 w-7" />
             </button>
           );
         })}
       </div>
 
       {/* Divider */}
-      <div className="w-5 h-px bg-border my-1" />
+      <div className="w-10 h-px bg-border my-1" />
 
       {/* Action Buttons */}
       <div className="flex flex-col items-center gap-0.5">
@@ -203,14 +203,14 @@ const ChartToolbar = ({
               type="button"
               className={cn(btnBase, btnIdle, !button.onClick && 'opacity-50 cursor-not-allowed')}
             >
-              <Icon className="h-[15px] w-[15px]" />
+              <Icon className="h-7 w-7" />
             </button>
           );
         })}
       </div>
 
       {/* Divider */}
-      <div className="w-5 h-px bg-border my-1" />
+      <div className="w-10 h-px bg-border my-1" />
 
       {/* Toggle Buttons */}
       <div className="flex flex-col items-center gap-0.5">
@@ -218,7 +218,7 @@ const ChartToolbar = ({
           if (button.component) {
             const Component = button.component;
             return (
-              <div key={button.id} className="w-8 flex justify-center">
+              <div key={button.id} className="w-16 flex justify-center">
                 <Component {...button.props} />
               </div>
             );
@@ -236,14 +236,14 @@ const ChartToolbar = ({
                 button.active ? btnActive : btnIdle
               )}
             >
-              <Icon className="h-[15px] w-[15px]" />
+              <Icon className="h-7 w-7" />
             </button>
           );
         })}
       </div>
 
       {/* Divider */}
-      <div className="w-5 h-px bg-border my-1" />
+      <div className="w-10 h-px bg-border my-1" />
 
       {/* Delete Button */}
       <button
@@ -252,7 +252,7 @@ const ChartToolbar = ({
         title="Delete all drawings"
         className={cn(btnBase, btnDanger)}
       >
-        <Trash2 className="h-[15px] w-[15px]" />
+        <Trash2 className="h-7 w-7" />
       </button>
     </div>
   );

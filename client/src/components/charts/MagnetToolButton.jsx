@@ -42,22 +42,22 @@ const MagnetToolButton = ({
 
   return (
     <div ref={dropdownRef} className={cn('relative', className)}>
-      <div className="relative h-8 w-8">
+      <div className="relative h-16 w-16">
         <button
           type="button"
           onClick={() => setIsOpen(!isOpen)}
           title={current.description}
           className={cn(
-            'relative flex items-center justify-center h-8 w-8 rounded transition-colors duration-100',
+            'relative flex items-center justify-center h-16 w-16 rounded transition-colors duration-100',
             'focus:outline-none focus:ring-1 focus:ring-accent focus:ring-offset-1 focus:ring-offset-surface',
             isActive ? 'bg-accent/15 text-accent' : 'text-textSecondary hover:text-textPrimary hover:bg-surfaceHover'
           )}
         >
-          <Magnet className="h-[15px] w-[15px]" />
+          <Magnet className="h-7 w-7" />
           {/* Tiny dropdown indicator triangle at bottom-right */}
           <span
-            className="absolute bottom-[3px] right-[3px] w-0 h-0 pointer-events-none"
-            style={{ borderLeft: '4px solid transparent', borderBottom: '4px solid currentColor', opacity: 0.6 }}
+            className="absolute bottom-[5px] right-[5px] w-0 h-0 pointer-events-none"
+            style={{ borderLeft: '5px solid transparent', borderBottom: '5px solid currentColor', opacity: 0.6 }}
           />
         </button>
       </div>

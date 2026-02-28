@@ -380,6 +380,7 @@ const normalizeMarketTokenMetrics = (token) => {
   };
 
   normalized.natr = calculateInstantNatr(normalized);
+  normalized.avg5mVol = null; // populated async by enrichTokensWithNatr14
   return normalized;
 };
 
@@ -396,40 +397,28 @@ const calculateInstantNatr = (token) => {
   return Number.isFinite(natr) ? Number(natr.toFixed(2)) : null;
 };
 
+// Calculates average candle volatility = avg((high - low) / close * 100) over last 14 5m candles.
+// This is the "Nutter filter" metric: average percentage range of each candle body.
 const calculateNatr14FromKlines = (klines) => {
-  if (!Array.isArray(klines) || klines.length < 2) return null;
+  if (!Array.isArray(klines) || klines.length === 0) return null;
 
-  const trs = [];
-  for (let index = 1; index < klines.length; index += 1) {
-    const previousClose = Number(klines[index - 1]?.close);
-    const high = Number(klines[index]?.high);
-    const low = Number(klines[index]?.low);
+  const candles = klines.slice(-NATR14_PERIOD);
+  if (candles.length === 0) return null;
 
-    if (!Number.isFinite(previousClose) || !Number.isFinite(high) || !Number.isFinite(low)) {
-      continue;
-    }
-
-    const tr = Math.max(
-      high - low,
-      Math.abs(high - previousClose),
-      Math.abs(low - previousClose)
-    );
-    if (Number.isFinite(tr)) {
-      trs.push(tr);
-    }
+  let sum = 0;
+  let count = 0;
+  for (const k of candles) {
+    const high = Number(k?.high);
+    const low = Number(k?.low);
+    const close = Number(k?.close);
+    if (!Number.isFinite(high) || !Number.isFinite(low) || !Number.isFinite(close) || close <= 0) continue;
+    sum += ((high - low) / close) * 100;
+    count += 1;
   }
 
-  if (trs.length === 0) return null;
-
-  const recentTrs = trs.slice(-NATR14_PERIOD);
-  const atr = recentTrs.reduce((sum, value) => sum + value, 0) / recentTrs.length;
-  const lastClose = Number(klines[klines.length - 1]?.close);
-  if (!Number.isFinite(atr) || !Number.isFinite(lastClose) || lastClose <= 0) {
-    return null;
-  }
-
-  const natr = (atr / lastClose) * 100;
-  return Number.isFinite(natr) ? Number(natr.toFixed(2)) : null;
+  if (count === 0) return null;
+  const avg = sum / count;
+  return Number.isFinite(avg) ? Number(avg.toFixed(2)) : null;
 };
 
 const getCachedNatr14 = (fullSymbol) => {
@@ -473,7 +462,7 @@ const enrichTokensWithNatr14 = async (tokens) => {
       const cachedNatr = getCachedNatr14(fullSymbol);
       if (cachedNatr != null) {
         const cachedToken = tokens.find((token) => token.fullSymbol === fullSymbol);
-        if (cachedToken) cachedToken.natr = cachedNatr;
+        if (cachedToken) cachedToken.avg5mVol = cachedNatr;
         continue;
       }
 
@@ -487,7 +476,8 @@ const enrichTokensWithNatr14 = async (tokens) => {
         if (natr14 != null) {
           const tokenToUpdate = tokens.find((token) => token.fullSymbol === fullSymbol);
           if (tokenToUpdate) {
-            tokenToUpdate.natr = natr14;
+            // avg5mVol: avg((H-L)/close*100) over last 14 x 5m candles (the "Nutter filter" metric)
+            tokenToUpdate.avg5mVol = natr14;
           }
           setCachedNatr14(fullSymbol, natr14);
         }

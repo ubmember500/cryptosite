@@ -105,25 +105,25 @@ const LineToolButton = ({
   return (
     <div ref={dropdownRef} className={cn('relative', className)}>
       {/* Main Button */}
-      <div className="relative h-8 w-8">
+      <div className="relative h-16 w-16">
         <button
           onClick={handleMainButtonClick}
           title={selectedLineType.description}
           className={cn(
-            'relative flex items-center justify-center h-8 w-8 rounded transition-colors duration-100',
+            'relative flex items-center justify-center h-16 w-16 rounded transition-colors duration-100',
             'focus:outline-none focus:ring-1 focus:ring-accent focus:ring-offset-1 focus:ring-offset-surface',
             isCurrentLineActive
               ? 'bg-accent/15 text-accent'
               : 'text-textSecondary hover:text-textPrimary hover:bg-surfaceHover'
           )}
         >
-          <SelectedIcon className="h-[15px] w-[15px]" />
+          <SelectedIcon className="h-7 w-7" />
           {/* Tiny dropdown indicator triangle at bottom-right */}
           <span
             onClick={handleDropdownToggle}
             title="Select line type"
-            className="absolute bottom-[3px] right-[3px] w-0 h-0 cursor-pointer"
-            style={{ borderLeft: '4px solid transparent', borderBottom: `4px solid currentColor`, opacity: 0.6 }}
+            className="absolute bottom-[5px] right-[5px] w-0 h-0 cursor-pointer"
+            style={{ borderLeft: '5px solid transparent', borderBottom: `5px solid currentColor`, opacity: 0.6 }}
           />
         </button>
       </div>
