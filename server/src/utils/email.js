@@ -318,15 +318,23 @@ async function getSendGridRecipientStatus(email) {
  * Remove recipient from transient suppression lists (blocks + bounces).
  * We intentionally do NOT auto-clear invalid_emails/spam_reports.
  */
-async function clearSendGridRecipientSuppressions(email) {
+async function clearSendGridRecipientSuppressions(email, options = {}) {
+  const includeRisky = options.includeRisky === true;
   const apiKey = getSendGridApiKey();
   if (!apiKey || !email) {
-    return { clearedBlocks: false, clearedBounces: false };
+    return {
+      clearedBlocks: false,
+      clearedBounces: false,
+      clearedInvalidEmails: false,
+      clearedSpamReports: false,
+    };
   }
 
   const encoded = encodeURIComponent(String(email).trim().toLowerCase());
   let clearedBlocks = false;
   let clearedBounces = false;
+  let clearedInvalidEmails = false;
+  let clearedSpamReports = false;
 
   try {
     const res = await sendGridDelete(apiKey, `/v3/suppression/blocks/${encoded}`);
@@ -342,7 +350,23 @@ async function clearSendGridRecipientSuppressions(email) {
     console.warn('[Email/SendGrid] Could not clear bounce suppression:', err.message);
   }
 
-  return { clearedBlocks, clearedBounces };
+  if (includeRisky) {
+    try {
+      const res = await sendGridDelete(apiKey, `/v3/suppression/invalid_emails/${encoded}`);
+      clearedInvalidEmails = res.status >= 200 && res.status < 300;
+    } catch (err) {
+      console.warn('[Email/SendGrid] Could not clear invalid_email suppression:', err.message);
+    }
+
+    try {
+      const res = await sendGridDelete(apiKey, `/v3/suppression/spam_reports/${encoded}`);
+      clearedSpamReports = res.status >= 200 && res.status < 300;
+    } catch (err) {
+      console.warn('[Email/SendGrid] Could not clear spam_report suppression:', err.message);
+    }
+  }
+
+  return { clearedBlocks, clearedBounces, clearedInvalidEmails, clearedSpamReports };
 }
 
 /**

@@ -199,6 +199,49 @@ router.get('/debug-email-recipient', async (req, res) => {
 });
 
 /**
+ * POST /api/auth/debug-email-recipient-clear?secret=<secret>
+ * Body: { email: "user@example.com", includeRisky: true }
+ * Clears SendGrid suppressions for a recipient. includeRisky=true also clears
+ * invalid_emails and spam_reports.
+ */
+router.post('/debug-email-recipient-clear', async (req, res) => {
+  const secret = req.query.secret || req.body.secret;
+  const expectedSecret = process.env.DEBUG_EMAIL_SECRET || 'debug123';
+  if (secret !== expectedSecret) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  const email = String(req.body.email || '').trim().toLowerCase();
+  if (!email) {
+    return res.status(400).json({ error: 'email is required' });
+  }
+
+  try {
+    const { isSendGridConfigured, clearSendGridRecipientSuppressions, getSendGridRecipientStatus } = require('../utils/email');
+    if (!isSendGridConfigured()) {
+      return res.status(400).json({ error: 'SENDGRID_API_KEY not set' });
+    }
+
+    const includeRisky = req.body.includeRisky === true;
+    const cleared = await clearSendGridRecipientSuppressions(email, { includeRisky });
+    const after = await getSendGridRecipientStatus(email);
+
+    return res.json({
+      ok: true,
+      email,
+      includeRisky,
+      cleared,
+      statusAfter: after,
+      hint: after.isSuppressed
+        ? 'Recipient is still suppressed on one or more lists. Check SendGrid dashboard suppressions manually.'
+        : 'Recipient suppressions cleared successfully.',
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * GET /api/auth/debug-user-email?email=<email>&secret=<secret>
  * Debug-only endpoint to confirm whether a user account exists for an email.
  */
