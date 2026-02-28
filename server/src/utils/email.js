@@ -2,8 +2,9 @@
  * Send password reset link by email.
  *
  * Priority:
- *   1. Resend API  — set RESEND_API_KEY in server/.env  (recommended for production)
- *   2. SMTP        — set SMTP_HOST, SMTP_USER, SMTP_PASS, MAIL_FROM  (e.g. Gmail)
+ *   1. Brevo API   — set BREVO_API_KEY  (easiest — free, no domain needed)
+ *   2. Resend API  — set RESEND_API_KEY  (needs verified domain to send to others)
+ *   3. SMTP        — set SMTP_HOST, SMTP_USER, SMTP_PASS  (blocked on most cloud hosts)
  *
  * See server/EMAIL_SETUP.md for setup instructions.
  *
@@ -18,7 +19,7 @@ const dns = require('dns');
 // route to IPv6 endpoints (Gmail SMTP ENETUNREACH on 2607:f8b0:...).
 try { dns.setDefaultResultOrder('ipv4first'); } catch { /* Node < 16.4 */ }
 
-const EMAIL_CODE_VERSION = '2026-02-28-v5';
+const EMAIL_CODE_VERSION = '2026-02-28-v6';
 
 /* ---------- helpers that read env on every call (no stale cache) ---------- */
 
@@ -31,6 +32,14 @@ function getFrontendUrl() {
       .find(Boolean) ||
     'http://localhost:5173'
   );
+}
+
+// --- Brevo (formerly Sendinblue) ---
+function getBrevoApiKey() { return process.env.BREVO_API_KEY; }
+function getBrevoFrom() {
+  // Brevo requires a verified sender email (not domain). The email you
+  // signed up with is auto-verified, or add more at brevo.com/senders.
+  return process.env.BREVO_FROM || process.env.MAIL_FROM || process.env.SMTP_USER || 'noreply@cryptoalerts.app';
 }
 
 // --- Resend ---
@@ -53,6 +62,10 @@ function getSmtpUser()   { return process.env.SMTP_USER; }
 function getSmtpPass()   { return process.env.SMTP_PASS; }
 function getMailFrom()   { return process.env.MAIL_FROM || process.env.SMTP_USER || 'CryptoAlerts <noreply@cryptoalerts.app>'; }
 
+function isBrevoConfigured() {
+  return Boolean(getBrevoApiKey());
+}
+
 function isResendConfigured() {
   return Boolean(getResendApiKey());
 }
@@ -62,19 +75,21 @@ function isSmtpConfigured() {
 }
 
 function isEmailConfigured() {
-  return isResendConfigured() || isSmtpConfigured();
+  return isBrevoConfigured() || isResendConfigured() || isSmtpConfigured();
 }
 
 /**
  * Call once at server startup to log which email provider is active.
  */
 function logEmailStatus() {
-  if (isResendConfigured()) {
+  if (isBrevoConfigured()) {
+    console.log(`📧 Password reset: emails will be sent via Brevo API (from: ${getBrevoFrom()}).`);
+  } else if (isResendConfigured()) {
     console.log(`📧 Password reset: emails will be sent via Resend API (from: ${getResendFrom()}).`);
   } else if (isSmtpConfigured()) {
     console.log(`📧 Password reset: emails will be sent via SMTP (${getSmtpHost()}:${getSmtpPort()}).`);
   } else {
-    console.log('📧 Password reset: ⚠️  no email provider configured! Add RESEND_API_KEY or SMTP_* vars to server/.env (see server/EMAIL_SETUP.md).');
+    console.log('📧 Password reset: ⚠️  no email provider configured! Add BREVO_API_KEY (easiest) or RESEND_API_KEY or SMTP_* vars to server/.env (see server/EMAIL_SETUP.md).');
   }
   console.log(`📧 Reset links will point to: ${getFrontendUrl()}`);
 }
@@ -162,6 +177,73 @@ function buildResetEmailHtml(resetLink) {
   </table>
 </body>
 </html>`;
+}
+
+/**
+ * Send password reset email via Brevo (Sendinblue) HTTP API.
+ *
+ * Brevo free tier: 300 emails/day, only requires a verified sender email
+ * (no domain verification needed). Sign up at brevo.com.
+ */
+async function sendViaBrevo(toEmail, subject, text, html) {
+  const apiKey = getBrevoApiKey();
+  const fromRaw = getBrevoFrom();
+
+  // Parse "Name <email>" format or plain email
+  let senderName = 'CryptoAlerts';
+  let senderEmail = fromRaw;
+  const match = fromRaw.match(/^(.+?)\s*<(.+?)>$/);
+  if (match) {
+    senderName = match[1].trim();
+    senderEmail = match[2].trim();
+  }
+
+  console.log(`[Email/Brevo] Sending to ${toEmail} from ${senderName} <${senderEmail}>`);
+
+  const https = require('https');
+  const payload = JSON.stringify({
+    sender: { name: senderName, email: senderEmail },
+    to: [{ email: toEmail }],
+    subject,
+    htmlContent: html,
+    textContent: text,
+  });
+
+  const body = await new Promise((resolve, reject) => {
+    const req = https.request(
+      {
+        hostname: 'api.brevo.com',
+        path: '/v3/smtp/email',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'api-key': apiKey,
+          'Content-Length': Buffer.byteLength(payload),
+        },
+        timeout: 15_000,
+      },
+      (res) => {
+        let data = '';
+        res.on('data', (chunk) => (data += chunk));
+        res.on('end', () => {
+          let parsed;
+          try { parsed = JSON.parse(data); } catch { parsed = { raw: data }; }
+          if (res.statusCode >= 200 && res.statusCode < 300) {
+            resolve(parsed);
+          } else {
+            const msg = parsed?.message || parsed?.error || data;
+            reject(new Error(`Brevo API ${res.statusCode}: ${msg}`));
+          }
+        });
+      },
+    );
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('Brevo API request timed out')); });
+    req.write(payload);
+    req.end();
+  });
+
+  console.log('[Email/Brevo] ✅ Password reset sent to', toEmail, '| messageId:', body.messageId);
 }
 
 /**
@@ -302,7 +384,7 @@ async function sendViaSmtp(toEmail, subject, text, html) {
 
 /**
  * Send password reset email.
- * Uses Resend if RESEND_API_KEY is set, otherwise falls back to SMTP.
+ * Priority: Brevo → Resend → SMTP.
  *
  * @param {string} toEmail  - Recipient email address
  * @param {string} resetLink - Full reset URL containing the token
@@ -321,47 +403,60 @@ async function sendPasswordResetEmail(toEmail, resetLink) {
 
   const errors = [];
 
-  if (isResendConfigured()) {
+  // 1. Brevo (best free option — no domain verification needed)
+  if (isBrevoConfigured()) {
     try {
-      await sendViaResend(toEmail, subject, text, html);
-      return; // success
+      await sendViaBrevo(toEmail, subject, text, html);
+      return;
     } catch (err) {
-      errors.push(`Resend: ${err.message}`);
-      console.error('[Email] Resend failed, will try SMTP fallback if configured:', err.message);
+      errors.push(`Brevo: ${err.message}`);
+      console.error('[Email] Brevo failed:', err.message);
     }
   }
 
+  // 2. Resend (needs verified domain to send to non-owner emails)
+  if (isResendConfigured()) {
+    try {
+      await sendViaResend(toEmail, subject, text, html);
+      return;
+    } catch (err) {
+      errors.push(`Resend: ${err.message}`);
+      console.error('[Email] Resend failed:', err.message);
+    }
+  }
+
+  // 3. SMTP (blocked on most cloud hosts — Render, Railway, etc.)
   if (isSmtpConfigured()) {
     try {
       await sendViaSmtp(toEmail, subject, text, html);
-      return; // success
+      return;
     } catch (err) {
       errors.push(`SMTP: ${err.message}`);
       console.error('[Email] SMTP failed:', err.message);
     }
   }
 
-  if (!isResendConfigured() && !isSmtpConfigured()) {
+  if (!isBrevoConfigured() && !isResendConfigured() && !isSmtpConfigured()) {
     throw new Error(
-      'No email provider configured. Set RESEND_API_KEY (easiest) or SMTP_HOST/SMTP_USER/SMTP_PASS in server/.env (see server/EMAIL_SETUP.md).'
+      'No email provider configured. Set BREVO_API_KEY (easiest) or RESEND_API_KEY or SMTP_* in server/.env (see server/EMAIL_SETUP.md).'
     );
   }
 
-  // Both providers were tried and failed
   throw new Error(`All email providers failed — ${errors.join(' | ')}`);
 }
 
 /**
  * Diagnostic: try each email provider independently and report results.
- * Returns a JSON-friendly object with per-provider status.
  */
 async function debugEmailProviders(toEmail) {
   const results = {
     codeVersion: EMAIL_CODE_VERSION,
     nodeVersion: process.version,
+    brevoConfigured: isBrevoConfigured(),
     resendConfigured: isResendConfigured(),
     smtpConfigured: isSmtpConfigured(),
     frontendUrl: getFrontendUrl(),
+    brevo: null,
     resend: null,
     smtp: null,
   };
@@ -369,6 +464,15 @@ async function debugEmailProviders(toEmail) {
   const subject = 'CryptoAlerts — email debug test';
   const text = 'This is a diagnostic email from CryptoAlerts debug-email endpoint.';
   const html = '<p>This is a <strong>diagnostic email</strong> from CryptoAlerts debug-email endpoint.</p>';
+
+  if (isBrevoConfigured()) {
+    try {
+      await sendViaBrevo(toEmail, subject, text, html);
+      results.brevo = { ok: true };
+    } catch (err) {
+      results.brevo = { ok: false, error: err.message };
+    }
+  }
 
   if (isResendConfigured()) {
     try {
@@ -395,6 +499,7 @@ module.exports = {
   sendPasswordResetEmail,
   debugEmailProviders,
   isEmailConfigured,
+  isBrevoConfigured,
   isSmtpConfigured,
   isResendConfigured,
   logEmailStatus,

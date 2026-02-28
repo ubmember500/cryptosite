@@ -1,42 +1,62 @@
 ﻿# Email setup — Forgot Password
 
-The forgot-password feature emails a secure reset link to users. Two providers are supported:
+The forgot-password feature emails a secure reset link to users. Three providers are supported:
 
-- **Resend** (recommended for production — 1 API key, 3 000 free emails/month, great deliverability)
-- **SMTP / Gmail** (fallback — good for development/self-hosting)
+- **Brevo** (recommended — free, NO domain verification needed, 300 emails/day)
+- **Resend** (needs a verified custom domain to send to real users)
+- **SMTP / Gmail** (blocked on most cloud hosts — good for local dev only)
 
-Resend takes priority. If `RESEND_API_KEY` is not set, the server falls back to SMTP.
+Priority: Brevo → Resend → SMTP (first configured provider wins).
 
 ---
 
-## Option 1 — Resend (recommended for production)
+## Option 1 — Brevo (recommended — easiest setup)
 
-1. Create a free account at [resend.com](https://resend.com).
-2. Go to **API Keys** → **Create API Key** → copy it.
-3. Add to **`server/.env`** (and to Render / Railway / Vercel env vars):
+Brevo (formerly Sendinblue) works via HTTPS API, so it's not blocked by
+cloud providers. Free tier gives 300 emails/day. **No domain needed.**
+
+1. Create a free account at [brevo.com](https://www.brevo.com).
+2. Go to **SMTP & API** → **API Keys** → create one (starts with `xkeysib-`).
+3. Add to Render env vars (and `server/.env` locally):
 
 ```env
-RESEND_API_KEY=re_xxxxxxxxxxxxxxxxxxxxxxxx
+BREVO_API_KEY=xkeysib-xxxxxxxxxxxxxxxxxxxxxxxx
 FRONTEND_URL=https://your-frontend.vercel.app
 ```
 
-That's it — the server will send from `CryptoAlerts <onboarding@resend.dev>` which
-works on every Resend plan without domain verification.
-
-**Optional — custom sending domain:**
-If you want emails to come from your own domain (`noreply@yourdomain.com`):
-1. Go to **Domains** → add and verify your sending domain (DNS records).
-2. Set `RESEND_FROM` in env:
+4. _(Optional)_ Set a custom sender address:
 ```env
+BREVO_FROM=CryptoAlerts <yourname@gmail.com>
+```
+By default it uses `MAIL_FROM` or `SMTP_USER`. The sender email must be
+verified in Brevo (your sign-up email is auto-verified).
+
+5. Deploy / restart.
+
+---
+
+## Option 2 — Resend (requires custom domain)
+
+> **Note:** Resend's free plan is in sandbox mode — it can only send to
+> the account owner's email until you verify your own domain.
+
+1. Create a free account at [resend.com](https://resend.com).
+2. Go to **Domains** → add and verify your sending domain (2 DNS records).
+3. Go to **API Keys** → **Create API Key** → copy it.
+4. Add to env:
+
+```env
+RESEND_API_KEY=re_xxxxxxxxxxxxxxxxxxxxxxxx
 RESEND_FROM=CryptoAlerts <noreply@yourdomain.com>
+FRONTEND_URL=https://your-frontend.vercel.app
 ```
 
 ---
 
-## Option 2 — Gmail SMTP (development / self-hosting)
+## Option 3 — Gmail SMTP (local development only)
 
-> **Note:** Gmail SMTP works well locally but may be blocked from cloud
-> provider IPs (Render, Railway, etc.). Use Resend for production.
+> **Warning:** Gmail SMTP is blocked from Render, Railway, and most cloud
+> providers (SMTP ports 25/465/587 are firewalled). Use for local dev only.
 
 1. **Google Account** → **Security** → enable **2-Step Verification**.
 2. **Security** → **App passwords** → create one for **Mail** → copy the 16-character password.
@@ -51,8 +71,6 @@ SMTP_PASS=xxxx-xxxx-xxxx-xxxx
 MAIL_FROM=yourname@gmail.com
 FRONTEND_URL=http://localhost:5173
 ```
-
-4. Restart the server.
 
 ---
 
