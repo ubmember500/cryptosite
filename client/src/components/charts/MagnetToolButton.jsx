@@ -42,32 +42,23 @@ const MagnetToolButton = ({
 
   return (
     <div ref={dropdownRef} className={cn('relative', className)}>
-      <div className="relative h-10 w-14">
+      <div className="relative h-8 w-8">
         <button
           type="button"
           onClick={() => setIsOpen(!isOpen)}
           title={current.description}
           className={cn(
-            'relative h-10 w-14 rounded-lg border transition-all duration-150',
-            'border-transparent hover:bg-surfaceHover hover:border-border/70',
-            'focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2 focus:ring-offset-surface',
-            isActive ? 'bg-accent/15 text-accent border-accent/40 shadow-sm' : 'text-textSecondary hover:text-textPrimary'
+            'relative flex items-center justify-center h-8 w-8 rounded transition-colors duration-100',
+            'focus:outline-none focus:ring-1 focus:ring-accent focus:ring-offset-1 focus:ring-offset-surface',
+            isActive ? 'bg-accent/15 text-accent' : 'text-textSecondary hover:text-textPrimary hover:bg-surfaceHover'
           )}
         >
-          <Magnet className="h-5 w-5" />
-        </button>
-        <button
-          type="button"
-          onClick={() => setIsOpen(!isOpen)}
-          title="Magnet options"
-          className={cn(
-            'absolute right-0 top-0 z-10 h-10 w-4 rounded-r-lg border-l border-border/50 transition-all duration-150',
-            'border-transparent hover:bg-surfaceHover hover:border-border/70',
-            'focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2 focus:ring-offset-surface',
-            isActive ? 'bg-accent/15 text-accent border-accent/40' : 'text-textSecondary hover:text-textPrimary'
-          )}
-        >
-          <ChevronDown className={cn('h-2.5 w-2.5 transition-transform', isOpen && 'rotate-180')} />
+          <Magnet className="h-[15px] w-[15px]" />
+          {/* Tiny dropdown indicator triangle at bottom-right */}
+          <span
+            className="absolute bottom-[3px] right-[3px] w-0 h-0 pointer-events-none"
+            style={{ borderLeft: '4px solid transparent', borderBottom: '4px solid currentColor', opacity: 0.6 }}
+          />
         </button>
       </div>
 

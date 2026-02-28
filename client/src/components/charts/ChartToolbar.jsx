@@ -1,8 +1,6 @@
 import React, { useState } from 'react';
 import { cn } from '../../utils/cn';
 import {
-  Minus,
-  MoveHorizontal,
   TrendingUp,
   Type,
   Ruler,
@@ -118,13 +116,6 @@ const ChartToolbar = ({
       description: 'Chart settings and indicators',
       onClick: onSettingsClick,
     },
-    {
-      id: 'alerts',
-      icon: Bell,
-      label: 'Alerts',
-      description: 'Set price alerts',
-      onClick: onAlertsClick,
-    },
   ];
 
   const toggleButtons = [
@@ -156,29 +147,31 @@ const ChartToolbar = ({
     },
   ];
 
+  // Shared button style — compact square icon button matching TradingView style
+  const btnBase = 'relative flex items-center justify-center h-8 w-8 rounded transition-colors duration-100 focus:outline-none focus:ring-1 focus:ring-accent focus:ring-offset-1 focus:ring-offset-surface';
+  const btnIdle = 'text-textSecondary hover:text-textPrimary hover:bg-surfaceHover';
+  const btnActive = 'bg-accent/15 text-accent';
+  const btnDanger = 'text-textSecondary hover:text-danger hover:bg-surfaceHover';
+
   return (
     <div
       className={cn(
-        'flex flex-col items-center gap-1 p-2 bg-surface border-r border-border',
+        'flex flex-col items-center gap-0.5 py-2 px-1 bg-surface border-r border-border',
         className
       )}
     >
       {/* Drawing Tools */}
-      <div className="flex flex-col gap-1 mb-2">
+      <div className="flex flex-col items-center gap-0.5">
         {tools.map((tool) => {
-          // Handle custom component (like IndicatorsButton)
           if (tool.component) {
             const Component = tool.component;
             return (
-              <div key={tool.id} className="w-14 flex justify-center">
-                <Component
-                  {...tool.props}
-                />
+              <div key={tool.id} className="w-8 flex justify-center">
+                <Component {...tool.props} />
               </div>
             );
           }
 
-          // Handle regular icon tools
           const Icon = tool.icon;
           const isActive = activeTool === tool.id;
           return (
@@ -186,26 +179,19 @@ const ChartToolbar = ({
               key={tool.id}
               onClick={() => handleToolClick(tool.id)}
               title={tool.description}
-              className={cn(
-                'relative h-10 w-14 rounded-lg border transition-all duration-150',
-                'border-transparent hover:bg-surfaceHover hover:border-border/70',
-                'focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2 focus:ring-offset-surface',
-                isActive
-                  ? 'bg-accent/15 text-accent border-accent/40 shadow-sm'
-                  : 'text-textSecondary hover:text-textPrimary'
-              )}
+              className={cn(btnBase, isActive ? btnActive : btnIdle)}
             >
-              <Icon className="h-5 w-5" />
+              <Icon className="h-[15px] w-[15px]" />
             </button>
           );
         })}
       </div>
 
       {/* Divider */}
-      <div className="w-full h-px bg-border my-1" />
+      <div className="w-5 h-px bg-border my-1" />
 
       {/* Action Buttons */}
-      <div className="flex flex-col gap-1 mb-2">
+      <div className="flex flex-col items-center gap-0.5">
         {actionButtons.map((button) => {
           const Icon = button.icon;
           const handleClick = button.onClick ?? (() => {});
@@ -215,30 +201,24 @@ const ChartToolbar = ({
               onClick={handleClick}
               title={button.description}
               type="button"
-              className={cn(
-                'h-10 w-14 rounded-lg transition-colors',
-                'hover:bg-surfaceHover',
-                'focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2 focus:ring-offset-surface',
-                'text-textSecondary hover:text-textPrimary',
-                !button.onClick && 'opacity-60 cursor-not-allowed'
-              )}
+              className={cn(btnBase, btnIdle, !button.onClick && 'opacity-50 cursor-not-allowed')}
             >
-              <Icon className="h-5 w-5" />
+              <Icon className="h-[15px] w-[15px]" />
             </button>
           );
         })}
       </div>
 
       {/* Divider */}
-      <div className="w-full h-px bg-border my-1" />
+      <div className="w-5 h-px bg-border my-1" />
 
       {/* Toggle Buttons */}
-      <div className="flex flex-col gap-1 mb-2">
+      <div className="flex flex-col items-center gap-0.5">
         {toggleButtons.map((button) => {
           if (button.component) {
             const Component = button.component;
             return (
-              <div key={button.id} className="w-14 flex justify-center">
+              <div key={button.id} className="w-8 flex justify-center">
                 <Component {...button.props} />
               </div>
             );
@@ -252,36 +232,27 @@ const ChartToolbar = ({
               onClick={handleClick}
               title={button.description}
               className={cn(
-                'h-10 w-14 rounded-lg transition-colors',
-                'hover:bg-surfaceHover',
-                'focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2 focus:ring-offset-surface',
-                button.active
-                  ? 'bg-surfaceHover text-accent'
-                  : 'text-textSecondary hover:text-textPrimary'
+                btnBase,
+                button.active ? btnActive : btnIdle
               )}
             >
-              <Icon className="h-5 w-5" />
+              <Icon className="h-[15px] w-[15px]" />
             </button>
           );
         })}
       </div>
 
       {/* Divider */}
-      <div className="w-full h-px bg-border my-1" />
+      <div className="w-5 h-px bg-border my-1" />
 
       {/* Delete Button */}
       <button
         type="button"
         onClick={onDeleteDrawings ?? (() => {})}
         title="Delete all drawings"
-        className={cn(
-          'h-10 w-14 rounded-lg transition-colors',
-          'hover:bg-surfaceHover',
-          'focus:outline-none focus:ring-2 focus:ring-danger focus:ring-offset-2 focus:ring-offset-surface',
-          'text-textSecondary hover:text-danger'
-        )}
+        className={cn(btnBase, btnDanger)}
       >
-        <Trash2 className="h-5 w-5" />
+        <Trash2 className="h-[15px] w-[15px]" />
       </button>
     </div>
   );
