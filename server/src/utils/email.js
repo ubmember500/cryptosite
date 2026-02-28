@@ -18,7 +18,7 @@ const dns = require('dns');
 // route to IPv6 endpoints (Gmail SMTP ENETUNREACH on 2607:f8b0:...).
 try { dns.setDefaultResultOrder('ipv4first'); } catch { /* Node < 16.4 */ }
 
-const EMAIL_CODE_VERSION = '2026-02-28-v4';
+const EMAIL_CODE_VERSION = '2026-02-28-v5';
 
 /* ---------- helpers that read env on every call (no stale cache) ---------- */
 
@@ -225,9 +225,27 @@ async function sendViaResend(toEmail, subject, text, html) {
 }
 
 /**
+ * Resolve a hostname to an IPv4 address explicitly.
+ * Falls back to the original hostname if resolution fails.
+ */
+async function resolveIPv4(hostname) {
+  return new Promise((resolve) => {
+    dns.resolve4(hostname, (err, addresses) => {
+      if (err || !addresses?.length) {
+        console.warn(`[Email/SMTP] dns.resolve4(${hostname}) failed:`, err?.message, '— using hostname as-is');
+        resolve(hostname);
+      } else {
+        console.log(`[Email/SMTP] Resolved ${hostname} → ${addresses[0]} (IPv4)`);
+        resolve(addresses[0]);
+      }
+    });
+  });
+}
+
+/**
  * Send password reset email via SMTP (nodemailer).
- * Includes a connection timeout, one automatic retry, and forces IPv4
- * to avoid ENETUNREACH on cloud providers that can't route to IPv6.
+ * Explicitly resolves the SMTP host to IPv4 to avoid ENETUNREACH on
+ * cloud providers (Render, Railway) that can't route to Gmail IPv6.
  */
 async function sendViaSmtp(toEmail, subject, text, html) {
   const host = getSmtpHost();
@@ -241,17 +259,19 @@ async function sendViaSmtp(toEmail, subject, text, html) {
     : [rawPass];
   const from = getMailFrom();
 
-  console.log(`[Email/SMTP] Sending to ${toEmail} via ${host}:${port} (user: ${user})`);
+  // Resolve hostname to IPv4 IP to avoid IPv6 ENETUNREACH on Render
+  const resolvedHost = await resolveIPv4(host);
+
+  console.log(`[Email/SMTP] Sending to ${toEmail} via ${resolvedHost}:${port} (host: ${host}, user: ${user})`);
 
   const createTransporter = (pass) =>
     nodemailer.createTransport({
-      host,
+      host: resolvedHost,
       port,
       secure,
       auth: { user, pass },
-      // Force IPv4 — cloud providers (Render, Railway) often can't reach
-      // Gmail's IPv6 endpoints (ENETUNREACH 2607:f8b0:...).
-      family: 4,
+      // When connecting by IP, TLS needs the real hostname for cert verification
+      tls: { servername: host },
       connectionTimeout: 10_000,   // 10 s to establish TCP
       greetingTimeout: 10_000,     // 10 s for SMTP greeting
       socketTimeout: 15_000,       // 15 s per socket operation
