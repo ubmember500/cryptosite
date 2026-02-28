@@ -241,10 +241,12 @@ async function forgotPassword(req, res, next) {
       } catch (emailErr) {
         console.error('[forgotPassword] *** EMAIL SEND FAILED ***');
         console.error('[forgotPassword] Error:', emailErr?.message || emailErr);
+        console.error('[forgotPassword] SENDGRID_API_KEY:', process.env.SENDGRID_API_KEY ? 'set' : '(not set)');
+        console.error('[forgotPassword] BREVO_API_KEY:', process.env.BREVO_API_KEY ? 'set' : '(not set)');
+        console.error('[forgotPassword] MAILJET_API_KEY:', process.env.MAILJET_API_KEY ? 'set' : '(not set)');
         console.error('[forgotPassword] SMTP_HOST:', process.env.SMTP_HOST || '(not set)');
         console.error('[forgotPassword] SMTP_USER:', process.env.SMTP_USER || '(not set)');
         console.error('[forgotPassword] RESEND_API_KEY:', process.env.RESEND_API_KEY ? 'set' : '(not set)');
-        console.error('[forgotPassword] RESEND_FROM:', process.env.RESEND_FROM || '(default: onboarding@resend.dev)');
         console.error('[forgotPassword] FRONTEND_URL:', process.env.FRONTEND_URL || '(not set)');
         if (process.env.DEV_SHOW_RESET_LINK !== 'true') {
           return res.status(503).json({

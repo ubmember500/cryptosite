@@ -1,41 +1,45 @@
 ﻿# Email setup — Forgot Password
 
-The forgot-password feature emails a secure reset link to users. Four providers are supported:
+The forgot-password feature emails a secure reset link to users. Five providers are supported:
 
-- **Mailjet** (recommended — free 200/day, instant activation, no domain needed)
+- **SendGrid** (recommended — free 100/day, industry standard, fast & reliable delivery)
 - **Brevo** (free 300/day, no domain needed — but new accounts may need manual activation)
+- **Mailjet** (free 200/day, instant activation, no domain needed)
 - **Resend** (needs a verified custom domain to send to real users)
 - **SMTP / Gmail** (blocked on most cloud hosts — good for local dev only)
 
-Priority: Brevo → Mailjet → Resend → SMTP (first configured provider wins).
+Priority: SendGrid → Brevo → Mailjet → Resend → SMTP (first configured provider wins).
 
 ---
 
-## Option 1 — Mailjet (recommended — fastest to get working)
+## Option 1 — SendGrid (recommended — fastest, most reliable)
 
-Mailjet uses HTTPS API (port 443), so it's not blocked by cloud providers.
-Free tier: 200 emails/day, 6 000/month. **No domain needed.**
-Account activates **instantly** after email verification (no manual review).
+SendGrid by Twilio is the industry standard for transactional email (used by GitHub, Uber, Airbnb, etc.).
+Uses HTTPS API (port 443), so it's not blocked by cloud providers.
+Free tier: 100 emails/day forever. Fast delivery, excellent inbox placement.
 
-1. Create a free account at [mailjet.com](https://www.mailjet.com).
-2. Go to **Account Settings** → **REST API** → **API Key Management**.
-   You'll see an **API Key** and a **Secret Key**.
-3. Add both to Render env vars (and `server/.env` locally):
+1. Create a free account at [sendgrid.com](https://sendgrid.com).
+2. Go to **Settings** → **API Keys** → **Create API Key** (Full Access or Restricted with Mail Send permission).
+3. Copy the API key (starts with `SG.`).
+4. Add to Render env vars (and `server/.env` locally):
 
 ```env
-MAILJET_API_KEY=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-MAILJET_API_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+SENDGRID_API_KEY=SG.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 FRONTEND_URL=https://your-frontend.vercel.app
 ```
 
-4. _(Optional)_ Set a custom sender address:
+5. _(Required for production)_ Verify your sender:
+   - **Single Sender Verification** (quick start): Go to **Marketing** → **Senders** → verify an email address.
+   - **Domain Authentication** (recommended for production): Go to **Settings** → **Sender Authentication** → authenticate your domain (adds DNS records).
+
+6. _(Optional)_ Set a custom sender address:
 ```env
-MAILJET_FROM=CryptoAlerts <yourname@gmail.com>
+SENDGRID_FROM=CryptoAlerts <noreply@yourdomain.com>
 ```
 By default it uses `MAIL_FROM` or `SMTP_USER`. The sender email must be
-verified in Mailjet (your sign-up email is auto-verified).
+verified in SendGrid.
 
-5. Deploy / restart. Done!
+7. Deploy / restart. Done!
 
 ---
 
@@ -65,7 +69,31 @@ verified in Brevo (your sign-up email is auto-verified).
 
 ---
 
-## Option 3 — Resend (requires custom domain)
+## Option 3 — Mailjet (free 200/day, instant activation)
+
+Mailjet uses HTTPS API (port 443), so it's not blocked by cloud providers.
+Free tier: 200 emails/day, 6 000/month. **No domain needed.**
+Account activates **instantly** after email verification (no manual review).
+
+1. Create a free account at [mailjet.com](https://www.mailjet.com).
+2. Go to **Account Settings** → **REST API** → **API Key Management**.
+   You'll see an **API Key** and a **Secret Key**.
+3. Add both to Render env vars (and `server/.env` locally):
+
+```env
+MAILJET_API_KEY=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+MAILJET_API_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+FRONTEND_URL=https://your-frontend.vercel.app
+```
+
+4. _(Optional)_ Set a custom sender address:
+```env
+MAILJET_FROM=CryptoAlerts <yourname@gmail.com>
+```
+
+---
+
+## Option 4 — Resend (requires custom domain)
 
 > **Note:** Resend's free plan is in sandbox mode — it can only send to
 > the account owner's email until you verify your own domain.
@@ -83,7 +111,7 @@ FRONTEND_URL=https://your-frontend.vercel.app
 
 ---
 
-## Option 4 — Gmail SMTP (local development only)
+## Option 5 — Gmail SMTP (local development only)
 
 > **Warning:** Gmail SMTP is blocked from Render, Railway, and most cloud
 > providers (SMTP ports 25/465/587 are firewalled). Use for local dev only.

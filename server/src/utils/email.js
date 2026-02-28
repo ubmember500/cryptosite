@@ -2,10 +2,11 @@
  * Send password reset link by email.
  *
  * Priority:
- *   1. Brevo API    — set BREVO_API_KEY  (free, no domain needed — requires account activation)
- *   2. Mailjet API  — set MAILJET_API_KEY + MAILJET_API_SECRET  (free 200/day, instant activation)
- *   3. Resend API   — set RESEND_API_KEY  (needs verified domain to send to others)
- *   4. SMTP         — set SMTP_HOST, SMTP_USER, SMTP_PASS  (blocked on most cloud hosts)
+ *   1. SendGrid API — set SENDGRID_API_KEY  (free 100/day, industry standard, fast delivery)
+ *   2. Brevo API    — set BREVO_API_KEY  (free 300/day, no domain needed — requires account activation)
+ *   3. Mailjet API  — set MAILJET_API_KEY + MAILJET_API_SECRET  (free 200/day, instant activation)
+ *   4. Resend API   — set RESEND_API_KEY  (needs verified domain to send to others)
+ *   5. SMTP         — set SMTP_HOST, SMTP_USER, SMTP_PASS  (blocked on most cloud hosts)
  *
  * See server/EMAIL_SETUP.md for setup instructions.
  *
@@ -20,7 +21,7 @@ const dns = require('dns');
 // route to IPv6 endpoints (Gmail SMTP ENETUNREACH on 2607:f8b0:...).
 try { dns.setDefaultResultOrder('ipv4first'); } catch { /* Node < 16.4 */ }
 
-const EMAIL_CODE_VERSION = '2026-02-28-v7';
+const EMAIL_CODE_VERSION = '2026-02-28-v8';
 
 /* ---------- helpers that read env on every call (no stale cache) ---------- */
 
@@ -33,6 +34,12 @@ function getFrontendUrl() {
       .find(Boolean) ||
     'http://localhost:5173'
   );
+}
+
+// --- SendGrid (Twilio) ---
+function getSendGridApiKey() { return process.env.SENDGRID_API_KEY; }
+function getSendGridFrom() {
+  return process.env.SENDGRID_FROM || process.env.MAIL_FROM || process.env.SMTP_USER || 'CryptoAlerts <noreply@cryptoalerts.app>';
 }
 
 // --- Brevo (formerly Sendinblue) ---
@@ -70,6 +77,10 @@ function getSmtpUser()   { return process.env.SMTP_USER; }
 function getSmtpPass()   { return process.env.SMTP_PASS; }
 function getMailFrom()   { return process.env.MAIL_FROM || process.env.SMTP_USER || 'CryptoAlerts <noreply@cryptoalerts.app>'; }
 
+function isSendGridConfigured() {
+  return Boolean(getSendGridApiKey());
+}
+
 function isBrevoConfigured() {
   return Boolean(getBrevoApiKey());
 }
@@ -87,14 +98,16 @@ function isSmtpConfigured() {
 }
 
 function isEmailConfigured() {
-  return isBrevoConfigured() || isMailjetConfigured() || isResendConfigured() || isSmtpConfigured();
+  return isSendGridConfigured() || isBrevoConfigured() || isMailjetConfigured() || isResendConfigured() || isSmtpConfigured();
 }
 
 /**
  * Call once at server startup to log which email provider is active.
  */
 function logEmailStatus() {
-  if (isBrevoConfigured()) {
+  if (isSendGridConfigured()) {
+    console.log(`📧 Password reset: emails will be sent via SendGrid API (from: ${getSendGridFrom()}).`);
+  } else if (isBrevoConfigured()) {
     console.log(`📧 Password reset: emails will be sent via Brevo API (from: ${getBrevoFrom()}).`);
   } else if (isMailjetConfigured()) {
     console.log(`📧 Password reset: emails will be sent via Mailjet API (from: ${getMailjetFrom()}).`);
@@ -103,7 +116,7 @@ function logEmailStatus() {
   } else if (isSmtpConfigured()) {
     console.log(`📧 Password reset: emails will be sent via SMTP (${getSmtpHost()}:${getSmtpPort()}).`);
   } else {
-    console.log('📧 Password reset: ⚠️  no email provider configured! Add MAILJET_API_KEY+MAILJET_API_SECRET (easiest) or BREVO_API_KEY or RESEND_API_KEY or SMTP_* vars to server/.env (see server/EMAIL_SETUP.md).');
+    console.log('📧 Password reset: ⚠️  no email provider configured! Add SENDGRID_API_KEY (recommended) or BREVO_API_KEY or MAILJET_API_KEY+MAILJET_API_SECRET or RESEND_API_KEY or SMTP_* vars to server/.env (see server/EMAIL_SETUP.md).');
   }
   console.log(`📧 Reset links will point to: ${getFrontendUrl()}`);
 }
@@ -191,6 +204,79 @@ function buildResetEmailHtml(resetLink) {
   </table>
 </body>
 </html>`;
+}
+
+/**
+ * Send password reset email via SendGrid (Twilio) HTTP API.
+ *
+ * SendGrid free tier: 100 emails/day. Industry standard for transactional email.
+ * No domain verification needed to start (single sender verification).
+ * Sign up at sendgrid.com.
+ */
+async function sendViaSendGrid(toEmail, subject, text, html) {
+  const apiKey = getSendGridApiKey();
+  const fromRaw = getSendGridFrom();
+
+  // Parse "Name <email>" format or plain email
+  let senderName = 'CryptoAlerts';
+  let senderEmail = fromRaw;
+  const match = fromRaw.match(/^(.+?)\s*<(.+?)>$/);
+  if (match) {
+    senderName = match[1].trim();
+    senderEmail = match[2].trim();
+  }
+
+  console.log(`[Email/SendGrid] Sending to ${toEmail} from ${senderName} <${senderEmail}>`);
+
+  const https = require('https');
+  const payload = JSON.stringify({
+    personalizations: [{ to: [{ email: toEmail }] }],
+    from: { email: senderEmail, name: senderName },
+    subject,
+    content: [
+      { type: 'text/plain', value: text },
+      { type: 'text/html', value: html },
+    ],
+  });
+
+  await new Promise((resolve, reject) => {
+    const req = https.request(
+      {
+        hostname: 'api.sendgrid.com',
+        path: '/v3/mail/send',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Length': Buffer.byteLength(payload),
+        },
+        timeout: 15_000,
+      },
+      (res) => {
+        let data = '';
+        res.on('data', (chunk) => (data += chunk));
+        res.on('end', () => {
+          // SendGrid returns 202 Accepted on success (empty body)
+          if (res.statusCode >= 200 && res.statusCode < 300) {
+            resolve();
+          } else {
+            let msg = data;
+            try {
+              const parsed = JSON.parse(data);
+              msg = parsed?.errors?.map((e) => e.message).join('; ') || parsed?.message || data;
+            } catch { /* use raw data */ }
+            reject(new Error(`SendGrid API ${res.statusCode}: ${msg}`));
+          }
+        });
+      },
+    );
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('SendGrid API request timed out')); });
+    req.write(payload);
+    req.end();
+  });
+
+  console.log('[Email/SendGrid] ✅ Password reset sent to', toEmail);
 }
 
 /**
@@ -482,7 +568,7 @@ async function sendViaSmtp(toEmail, subject, text, html) {
 
 /**
  * Send password reset email.
- * Priority: Brevo → Resend → SMTP.
+ * Priority: SendGrid → Brevo → Mailjet → Resend → SMTP.
  *
  * @param {string} toEmail  - Recipient email address
  * @param {string} resetLink - Full reset URL containing the token
@@ -501,7 +587,18 @@ async function sendPasswordResetEmail(toEmail, resetLink) {
 
   const errors = [];
 
-  // 1. Brevo (free, no domain needed — may require manual account activation)
+  // 1. SendGrid (industry standard, free 100/day, fast delivery)
+  if (isSendGridConfigured()) {
+    try {
+      await sendViaSendGrid(toEmail, subject, text, html);
+      return;
+    } catch (err) {
+      errors.push(`SendGrid: ${err.message}`);
+      console.error('[Email] SendGrid failed:', err.message);
+    }
+  }
+
+  // 2. Brevo (free 300/day, no domain needed — may require manual account activation)
   if (isBrevoConfigured()) {
     try {
       await sendViaBrevo(toEmail, subject, text, html);
@@ -512,7 +609,7 @@ async function sendPasswordResetEmail(toEmail, resetLink) {
     }
   }
 
-  // 2. Mailjet (free 200/day, instant activation, no domain needed)
+  // 3. Mailjet (free 200/day, instant activation, no domain needed)
   if (isMailjetConfigured()) {
     try {
       await sendViaMailjet(toEmail, subject, text, html);
@@ -523,7 +620,7 @@ async function sendPasswordResetEmail(toEmail, resetLink) {
     }
   }
 
-  // 3. Resend (needs verified domain to send to non-owner emails)
+  // 4. Resend (needs verified domain to send to non-owner emails)
   if (isResendConfigured()) {
     try {
       await sendViaResend(toEmail, subject, text, html);
@@ -534,7 +631,7 @@ async function sendPasswordResetEmail(toEmail, resetLink) {
     }
   }
 
-  // 4. SMTP (blocked on most cloud hosts — Render, Railway, etc.)
+  // 5. SMTP (blocked on most cloud hosts — Render, Railway, etc.)
   if (isSmtpConfigured()) {
     try {
       await sendViaSmtp(toEmail, subject, text, html);
@@ -545,9 +642,9 @@ async function sendPasswordResetEmail(toEmail, resetLink) {
     }
   }
 
-  if (!isBrevoConfigured() && !isMailjetConfigured() && !isResendConfigured() && !isSmtpConfigured()) {
+  if (!isSendGridConfigured() && !isBrevoConfigured() && !isMailjetConfigured() && !isResendConfigured() && !isSmtpConfigured()) {
     throw new Error(
-      'No email provider configured. Set MAILJET_API_KEY+MAILJET_API_SECRET (easiest) or BREVO_API_KEY or RESEND_API_KEY or SMTP_* in server/.env (see server/EMAIL_SETUP.md).'
+      'No email provider configured. Set SENDGRID_API_KEY (recommended) or BREVO_API_KEY or MAILJET_API_KEY+MAILJET_API_SECRET or RESEND_API_KEY or SMTP_* in server/.env (see server/EMAIL_SETUP.md).'
     );
   }
 
@@ -561,11 +658,13 @@ async function debugEmailProviders(toEmail) {
   const results = {
     codeVersion: EMAIL_CODE_VERSION,
     nodeVersion: process.version,
+    sendgridConfigured: isSendGridConfigured(),
     brevoConfigured: isBrevoConfigured(),
     mailjetConfigured: isMailjetConfigured(),
     resendConfigured: isResendConfigured(),
     smtpConfigured: isSmtpConfigured(),
     frontendUrl: getFrontendUrl(),
+    sendgrid: null,
     brevo: null,
     mailjet: null,
     resend: null,
@@ -575,6 +674,15 @@ async function debugEmailProviders(toEmail) {
   const subject = 'CryptoAlerts — email debug test';
   const text = 'This is a diagnostic email from CryptoAlerts debug-email endpoint.';
   const html = '<p>This is a <strong>diagnostic email</strong> from CryptoAlerts debug-email endpoint.</p>';
+
+  if (isSendGridConfigured()) {
+    try {
+      await sendViaSendGrid(toEmail, subject, text, html);
+      results.sendgrid = { ok: true };
+    } catch (err) {
+      results.sendgrid = { ok: false, error: err.message };
+    }
+  }
 
   if (isBrevoConfigured()) {
     try {
@@ -619,6 +727,7 @@ module.exports = {
   sendPasswordResetEmail,
   debugEmailProviders,
   isEmailConfigured,
+  isSendGridConfigured,
   isBrevoConfigured,
   isMailjetConfigured,
   isSmtpConfigured,
