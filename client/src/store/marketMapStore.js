@@ -9,7 +9,7 @@ const DEFAULT_MARKET_MAP_EXCHANGE = 'binance';
 const DEFAULT_EXCHANGE_TYPE = 'futures';
 const DEFAULT_INTERVAL = '5m';
 const DEFAULT_VISIBLE_KLINE_LIMIT = 200;  // initial load — enough to fill a card
-const FAST_KLINE_LIMIT = 200;             // direct-exchange fetch limit
+const FAST_KLINE_LIMIT = 100;             // direct-exchange fetch limit (smaller = faster response)
 const MIN_VISIBLE_KLINE_POINTS = 3;
 const VISIBLE_FETCH_CONCURRENCY = 16;     // used only for loadOlderVisibleHistory
 const PREFETCH_VISIBLE_MULTIPLIER = 1;    // no background over-fetch on initial load
@@ -148,6 +148,22 @@ const fetchBinanceFuturesKlinesDirect = async (symbol, interval = '5m', limit = 
 
   let lastError = null;
 
+  // 1. Try direct Binance first (fastest, no intermediary)
+  for (const baseUrl of BINANCE_FUTURES_BASE_URLS) {
+    try {
+      const response = await fetch(`${baseUrl}/klines?${query.toString()}`);
+      if (!response.ok) {
+        throw new Error(`Direct HTTP ${response.status}`);
+      }
+      const raw = await response.json();
+      const transformed = transformRawBinanceKlines(raw);
+      if (transformed.length > 0) return transformed;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  // 2. Fallback to proxy (Vercel edge) if direct is blocked
   for (const proxyUrl of getBinanceProxyUrls()) {
     try {
       const response = await fetch(`${proxyUrl}?${query.toString()}`);
@@ -156,20 +172,6 @@ const fetchBinanceFuturesKlinesDirect = async (symbol, interval = '5m', limit = 
       }
       const data = await response.json();
       const raw = Array.isArray(data?.klines) ? data.klines : (Array.isArray(data) ? data : []);
-      const transformed = transformRawBinanceKlines(raw);
-      if (transformed.length > 0) return transformed;
-    } catch (error) {
-      lastError = error;
-    }
-  }
-
-  for (const baseUrl of BINANCE_FUTURES_BASE_URLS) {
-    try {
-      const response = await fetch(`${baseUrl}/klines?${query.toString()}`);
-      if (!response.ok) {
-        throw new Error(`Direct HTTP ${response.status}`);
-      }
-      const raw = await response.json();
       const transformed = transformRawBinanceKlines(raw);
       if (transformed.length > 0) return transformed;
     } catch (error) {
@@ -852,7 +854,10 @@ export const useMarketMapStore = create((set, get) => ({
     };
 
     await Promise.all(
-      visible.map(async (row) => {
+      visible.filter((row) => {
+        const cached = get().klinesBySymbol[row.symbol];
+        return !Array.isArray(cached) || cached.length < MIN_VISIBLE_KLINE_POINTS;
+      }).map(async (row) => {
         const { symbol } = row;
         try {
           const klines = await fetchDirect(symbol);

@@ -29,6 +29,20 @@ const getGridLayout = (count) => {
   return { columns: 4, rows: 4 }; // 16
 };
 
+const SKELETON_HEIGHTS = [40, 65, 50, 80, 35, 70, 55, 45, 75, 60, 42, 68, 53, 78, 38, 72, 58, 48, 63, 44, 71, 52, 67, 46];
+
+const ChartSkeleton = () => (
+  <div className="w-full h-full flex items-end gap-[2px] px-1 pb-1 overflow-hidden">
+    {SKELETON_HEIGHTS.map((h, i) => (
+      <div
+        key={i}
+        className="flex-1 min-w-0 rounded-sm animate-pulse bg-border/30"
+        style={{ height: `${h}%`, animationDelay: `${i * 60}ms` }}
+      />
+    ))}
+  </div>
+);
+
 const MarketMap = () => {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -253,37 +267,41 @@ const MarketMap = () => {
                         <span>%</span>
                         <span className="text-[11px] leading-3">🚀</span>
                       </div>
-                      <div className="mt-0.5 text-[9px] leading-3 text-textSecondary">VOL {formattedVolume}</div>
+                      {hasData && <div className="mt-0.5 text-[9px] leading-3 text-textSecondary">VOL {formattedVolume}</div>}
                     </div>
 
-                    <KLineChart
-                      data={symbolData}
-                      symbol={row.symbol}
-                      interval="5m"
-                      alertExchange={selectedExchange}
-                      alertMarket="futures"
-                      loading={Boolean(cardLoadingBySymbol[row.symbol]) && !hasData}
-                      error={cardError}
-                      className="h-full"
-                      compact
-                      hideCompactHeader
-                      instanceId={`market-map-${row.symbol}`}
-                      isRealtimeConnected={isRealtimeConnected}
-                      isRealtimeSubscribed={Array.isArray(activeRealtimeSymbols) && activeRealtimeSymbols.includes(row.symbol)}
-                      hasMoreHistory={!!historyMeta.hasMoreHistory}
-                      showInlineVolumeOverlay
-                      showCenterWatermark
-                      watermarkText={row.symbol.replace(/(USDT|USDC|USD|BUSD|FDUSD|TUSD|USDE)$/i, '')}
-                      watermarkOpacity={0.08}
-                      onLoadMoreHistory={async ({ timestamp }) => {
-                        return loadOlderVisibleHistory(row.symbol, timestamp);
-                      }}
-                    />
+                    {hasData ? (
+                      <KLineChart
+                        data={symbolData}
+                        symbol={row.symbol}
+                        interval="5m"
+                        alertExchange={selectedExchange}
+                        alertMarket="futures"
+                        loading={false}
+                        error={null}
+                        className="h-full"
+                        compact
+                        hideCompactHeader
+                        instanceId={`market-map-${row.symbol}`}
+                        isRealtimeConnected={isRealtimeConnected}
+                        isRealtimeSubscribed={Array.isArray(activeRealtimeSymbols) && activeRealtimeSymbols.includes(row.symbol)}
+                        hasMoreHistory={!!historyMeta.hasMoreHistory}
+                        showInlineVolumeOverlay
+                        showCenterWatermark
+                        watermarkText={row.symbol.replace(/(USDT|USDC|USD|BUSD|FDUSD|TUSD|USDE)$/i, '')}
+                        watermarkOpacity={0.08}
+                        onLoadMoreHistory={async ({ timestamp }) => {
+                          return loadOlderVisibleHistory(row.symbol, timestamp);
+                        }}
+                      />
+                    ) : cardError ? (
+                      <div className="w-full h-full flex items-center justify-center">
+                        <span className="text-[10px] text-danger/70 text-center px-2">{cardError}</span>
+                      </div>
+                    ) : (
+                      <ChartSkeleton />
+                    )}
                   </div>
-
-                  {!cardLoadingBySymbol[row.symbol] && !cardErrorBySymbol[row.symbol] && !hasData ? (
-                    <div className="text-xs text-textSecondary px-1 pt-1">{t('No chart data for this symbol yet')}</div>
-                  ) : null}
                 </div>
               );
             })()
