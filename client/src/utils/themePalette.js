@@ -9,6 +9,14 @@ const safeGetCssVar = (variable, fallback) => {
 
 export const getThemePalette = () => {
   const getColor = (name, fallback) => safeGetCssVar(name, fallback);
+  const activeTheme =
+    typeof document !== 'undefined'
+      ? document.documentElement.getAttribute('data-theme')
+      : null;
+  const success = getColor('--color-success', '#00c853');
+  const danger = getColor('--color-danger', '#ff1744');
+  const isMechaTheme = activeTheme === 'mecha';
+
   return {
     surface: getColor('--color-surface', '#1a1d29'),
     surfaceHover: getColor('--color-surface-hover', '#252836'),
@@ -17,8 +25,10 @@ export const getThemePalette = () => {
     textPrimary: getColor('--color-text-primary', '#e1e4e8'),
     textSecondary: getColor('--color-text-secondary', '#8b949e'),
     accent: getColor('--color-accent', '#2962ff'),
-    success: getColor('--color-success', '#00c853'),
-    danger: getColor('--color-danger', '#ff1744'),
+    success,
+    danger,
     warning: getColor('--color-warning', '#ffa726'),
+    candleUp: isMechaTheme ? '#19d7c2' : success,
+    candleDown: isMechaTheme ? '#f6465d' : danger,
   };
 };

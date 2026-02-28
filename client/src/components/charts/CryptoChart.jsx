@@ -891,11 +891,11 @@ const CryptoChart = ({
     try {
       console.log('[CryptoChart] About to call chart.addCandlestickSeries()...');
       candlestickSeries = chart.addCandlestickSeries({
-      upColor: themeColors.success,
-      downColor: themeColors.danger,
+      upColor: themeColors.candleUp,
+      downColor: themeColors.candleDown,
       borderVisible: false,
-      wickUpColor: themeColors.success,
-      wickDownColor: themeColors.danger,
+      wickUpColor: themeColors.candleUp,
+      wickDownColor: themeColors.candleDown,
       priceScaleId: 'right',
       priceFormat: {
         type: 'price',
