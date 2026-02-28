@@ -198,4 +198,40 @@ router.get('/debug-email-recipient', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/auth/debug-user-email?email=<email>&secret=<secret>
+ * Debug-only endpoint to confirm whether a user account exists for an email.
+ */
+router.get('/debug-user-email', async (req, res) => {
+  const secret = process.env.DEBUG_EMAIL_SECRET || 'debug123';
+  if (req.query.secret !== secret) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  const email = String(req.query.email || '').trim();
+  if (!email) {
+    return res.status(400).json({ error: 'email query param is required' });
+  }
+
+  try {
+    const prisma = require('../utils/prisma');
+    const user = await prisma.user.findFirst({
+      where: { email: { equals: email, mode: 'insensitive' } },
+      select: { id: true, email: true, createdAt: true },
+    });
+
+    return res.json({
+      ok: true,
+      email,
+      exists: Boolean(user),
+      user: user || null,
+      hint: user
+        ? 'Account exists. Forgot-password should create token and send email.'
+        : 'No account exists with this email. Endpoint intentionally still returns generic success to prevent user enumeration.',
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
