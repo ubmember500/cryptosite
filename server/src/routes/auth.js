@@ -59,6 +59,11 @@ router.get('/debug-email', async (req, res) => {
  * GET /api/auth/setup-sendgrid?secret=<secret>
  * Diagnostic endpoint — lists verified SendGrid senders and helps fix sender issues.
  * Protected by DEBUG_EMAIL_SECRET env var.
+ *
+ * POST /api/auth/setup-sendgrid?secret=<secret>
+ * Body: { "email": "your@email.com", "name": "CryptoAlerts" }
+ * Creates a verified sender in SendGrid — SendGrid will send a verification link
+ * to that email address. User clicks it → sender is verified → emails work.
  */
 router.get('/setup-sendgrid', async (req, res) => {
   const secret = process.env.DEBUG_EMAIL_SECRET || 'debug123';
@@ -66,7 +71,7 @@ router.get('/setup-sendgrid', async (req, res) => {
     return res.status(403).json({ error: 'Forbidden' });
   }
   try {
-    const { isSendGridConfigured, getVerifiedSendGridSenders, getSendGridApiKey } = require('../utils/email');
+    const { isSendGridConfigured, getVerifiedSendGridSenders } = require('../utils/email');
     if (!isSendGridConfigured()) {
       return res.json({ configured: false, message: 'SENDGRID_API_KEY not set' });
     }
@@ -75,9 +80,87 @@ router.get('/setup-sendgrid', async (req, res) => {
       configured: true,
       verifiedSenders: senders,
       hint: senders.length === 0
-        ? 'No verified senders found. Go to https://app.sendgrid.com/settings/sender_auth → "Verify a Single Sender" → verify your email address.'
-        : `Found ${senders.length} verified sender(s). The first one (${senders[0].fromEmail}) will be auto-used if SENDGRID_FROM is not set or not verified.`,
+        ? 'No verified senders. POST to this endpoint with { "email": "your@email.com" } to create one, then check your inbox for the verification link.'
+        : `Found ${senders.length} verified sender(s). The first one (${senders[0].fromEmail}) will be auto-used.`,
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/setup-sendgrid', async (req, res) => {
+  const secret = req.query.secret || req.body.secret;
+  const expectedSecret = process.env.DEBUG_EMAIL_SECRET || 'debug123';
+  if (secret !== expectedSecret) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  try {
+    const { isSendGridConfigured, getSendGridApiKey } = require('../utils/email');
+    if (!isSendGridConfigured()) {
+      return res.status(400).json({ error: 'SENDGRID_API_KEY not set' });
+    }
+    const email = req.body.email;
+    const name = req.body.name || 'CryptoAlerts';
+    if (!email) {
+      return res.status(400).json({ error: 'email is required in request body' });
+    }
+
+    const apiKey = getSendGridApiKey();
+    const https = require('https');
+    const payload = JSON.stringify({
+      nickname: name,
+      from_email: email,
+      from_name: name,
+      reply_to: email,
+      reply_to_name: name,
+      address: '1 Crypto St',
+      city: 'New York',
+      state: 'NY',
+      zip: '10001',
+      country: 'US',
+    });
+
+    const result = await new Promise((resolve, reject) => {
+      const req = https.request(
+        {
+          hostname: 'api.sendgrid.com',
+          path: '/v3/verified_senders',
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Length': Buffer.byteLength(payload),
+          },
+          timeout: 15_000,
+        },
+        (resp) => {
+          let data = '';
+          resp.on('data', (chunk) => (data += chunk));
+          resp.on('end', () => {
+            try { resolve({ status: resp.statusCode, body: JSON.parse(data) }); }
+            catch { resolve({ status: resp.statusCode, body: data }); }
+          });
+        },
+      );
+      req.on('error', reject);
+      req.on('timeout', () => { req.destroy(); reject(new Error('Request timed out')); });
+      req.write(payload);
+      req.end();
+    });
+
+    if (result.status >= 200 && result.status < 300) {
+      res.json({
+        success: true,
+        message: `Verification email sent to ${email}. Check your inbox and click the verification link. Once verified, password reset emails will work automatically.`,
+        sendgridResponse: result.body,
+      });
+    } else {
+      res.status(result.status).json({
+        success: false,
+        error: result.body?.errors?.[0]?.message || JSON.stringify(result.body),
+        hint: 'If the email is already pending verification, check your inbox (including spam) for the SendGrid verification email.',
+      });
+    }
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
