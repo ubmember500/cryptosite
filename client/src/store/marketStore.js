@@ -24,7 +24,7 @@ const normalizeMexcFuturesTokenMetrics = (token) => {
     priceChangePercent24h,
     volume24h,
   };
-  normalized.natr = calculateInstantNatr(normalized);
+  normalized.natr = null; // populated async by enrichTokensWithNatr14 (avg 5m candle range)
   return normalized;
 };
 // Bybit API endpoints
@@ -77,7 +77,7 @@ const fetchBybitTokensDirect = async (exchangeType = 'futures', searchQuery = ''
             high24h: Number.isFinite(high24h) ? high24h : null,
             low24h: Number.isFinite(low24h) ? low24h : null,
           };
-          token.natr = calculateInstantNatr(token);
+          token.natr = null; // populated async by enrichTokensWithNatr14 (avg 5m candle range)
           return token;
         });
       break;
@@ -379,7 +379,7 @@ const normalizeMarketTokenMetrics = (token) => {
     }),
   };
 
-  normalized.natr = calculateInstantNatr(normalized);
+  normalized.natr = null; // populated async by enrichTokensWithNatr14 (avg 5m candle range)
   return normalized;
 };
 
