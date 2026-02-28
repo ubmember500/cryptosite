@@ -147,6 +147,13 @@ const Subscription = () => {
         <button className="text-accent hover:text-accent/80 flex items-center gap-2">{t('Activate promocode')}</button>
       </div>
 
+      {/* Free Notice Banner */}
+      <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg px-6 py-4 text-center">
+        <p className="text-amber-400 font-medium text-base">
+          {t('subscription_free_notice')}
+        </p>
+      </div>
+
       {/* Pricing Tiers */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Free Plan Card */}
@@ -165,7 +172,7 @@ const Subscription = () => {
               rel="noopener noreferrer"
               className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 rounded-md transition-colors inline-block text-center"
             >
-              YOUR VERSION
+              {t('YOUR VERSION')}
             </a>
           </div>
           <div className="flex-1 space-y-1">
