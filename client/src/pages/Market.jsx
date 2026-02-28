@@ -53,7 +53,7 @@ const Market = () => {
   const [chartSlotIntervals, setChartSlotIntervals] = useState([]);
   // Which chart slot is focused (user clicked it) — next token click in list assigns to this slot
   const [activeChartSlot, setActiveChartSlot] = useState(null);
-  const [rightPanelPercent, setRightPanelPercent] = useState(36);
+  const [rightPanelPercent, setRightPanelPercent] = useState(25);
   const [isResizingPanels, setIsResizingPanels] = useState(false);
   const splitContainerRef = useRef(null);
   const chartPanelRef = useRef(null);
@@ -307,7 +307,7 @@ const Market = () => {
       if (!rect.width) return;
 
       const rawRightPercent = ((rect.right - e.clientX) / rect.width) * 100;
-      const clampedRightPercent = Math.min(48, Math.max(26, rawRightPercent));
+      const clampedRightPercent = Math.min(48, Math.max(18, rawRightPercent));
       setRightPanelPercent(clampedRightPercent);
     };
 
@@ -534,6 +534,20 @@ const Market = () => {
                         }
                         : undefined}
                       onHeaderClick={isMultiChart ? () => setActiveChartSlot(i) : undefined}
+                      onSymbolChange={(token) => {
+                        if (isMultiChart) {
+                          setChartSlotTokens((prev) => {
+                            const next = [...prev];
+                            next[i] = token;
+                            return next;
+                          });
+                          const int = chartSlotIntervals[i] || chartInterval;
+                          fetchChartData(token.fullSymbol, exchangeType, int);
+                        } else {
+                          setSelectedToken(token);
+                          fetchChartData(token.fullSymbol, exchangeType, chartInterval);
+                        }
+                      }}
                       onTimeframeChange={!isMultiChart ? (newInterval) => {
                         setChartInterval(newInterval);
                         if (selectedToken) {

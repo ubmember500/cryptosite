@@ -4,7 +4,8 @@ import { registerCustomShapeOverlays } from './overlays/customShapeOverlays';
 import { cn } from '../../utils/cn';
 import LoadingSpinner from '../common/LoadingSpinner';
 import Button from '../common/Button';
-import { RefreshCw, AlertCircle, X } from 'lucide-react';
+import { RefreshCw, AlertCircle, X, ChevronDown, Search } from 'lucide-react';
+import { useMarketStore } from '../../store/marketStore';
 import ChartToolbar from './ChartToolbar';
 import IndicatorsModal from './IndicatorsModal';
 import ChartSettingsModal from './ChartSettingsModal';
@@ -213,6 +214,99 @@ function createVolumeIndicatorTooltip({ indicator, crosshair }) {
   }
 }());
 
+// ===========================================================================
+// SymbolPickerDropdown — inline token search shown when user clicks symbol
+// ===========================================================================
+const SymbolPickerDropdown = ({ isOpen, onClose, onSelect, currentSymbol }) => {
+  const inputRef = useRef(null);
+  const containerRef = useRef(null);
+  const [query, setQuery] = useState('');
+  const binanceTokens = useMarketStore((s) => s.binanceTokens);
+
+  // Focus input when opened
+  useEffect(() => {
+    if (isOpen && inputRef.current) {
+      inputRef.current.focus();
+    }
+    if (isOpen) setQuery('');
+  }, [isOpen]);
+
+  // Close on outside click
+  useEffect(() => {
+    if (!isOpen) return;
+    const handler = (e) => {
+      if (containerRef.current && !containerRef.current.contains(e.target)) {
+        onClose();
+      }
+    };
+    document.addEventListener('mousedown', handler, true);
+    return () => document.removeEventListener('mousedown', handler, true);
+  }, [isOpen, onClose]);
+
+  // Close on Escape
+  useEffect(() => {
+    if (!isOpen) return;
+    const handler = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [isOpen, onClose]);
+
+  const filtered = useMemo(() => {
+    if (!query) return binanceTokens.slice(0, 50);
+    const q = query.toLowerCase();
+    return binanceTokens.filter(
+      (t) => t.symbol?.toLowerCase().includes(q) || t.fullSymbol?.toLowerCase().includes(q)
+    ).slice(0, 50);
+  }, [binanceTokens, query]);
+
+  if (!isOpen) return null;
+
+  return (
+    <div
+      ref={containerRef}
+      className="absolute left-0 top-full mt-1 z-[9999] w-64 bg-surface border border-border rounded-lg shadow-2xl overflow-hidden"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="p-2 border-b border-border">
+        <div className="relative">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-textSecondary" />
+          <input
+            ref={inputRef}
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search token..."
+            className="w-full pl-8 pr-3 py-1.5 text-xs bg-background border border-border rounded-md text-textPrimary placeholder:text-textSecondary focus:outline-none focus:ring-1 focus:ring-accent"
+          />
+        </div>
+      </div>
+      <div className="max-h-60 overflow-y-auto">
+        {filtered.length === 0 ? (
+          <div className="px-3 py-4 text-xs text-textSecondary text-center">No tokens found</div>
+        ) : (
+          filtered.map((token) => (
+            <button
+              key={token.fullSymbol}
+              type="button"
+              onClick={() => { onSelect(token); onClose(); }}
+              className={cn(
+                'w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-surfaceHover transition-colors text-left',
+                token.fullSymbol === currentSymbol && 'bg-accent/10 text-accent'
+              )}
+            >
+              <span className="font-medium text-textPrimary">{token.symbol}</span>
+              <span className="text-textSecondary">/ USDT</span>
+              {token.lastPrice != null && (
+                <span className="ml-auto text-textSecondary">${Number(token.lastPrice).toLocaleString()}</span>
+              )}
+            </button>
+          ))
+        )}
+      </div>
+    </div>
+  );
+};
+
 const KLineChart = ({
   data,
   symbol = 'BTCUSDT',
@@ -234,6 +328,7 @@ const KLineChart = ({
   headerRightActions = null,
   hasMoreHistory = false,
   onLoadMoreHistory,
+  onSymbolChange = null,
   showVolumeIndicator = false,
   stackVolumeInMainPane = false,
   showInlineVolumeOverlay = false,
@@ -312,6 +407,8 @@ const KLineChart = ({
 
   // Overlay context menu state
   const [contextMenu, setContextMenu] = useState(null); // { position: { x, y }, overlay: { id, type, ... } }
+  // Symbol picker dropdown state (clickable symbol name in header)
+  const [symbolPickerOpen, setSymbolPickerOpen] = useState(false);
 
   // Stable overlay event handler: shows context menu on click/right-click
   const showOverlayContextMenu = useCallback((event) => {
@@ -1919,10 +2016,37 @@ const KLineChart = ({
             title={compact && onHeaderClick ? "Click to choose this chart, then pick a token from the list" : undefined}
           >
             <div className={cn("flex items-center gap-2 min-w-0", !compact && !isTimeframeLeft && "flex-1", compact && "flex-1")}>
-              <span className={cn("font-medium text-textPrimary truncate", compact ? "text-xs" : "text-sm")}>
-                {symbol}
-                {interval && <span className="text-textSecondary font-normal"> • {interval}</span>}
-              </span>
+              {onSymbolChange && !compact ? (
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setSymbolPickerOpen((v) => !v); }}
+                    className={cn(
+                      "flex items-center gap-1 font-medium text-sm text-textPrimary rounded-md px-1.5 py-0.5 -ml-1.5 transition-colors hover:bg-surfaceHover",
+                      symbolPickerOpen && "bg-surfaceHover"
+                    )}
+                    title="Click to change token"
+                  >
+                    <span className="truncate">{symbol}</span>
+                    <ChevronDown className={cn("h-3.5 w-3.5 text-textSecondary transition-transform", symbolPickerOpen && "rotate-180")} />
+                  </button>
+                  <SymbolPickerDropdown
+                    isOpen={symbolPickerOpen}
+                    onClose={() => setSymbolPickerOpen(false)}
+                    onSelect={(token) => onSymbolChange(token)}
+                    currentSymbol={symbol}
+                  />
+                </div>
+              ) : compact ? (
+                <span className="text-xs font-medium text-textPrimary truncate">
+                  {symbol}{interval && <span className="text-textSecondary font-normal"> • {interval}</span>}
+                </span>
+              ) : (
+                <span className="font-medium text-textPrimary truncate text-sm">
+                  {symbol}
+                </span>
+              )}
+              {interval && !compact && <span className="text-textSecondary font-normal text-sm">• {interval}</span>}
               <RealtimeIndicator
                 isConnected={isRealtimeConnected}
                 isSubscribed={isRealtimeSubscribed}
