@@ -118,8 +118,9 @@ const BinanceMarketTable = ({ onTokenSelect, highlightToken }) => {
     if (isNumeric) {
       const a = aValue != null && aValue !== '' ? Number(aValue) : NaN;
       const b = bValue != null && bValue !== '' ? Number(bValue) : NaN;
-      const aValid = Number.isFinite(a);
-      const bValid = Number.isFinite(b);
+      // Treat 0 / null / NaN as "no data" — always push to bottom regardless of direction
+      const aValid = Number.isFinite(a) && a !== 0;
+      const bValid = Number.isFinite(b) && b !== 0;
       if (!aValid && !bValid) return 0;
       if (!aValid) return 1;
       if (!bValid) return -1;
@@ -377,12 +378,16 @@ const BinanceMarketTable = ({ onTokenSelect, highlightToken }) => {
                   {formatPercent(token.priceChangePercent24h)}
                 </td>
                 <td className="px-4 py-3 whitespace-nowrap text-right">
-                  <span
-                    className="font-semibold"
-                    style={{ color: '#f59e0b', textShadow: '0 0 8px rgba(245,158,11,0.45)' }}
-                  >
-                    {token.natr?.toFixed(2) || '0.00'}%
-                  </span>
+                  {token.natr != null ? (
+                    <span
+                      className="font-semibold"
+                      style={{ color: '#f59e0b', textShadow: '0 0 8px rgba(245,158,11,0.45)' }}
+                    >
+                      {token.natr.toFixed(2)}%
+                    </span>
+                  ) : (
+                    <span className="text-textSecondary opacity-40 text-xs">—</span>
+                  )}
                 </td>
                 <td className="px-4 py-3 whitespace-nowrap text-right">
                   <span

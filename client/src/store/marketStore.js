@@ -863,9 +863,17 @@ export const useMarketStore = create((set, get) => ({
             loadingBinance: false,
             binanceError: null
           });
+          // Fire-and-forget: enrich top tokens with 5m NATR then refresh state
+          enrichTokensWithNatr14(normalizedTokens).then(() => {
+            set({ binanceTokens: [...normalizedTokens] });
+          });
           return;
         } catch {
           const directTokens = await fetchBybitTokensDirect(exchangeType, searchQuery);
+          // Fire-and-forget NATR enrichment for Bybit direct path
+          enrichTokensWithNatr14(directTokens).then(() => {
+            set({ binanceTokens: [...directTokens] });
+          });
           applyIfLatest({
             binanceTokens: directTokens,
             loadingBinance: false,
@@ -937,6 +945,10 @@ export const useMarketStore = create((set, get) => ({
         binanceTokens: normalizedTokens,
         loadingBinance: false,
         binanceError: null
+      });
+      // Fire-and-forget: enrich top tokens with 5m NATR then refresh state
+      enrichTokensWithNatr14(normalizedTokens).then(() => {
+        set({ binanceTokens: [...normalizedTokens] });
       });
     } catch (error) {
       let errorMessage = 'Failed to fetch tokens';
