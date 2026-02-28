@@ -240,6 +240,112 @@ function sendGridGet(apiKey, path) {
 }
 
 /**
+ * Call a SendGrid API DELETE endpoint.
+ * Returns parsed JSON body (if any).
+ */
+function sendGridDelete(apiKey, path) {
+  const https = require('https');
+  return new Promise((resolve, reject) => {
+    const req = https.request(
+      {
+        hostname: 'api.sendgrid.com',
+        path,
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        timeout: 15_000,
+      },
+      (res) => {
+        let data = '';
+        res.on('data', (chunk) => (data += chunk));
+        res.on('end', () => {
+          if (!data) {
+            return resolve({ status: res.statusCode, body: null });
+          }
+          try { resolve({ status: res.statusCode, body: JSON.parse(data) }); }
+          catch { resolve({ status: res.statusCode, body: data }); }
+        });
+      },
+    );
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('SendGrid API request timed out')); });
+    req.end();
+  });
+}
+
+/**
+ * Check whether a recipient email is on SendGrid suppression lists.
+ */
+async function getSendGridRecipientStatus(email) {
+  const apiKey = getSendGridApiKey();
+  if (!apiKey || !email) {
+    return {
+      email,
+      blocks: false,
+      bounces: false,
+      invalidEmails: false,
+      spamReports: false,
+      isSuppressed: false,
+    };
+  }
+
+  const encoded = encodeURIComponent(String(email).trim().toLowerCase());
+  const [blockRes, bounceRes, invalidRes, spamRes] = await Promise.all([
+    sendGridGet(apiKey, `/v3/suppression/blocks/${encoded}`).catch(() => ({ status: 404 })),
+    sendGridGet(apiKey, `/v3/suppression/bounces/${encoded}`).catch(() => ({ status: 404 })),
+    sendGridGet(apiKey, `/v3/suppression/invalid_emails/${encoded}`).catch(() => ({ status: 404 })),
+    sendGridGet(apiKey, `/v3/suppression/spam_reports/${encoded}`).catch(() => ({ status: 404 })),
+  ]);
+
+  const blocks = blockRes.status === 200;
+  const bounces = bounceRes.status === 200;
+  const invalidEmails = invalidRes.status === 200;
+  const spamReports = spamRes.status === 200;
+
+  return {
+    email,
+    blocks,
+    bounces,
+    invalidEmails,
+    spamReports,
+    isSuppressed: blocks || bounces || invalidEmails || spamReports,
+  };
+}
+
+/**
+ * Remove recipient from transient suppression lists (blocks + bounces).
+ * We intentionally do NOT auto-clear invalid_emails/spam_reports.
+ */
+async function clearSendGridRecipientSuppressions(email) {
+  const apiKey = getSendGridApiKey();
+  if (!apiKey || !email) {
+    return { clearedBlocks: false, clearedBounces: false };
+  }
+
+  const encoded = encodeURIComponent(String(email).trim().toLowerCase());
+  let clearedBlocks = false;
+  let clearedBounces = false;
+
+  try {
+    const res = await sendGridDelete(apiKey, `/v3/suppression/blocks/${encoded}`);
+    clearedBlocks = res.status >= 200 && res.status < 300;
+  } catch (err) {
+    console.warn('[Email/SendGrid] Could not clear block suppression:', err.message);
+  }
+
+  try {
+    const res = await sendGridDelete(apiKey, `/v3/suppression/bounces/${encoded}`);
+    clearedBounces = res.status >= 200 && res.status < 300;
+  } catch (err) {
+    console.warn('[Email/SendGrid] Could not clear bounce suppression:', err.message);
+  }
+
+  return { clearedBlocks, clearedBounces };
+}
+
+/**
  * Fetch verified senders from SendGrid.
  * Returns an array of { fromEmail, fromName, verified } objects.
  */
@@ -337,6 +443,28 @@ async function sendViaSendGrid(toEmail, subject, text, html) {
   }
 
   console.log(`[Email/SendGrid] Sending to ${toEmail} from ${senderName} <${senderEmail}>`);
+
+  // Self-healing for recipient suppressions (common reason for "accepted but not delivered").
+  try {
+    const recipientStatus = await getSendGridRecipientStatus(toEmail);
+    if (recipientStatus.blocks || recipientStatus.bounces) {
+      console.warn('[Email/SendGrid] Recipient is on suppression list:', recipientStatus);
+      const cleared = await clearSendGridRecipientSuppressions(toEmail);
+      console.warn('[Email/SendGrid] Cleared transient suppressions:', cleared);
+    }
+    if (recipientStatus.invalidEmails || recipientStatus.spamReports) {
+      throw new Error(
+        `SendGrid recipient suppression detected for ${toEmail}: ` +
+        `${recipientStatus.invalidEmails ? 'invalid_emails ' : ''}${recipientStatus.spamReports ? 'spam_reports' : ''}. ` +
+        'Cannot auto-send until recipient is valid and not marked as spam.'
+      );
+    }
+  } catch (suppressionErr) {
+    if (String(suppressionErr?.message || '').includes('recipient suppression detected')) {
+      throw suppressionErr;
+    }
+    console.warn('[Email/SendGrid] Suppression pre-check skipped:', suppressionErr.message);
+  }
 
   try {
     await sendGridMailSend(apiKey, senderEmail, senderName, toEmail, subject, text, html);
@@ -826,6 +954,8 @@ module.exports = {
   isResendConfigured,
   logEmailStatus,
   getVerifiedSendGridSenders,
+  getSendGridRecipientStatus,
+  clearSendGridRecipientSuppressions,
   getSendGridApiKey,
   getResetLink: (token) => `${getFrontendUrl().replace(/\/$/, '')}/reset-password?token=${encodeURIComponent(token)}`,
 };

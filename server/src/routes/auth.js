@@ -166,4 +166,36 @@ router.post('/setup-sendgrid', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/auth/debug-email-recipient?email=<email>&secret=<secret>
+ * Checks SendGrid recipient suppression lists (blocks, bounces, invalid, spam reports).
+ */
+router.get('/debug-email-recipient', async (req, res) => {
+  const secret = process.env.DEBUG_EMAIL_SECRET || 'debug123';
+  if (req.query.secret !== secret) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  const email = String(req.query.email || '').trim().toLowerCase();
+  if (!email) {
+    return res.status(400).json({ error: 'email query param is required' });
+  }
+
+  try {
+    const { isSendGridConfigured, getSendGridRecipientStatus } = require('../utils/email');
+    if (!isSendGridConfigured()) {
+      return res.status(400).json({ error: 'SENDGRID_API_KEY not set' });
+    }
+
+    const status = await getSendGridRecipientStatus(email);
+    const hint = status.isSuppressed
+      ? 'Recipient is suppressed in SendGrid. Blocks/bounces are auto-cleared on send; invalid_emails/spam_reports require manual fix.'
+      : 'Recipient is not suppressed in SendGrid.';
+
+    return res.json({ ok: true, status, hint });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
