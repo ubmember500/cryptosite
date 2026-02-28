@@ -219,8 +219,8 @@ async function sendViaResend(toEmail, subject, text, html) {
 
 /**
  * Send password reset email via SMTP (nodemailer).
- * Includes a connection timeout and one automatic retry so transient
- * cloud-provider hiccups (e.g. Render cold-start DNS) don't break it.
+ * Includes a connection timeout, one automatic retry, and forces IPv4
+ * to avoid ENETUNREACH on cloud providers that can't route to IPv6.
  */
 async function sendViaSmtp(toEmail, subject, text, html) {
   const host = getSmtpHost();
@@ -242,6 +242,9 @@ async function sendViaSmtp(toEmail, subject, text, html) {
       port,
       secure,
       auth: { user, pass },
+      // Force IPv4 — cloud providers (Render, Railway) often can't reach
+      // Gmail's IPv6 endpoints (ENETUNREACH 2607:f8b0:...).
+      family: 4,
       connectionTimeout: 10_000,   // 10 s to establish TCP
       greetingTimeout: 10_000,     // 10 s for SMTP greeting
       socketTimeout: 15_000,       // 15 s per socket operation
