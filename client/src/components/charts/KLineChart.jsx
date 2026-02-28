@@ -226,6 +226,7 @@ const KLineChart = ({
   instanceId = 'default',
   compact = false,
   onHeaderClick = null,
+  showToolbar,
   timeframePosition = 'right',
   alertExchange = 'binance',
   alertMarket = 'futures',
@@ -1859,8 +1860,8 @@ const KLineChart = ({
 
   return (
     <div className={cn("w-full h-full flex bg-surface overflow-hidden", compact ? "rounded-lg" : "rounded-xl", className)}>
-      {/* Left Sidebar - Drawing Tools Toolbar (hidden in compact mode) */}
-      {!compact && (
+      {/* Left Sidebar - Drawing Tools Toolbar (shown in single-chart, or in multi-chart for active slot) */}
+      {(showToolbar !== undefined ? showToolbar : !compact) && (
         <ChartToolbar
           onToolSelect={handleToolSelect}
           activeTool={
@@ -1886,8 +1887,8 @@ const KLineChart = ({
         />
       )}
 
-      {/* Overlay Toolbar (appears when clicking on a line) - hidden in compact */}
-      {!compact && contextMenu && (
+      {/* Overlay Toolbar (appears when clicking on a line) */}
+      {(showToolbar !== undefined ? showToolbar : !compact) && contextMenu && (
         <OverlayContextMenu
           position={contextMenu.position}
           overlay={contextMenu.overlay}

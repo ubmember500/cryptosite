@@ -120,6 +120,8 @@ const Market = () => {
       setActiveChartSlot(null);
       return;
     }
+    // Auto-select first slot so token clicks immediately route to a chart
+    setActiveChartSlot((prev) => (prev != null && prev < chartCount ? prev : 0));
     setChartSlotTokens((prev) => {
       const need = chartCount;
       if (prev.length === need) return prev;
@@ -185,15 +187,17 @@ const Market = () => {
 
   // When user picks a token from the list: assign to active slot (multi) or set selectedToken (single)
   const handleTokenSelect = useCallback((token) => {
-    if (isMultiChart && activeChartSlot !== null) {
+    if (isMultiChart) {
+      // In multi-chart mode, always assign to a slot (default to 0 if none selected)
+      const targetSlot = activeChartSlot ?? 0;
       setChartSlotTokens((prev) => {
         const next = [...prev];
-        next[activeChartSlot] = token;
+        next[targetSlot] = token;
         return next;
       });
-      const interval = chartSlotIntervals[activeChartSlot] || chartInterval;
+      const interval = chartSlotIntervals[targetSlot] || chartInterval;
       fetchChartData(token.fullSymbol, exchangeType, interval);
-      setActiveChartSlot(null);
+      // Keep the active slot selected so user can assign tools / change timeframe
     } else {
       setSelectedToken(token);
     }
@@ -495,6 +499,7 @@ const Market = () => {
                       symbol={slotToken?.fullSymbol ?? '—'}
                       interval={slotInterval}
                       timeframePosition="left"
+                      showToolbar={isMultiChart ? isActiveSlot : undefined}
                       headerRightActions={!isMultiChart ? (
                         <div className="flex items-center gap-2 mr-10">
                           <ChartLayoutSelector value={chartLayout} onChange={setChartLayout} />
