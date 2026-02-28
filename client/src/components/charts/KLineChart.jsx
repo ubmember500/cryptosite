@@ -293,6 +293,11 @@ const KLineChart = ({
   const [drawingsVisible, setDrawingsVisible] = useState(true);
   const [magnetMode, setMagnetMode] = useState('normal'); // 'normal' | 'weak_magnet' | 'strong_magnet'
 
+  // Text annotation tool state
+  const [textInputVisible, setTextInputVisible] = useState(false);
+  const [pendingTextValue, setPendingTextValue] = useState('');
+  const textInputRef = useRef(null);
+
   // Indicators state management
   const [indicators, setIndicators] = useState([]); // Store indicator configs: [{ id, name, params, visible, isStack }]
   const indicatorsRef = useRef([]); // Ref for cleanup access
@@ -346,6 +351,10 @@ const KLineChart = ({
           visible: true,
           locked: false,
         });
+      }
+      // Auto-exit drawing mode after placing a text annotation (simpleAnnotation is single-click)
+      if (overlay.name === DRAWING_TOOLS.SIMPLE_ANNOTATION) {
+        setActiveDrawingTool(null);
       }
     },
   };
@@ -676,8 +685,10 @@ const KLineChart = ({
    * KLineCharts v10: calling createOverlay({ name }) without points enters
    * interactive draw mode — the user clicks on the chart to place the points.
    * Event handlers are attached at creation time so clicks work immediately.
+   * @param {string|null} toolName - KLineChart overlay type name (e.g. 'straightLine'), or null to cancel
+   * @param {string} [extendData] - Optional payload stored on the overlay (used by simpleAnnotation for text)
    */
-  const setDrawingTool = (toolName) => {
+  const setDrawingTool = (toolName, extendData) => {
     if (!chartRef.current) return;
 
     setActiveDrawingTool(toolName);
@@ -691,6 +702,7 @@ const KLineChart = ({
           lock: false,
           mode: magnetMode,
           modeSensitivity: 8,
+          ...(extendData !== undefined ? { extendData } : {}),
           ...handlers,
         });
 
@@ -711,16 +723,71 @@ const KLineChart = ({
    * @param {string|null} toolbarId - Tool ID from ChartToolbar
    */
   const handleToolSelect = (toolbarId) => {
+    // Deselect / null — cancel any active tool and hide text input
+    if (toolbarId === null || toolbarId === undefined) {
+      setActiveDrawingTool(null);
+      setTextInputVisible(false);
+      setPendingTextValue('');
+      return;
+    }
+
     if (toolbarId === 'crosshair') {
-      // Crosshair is a built-in chart feature, not an overlay
-      // Toggle crosshair visibility if needed
       console.log('[KLineChart] Crosshair tool selected (handled by chart)');
       setActiveDrawingTool(null);
+      setTextInputVisible(false);
+      setPendingTextValue('');
       return;
+    }
+
+    // Text tool: show inline text input first; overlay is created after the user types text
+    if (toolbarId === 'text') {
+      if (textInputVisible) {
+        // Clicking T again while the panel is open cancels it
+        setTextInputVisible(false);
+        setPendingTextValue('');
+        setActiveDrawingTool(null);
+        return;
+      }
+      setTextInputVisible(true);
+      setPendingTextValue('');
+      // Focus the input on next paint
+      setTimeout(() => textInputRef.current?.focus(), 50);
+      return;
+    }
+
+    // If switching to another tool while text input is open, close the text input
+    if (textInputVisible) {
+      setTextInputVisible(false);
+      setPendingTextValue('');
     }
 
     const overlayType = mapToolbarIdToOverlayType(toolbarId);
     setDrawingTool(overlayType);
+  };
+
+  /**
+   * Submit the typed text and enter interactive placement mode for simpleAnnotation.
+   */
+  const handleTextInputSubmit = () => {
+    const text = pendingTextValue.trim();
+    setTextInputVisible(false);
+    setPendingTextValue('');
+    if (text) {
+      // createOverlay without points → klinecharts enters interactive mode;
+      // user clicks chart to place the annotation with the typed text
+      setDrawingTool(DRAWING_TOOLS.SIMPLE_ANNOTATION, text);
+    } else {
+      setActiveDrawingTool(null);
+    }
+  };
+
+  /**
+   * Cancel the text input without placing any annotation.
+   */
+  const handleTextInputCancel = () => {
+    setTextInputVisible(false);
+    setPendingTextValue('');
+    setActiveDrawingTool(null);
   };
 
   /**
@@ -1796,7 +1863,13 @@ const KLineChart = ({
       {!compact && (
         <ChartToolbar
           onToolSelect={handleToolSelect}
-          activeTool={activeDrawingTool ? mapOverlayTypeToToolbarId(activeDrawingTool) : null}
+          activeTool={
+            textInputVisible
+              ? 'text'
+              : activeDrawingTool
+              ? mapOverlayTypeToToolbarId(activeDrawingTool)
+              : null
+          }
           drawingsLocked={drawingsLocked}
           drawingsVisible={drawingsVisible}
           magnetMode={magnetMode}
@@ -1919,6 +1992,43 @@ const KLineChart = ({
         />
 
         <div className="relative flex-1 min-w-0 min-h-0">
+          {/* Text annotation input panel — shown when user clicks the T (text) tool */}
+          {!compact && textInputVisible && (
+            <div className="absolute z-50 left-4 top-4 w-64 bg-surface border border-border rounded-lg shadow-xl p-3">
+              <div className="text-xs font-semibold text-textPrimary mb-1">Add text to chart</div>
+              <div className="text-xs text-textSecondary mb-2">Type your annotation, then click a spot on the chart to place it.</div>
+              <input
+                ref={textInputRef}
+                type="text"
+                autoFocus
+                className="w-full bg-background border border-border rounded px-2 py-1.5 text-sm text-textPrimary placeholder-textSecondary focus:outline-none focus:ring-1 focus:ring-accent"
+                placeholder="e.g. Support, Buy here…"
+                value={pendingTextValue}
+                onChange={(e) => setPendingTextValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') { e.preventDefault(); handleTextInputSubmit(); }
+                  if (e.key === 'Escape') handleTextInputCancel();
+                }}
+              />
+              <div className="flex gap-2 mt-2">
+                <button
+                  type="button"
+                  onClick={handleTextInputSubmit}
+                  className="flex-1 py-1.5 text-xs font-medium bg-accent text-white rounded hover:bg-accent/90 transition-colors focus:outline-none focus:ring-1 focus:ring-accent"
+                >
+                  Place on chart
+                </button>
+                <button
+                  type="button"
+                  onClick={handleTextInputCancel}
+                  className="px-3 py-1.5 text-xs font-medium text-textSecondary hover:text-textPrimary bg-surfaceHover rounded transition-colors focus:outline-none"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
           <div
             ref={chartContainerRef}
             id={chartIdRef.current}

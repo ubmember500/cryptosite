@@ -49,7 +49,9 @@ const ShapeToolButton = ({
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [selectedShapeType, setSelectedShapeType] = useState(SHAPE_TYPES[1]); // default Rectangle
+  const [dropdownPos, setDropdownPos] = useState(null);
   const dropdownRef = useRef(null);
+  const buttonAreaRef = useRef(null);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -74,6 +76,13 @@ const ShapeToolButton = ({
 
   const handleDropdownToggle = (e) => {
     e.stopPropagation();
+    if (!isOpen) {
+      // Compute viewport-relative position so the dropdown escapes overflow:hidden parents
+      const rect = buttonAreaRef.current?.getBoundingClientRect();
+      if (rect) {
+        setDropdownPos({ top: rect.top, left: rect.right + 8 });
+      }
+    }
     setIsOpen(!isOpen);
   };
 
@@ -89,7 +98,7 @@ const ShapeToolButton = ({
 
   return (
     <div ref={dropdownRef} className={cn('relative', className)}>
-      <div className="relative h-16 w-16">
+      <div ref={buttonAreaRef} className="relative h-16 w-16">
         <button
           onClick={handleMainButtonClick}
           title={selectedShapeType.description}
@@ -112,8 +121,12 @@ const ShapeToolButton = ({
         </button>
       </div>
 
-      {isOpen && (
-        <div className="absolute left-full ml-2 top-0 z-50 w-56 bg-surface border border-border rounded-lg shadow-xl overflow-hidden">
+      {/* Dropdown Menu — fixed positioning escapes overflow:hidden on parent chart container */}
+      {isOpen && dropdownPos && (
+        <div
+          className="z-[9999] w-56 bg-surface border border-border rounded-lg shadow-xl overflow-hidden"
+          style={{ position: 'fixed', top: dropdownPos.top, left: dropdownPos.left }}
+        >
           <div className="p-2">
             <div className="text-xs font-medium text-textSecondary uppercase tracking-wide px-2 py-1 mb-1">
               Shapes
