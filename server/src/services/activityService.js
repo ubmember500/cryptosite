@@ -176,8 +176,10 @@ async function getSiteActivitySummary(days = 30) {
   const safeDays = Math.max(1, Math.min(180, Number(days) || 30));
   const now = new Date();
   const start = startOfUtcDay(new Date(now.getTime() - (safeDays - 1) * 24 * 60 * 60 * 1000));
+  const todayStart = startOfUtcDay(now);
+  const tomorrowStart = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
 
-  const [daily, topPages, totalUsers] = await Promise.all([
+  const [daily, topPages, totalUsers, loggedOnUsersTodayRows, uniqueVisitorsTodayRows, anonymousVisitorsTodayRows, clicksToday, uniqueVisitorsRangeRows] = await Promise.all([
     prisma.siteDailyActivity.findMany({
       where: { day: { gte: start } },
       orderBy: { day: 'asc' },
@@ -197,11 +199,48 @@ async function getSiteActivitySummary(days = 30) {
         occurredAt: { gte: start },
         pagePath: { not: null },
       },
-      _count: { _all: true },
-      orderBy: { _count: { _all: 'desc' } },
+      _count: { pagePath: true },
+      orderBy: { _count: { pagePath: 'desc' } },
       take: 10,
     }),
     prisma.user.count(),
+    prisma.userActivityEvent.findMany({
+      where: {
+        eventType: 'login',
+        userId: { not: null },
+        occurredAt: { gte: todayStart, lt: tomorrowStart },
+      },
+      select: { userId: true },
+      distinct: ['userId'],
+    }),
+    prisma.userActivityEvent.findMany({
+      where: {
+        occurredAt: { gte: todayStart, lt: tomorrowStart },
+      },
+      select: { sessionId: true },
+      distinct: ['sessionId'],
+    }),
+    prisma.userActivityEvent.findMany({
+      where: {
+        userId: null,
+        occurredAt: { gte: todayStart, lt: tomorrowStart },
+      },
+      select: { sessionId: true },
+      distinct: ['sessionId'],
+    }),
+    prisma.userActivityEvent.count({
+      where: {
+        eventType: 'click',
+        occurredAt: { gte: todayStart, lt: tomorrowStart },
+      },
+    }),
+    prisma.userActivityEvent.findMany({
+      where: {
+        occurredAt: { gte: start },
+      },
+      select: { sessionId: true },
+      distinct: ['sessionId'],
+    }),
   ]);
 
   const todayKey = startOfUtcDay(now).getTime();
@@ -232,6 +271,12 @@ async function getSiteActivitySummary(days = 30) {
   return {
     days: safeDays,
     totalUsers,
+    registeredUsers: totalUsers,
+    loggedOnUsersToday: loggedOnUsersTodayRows.length,
+    uniqueVisitorsToday: uniqueVisitorsTodayRows.length,
+    uniqueAnonymousVisitorsToday: anonymousVisitorsTodayRows.length,
+    uniqueVisitorsInRange: uniqueVisitorsRangeRows.length,
+    clicksToday,
     today,
     last7Average: {
       uniqueUsers: Number((sum7.uniqueUsers / divisor).toFixed(2)),
@@ -243,7 +288,7 @@ async function getSiteActivitySummary(days = 30) {
     daily,
     topPages: topPages.map((row) => ({
       pagePath: row.pagePath,
-      views: row._count?._all || 0,
+      views: row._count?.pagePath || 0,
     })),
   };
 }

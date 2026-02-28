@@ -31,8 +31,8 @@ async function main() {
         occurredAt: { gte: start },
         pagePath: { not: null },
       },
-      _count: { _all: true },
-      orderBy: { _count: { _all: 'desc' } },
+      _count: { pagePath: true },
+      orderBy: { _count: { pagePath: 'desc' } },
       take: 10,
     }),
   ]);
@@ -48,7 +48,7 @@ async function main() {
 
   console.log('\n🔥 Top pages by views\n');
   topPages.forEach((row, idx) => {
-    console.log(`${idx + 1}. ${row.pagePath} — ${row._count?._all || 0}`);
+    console.log(`${idx + 1}. ${row.pagePath} — ${row._count?.pagePath || 0}`);
   });
 
   await prisma.$disconnect();
