@@ -393,7 +393,7 @@ const BinanceMarketTable = ({ onTokenSelect, highlightToken }) => {
                   <span
                     className={cn(
                       (token.volume24h != null && Number(token.volume24h) >= VOLUME_HIGH_THRESHOLD)
-                        ? 'font-semibold'
+                        ? 'font-semibold text-sky-400'
                         : 'text-textPrimary'
                     )}
                   >
