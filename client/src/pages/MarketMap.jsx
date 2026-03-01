@@ -24,13 +24,20 @@ const formatCompactVolume = (value) => {
   return numberValue.toFixed(0);
 };
 
-const getGridLayout = (count) => {
-  if (count === 3) return { columns: 3, rows: 1 };
-  if (count === 6) return { columns: 3, rows: 2 };
-  if (count === 8) return { columns: 4, rows: 2 };
-  if (count === 9) return { columns: 3, rows: 3 };
-  if (count === 12) return { columns: 4, rows: 3 };
-  return { columns: 4, rows: 4 }; // 16
+const getGridLayout = (count, viewportWidth = 1920) => {
+  if (viewportWidth >= 2800) {
+    if (count === 3) return { columns: 3, rows: 1 };
+    if (count === 6) return { columns: 3, rows: 2 };
+    if (count === 8) return { columns: 4, rows: 2 };
+    if (count === 9) return { columns: 3, rows: 3 };
+    if (count === 12) return { columns: 4, rows: 3 };
+    return { columns: 4, rows: 4 }; // 16
+  }
+
+  const maxColumns = viewportWidth < 1150 ? 2 : viewportWidth < 1800 ? 3 : 4;
+  const columns = Math.max(1, Math.min(maxColumns, count));
+  const rows = Math.ceil(count / columns);
+  return { columns, rows };
 };
 
 const SKELETON_HEIGHTS = [40, 65, 50, 80, 35, 70, 55, 45, 75, 60, 42, 68, 53, 78, 38, 72, 58, 48, 63, 44, 71, 52, 67, 46];
@@ -98,6 +105,9 @@ const MarketMap = () => {
   const [detailChartData, setDetailChartData] = useState([]);
   const [detailChartLoading, setDetailChartLoading] = useState(false);
   const [detailChartError, setDetailChartError] = useState(null);
+  const [viewportWidth, setViewportWidth] = useState(() =>
+    typeof window !== 'undefined' ? window.innerWidth : 1920
+  );
 
   const fetchDetailedChartData = useCallback(async ({ symbol, interval }) => {
     const safeSymbol = String(symbol || '').toUpperCase();
@@ -191,6 +201,15 @@ const MarketMap = () => {
   }, [initialize]);
 
   useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+
+    const onResize = () => setViewportWidth(window.innerWidth);
+    window.addEventListener('resize', onResize);
+
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  useEffect(() => {
     const rankingTimer = setInterval(() => {
       if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
         return;
@@ -239,7 +258,10 @@ const MarketMap = () => {
     };
   }, [socket, clearRealtimeSubscriptions]);
 
-  const gridLayout = useMemo(() => getGridLayout(selectedCount), [selectedCount]);
+  const gridLayout = useMemo(
+    () => getGridLayout(selectedCount, viewportWidth),
+    [selectedCount, viewportWidth]
+  );
   const gridStyle = useMemo(
     () => ({
       gridTemplateColumns: `repeat(${gridLayout.columns}, minmax(0, 1fr))`,
@@ -249,7 +271,7 @@ const MarketMap = () => {
   );
 
   return (
-    <div className="h-screen overflow-hidden bg-background text-textPrimary px-1.5 py-1 md:px-2 md:py-1.5">
+    <div className="h-[100dvh] min-h-[100dvh] overflow-hidden bg-background text-textPrimary px-1.5 py-1 md:px-2 md:py-1.5">
       <div className="h-full w-full max-w-none flex flex-col min-h-0">
         <div className="rounded-lg border border-border bg-surface/70 px-2 py-1">
           <div className="flex items-center justify-between gap-2">
@@ -352,7 +374,7 @@ const MarketMap = () => {
               return (
                 <div
                   key={row.symbol}
-                  className="rounded border border-border bg-surface p-1.5 transition-colors h-full min-h-0 flex flex-col"
+                  className="rounded border border-border bg-surface p-1 md:p-1.5 transition-colors h-full min-h-0 flex flex-col"
                 >
                   <div className="px-0.5 pb-0.5">
                     <div className="font-medium text-sm leading-4 truncate">{row.symbol}</div>
@@ -420,7 +442,7 @@ const MarketMap = () => {
         title={detailSymbol ? `${detailSymbol} • ${detailInterval}` : 'Detailed chart'}
         size="xl"
       >
-        <div className="w-full h-[70vh] min-h-[560px]">
+        <div className="w-full h-[min(78dvh,900px)] min-h-[340px]">
           <KLineChart
             data={detailChartData}
             symbol={detailSymbol || '—'}

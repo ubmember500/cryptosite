@@ -56,6 +56,11 @@ const Market = () => {
   const [activeChartSlot, setActiveChartSlot] = useState(null);
   const [rightPanelPercent, setRightPanelPercent] = useState(18.75);
   const [isResizingPanels, setIsResizingPanels] = useState(false);
+  const [hasUserAdjustedPanels, setHasUserAdjustedPanels] = useState(false);
+  const [viewport, setViewport] = useState(() => ({
+    width: typeof window !== 'undefined' ? window.innerWidth : 1920,
+    height: typeof window !== 'undefined' ? window.innerHeight : 1080,
+  }));
   const splitContainerRef = useRef(null);
   const chartPanelRef = useRef(null);
   const [isChartFullscreen, setIsChartFullscreen] = useState(false);
@@ -295,8 +300,36 @@ const Market = () => {
 
   const handleResizeStart = useCallback((e) => {
     e.preventDefault();
+    setHasUserAdjustedPanels(true);
     setIsResizingPanels(true);
   }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+
+    const onResize = () => {
+      setViewport({ width: window.innerWidth, height: window.innerHeight });
+    };
+
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  useEffect(() => {
+    if (hasUserAdjustedPanels) return;
+
+    const width = viewport.width;
+    const autoRightPanelPercent =
+      width >= 2560 ? 18.75
+        : width >= 1920 ? 22
+          : width >= 1600 ? 24
+            : width >= 1366 ? 28
+              : 34;
+
+    setRightPanelPercent(autoRightPanelPercent);
+  }, [viewport.width, hasUserAdjustedPanels]);
+
+  const isCompactViewport = viewport.width < 1600 || viewport.height < 900;
 
   useEffect(() => {
     if (!isResizingPanels) return undefined;
@@ -337,9 +370,9 @@ const Market = () => {
         onClose={() => setIsWatchlistModalOpen(false)}
         onSubmit={handleCreateWatchlist}
       />
-      <div className="flex flex-col h-screen bg-background overflow-hidden font-sans">
+      <div className="flex flex-col h-[100dvh] min-h-[100dvh] bg-background overflow-hidden font-sans">
         {/* Page Global Header */}
-        <header className="flex items-center px-4 h-14 shrink-0 z-20 bg-surface border-b border-border gap-3">
+        <header className="flex items-center px-3 md:px-4 h-12 md:h-14 shrink-0 z-20 bg-surface border-b border-border gap-2 md:gap-3">
           <button
             type="button"
             onClick={() => navigate(ROUTES.MARKET_MAP)}
@@ -349,7 +382,7 @@ const Market = () => {
             <div className="p-1.5 rounded-lg border transition-colors" style={{ background: 'rgba(14,165,233,0.1)', borderColor: 'rgba(14,165,233,0.25)' }}>
               <TrendingUp className="h-5 w-5 text-accent" />
             </div>
-            <span className="text-xl font-bold bg-gradient-to-r from-sky-400 via-cyan-300 to-teal-400 bg-clip-text text-transparent">
+            <span className="text-lg md:text-xl font-bold bg-gradient-to-r from-sky-400 via-cyan-300 to-teal-400 bg-clip-text text-transparent">
               CryptoAlerts
             </span>
           </button>
@@ -419,7 +452,7 @@ const Market = () => {
                           }
                         }}
                         className={cn(
-                          'px-2.5 py-1 text-xs font-medium rounded-md transition-colors',
+                          'px-2 py-1 text-[11px] md:text-xs font-medium rounded-md transition-colors',
                           (activeChartSlot !== null
                             ? (chartSlotIntervals[activeChartSlot] || chartInterval) === tf
                             : false)
@@ -514,7 +547,7 @@ const Market = () => {
                           <button
                             type="button"
                             onClick={handleToggleChartFullscreen}
-                            className="h-10 w-10 rounded-lg border border-border text-textSecondary hover:text-textPrimary hover:bg-surfaceHover transition-colors flex items-center justify-center"
+                            className="h-9 w-9 md:h-10 md:w-10 rounded-lg border border-border text-textSecondary hover:text-textPrimary hover:bg-surfaceHover transition-colors flex items-center justify-center"
                             title={isChartFullscreen ? 'Exit fullscreen' : 'Fullscreen chart'}
                             aria-label={isChartFullscreen ? 'Exit fullscreen' : 'Fullscreen chart'}
                           >
@@ -588,10 +621,10 @@ const Market = () => {
       {/* Right Panel - Token List */}
       <div
         className="flex flex-col bg-background min-w-0"
-        style={{ width: `${rightPanelPercent}%` }}
+          style={{ width: `${rightPanelPercent}%`, minWidth: isCompactViewport ? '250px' : '280px' }}
       >
         {/* Header */}
-        <div className="p-4 bg-surface border-b border-border">
+        <div className="p-3 md:p-4 bg-surface border-b border-border">
           <div className="flex items-center gap-4">
             <ExchangeSelector />
             <div className="flex-1 relative">

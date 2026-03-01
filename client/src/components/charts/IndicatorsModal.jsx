@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import { cn } from '../../utils/cn';
 import {
   TrendingUp,
   Activity,
@@ -119,7 +118,7 @@ const IndicatorsModal = ({
       />
 
       {/* Modal */}
-      <div className="fixed left-20 top-1/2 -translate-y-1/2 z-50 w-80 max-h-[600px] bg-surface border border-border rounded-lg shadow-xl flex flex-col">
+      <div className="fixed left-3 right-3 md:left-20 md:right-auto top-1/2 -translate-y-1/2 z-50 w-auto md:w-80 max-h-[min(85dvh,600px)] bg-surface border border-border rounded-lg shadow-xl flex flex-col">
         {/* Header */}
         <div className="p-4 border-b border-border flex items-center justify-between">
           <div>

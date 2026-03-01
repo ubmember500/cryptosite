@@ -41,9 +41,9 @@ const Charts = () => {
   }, [coinId]);
 
   return (
-    <div className="p-6">
+    <div className="app-page">
       <h2 className="text-2xl font-bold text-textPrimary mb-6">Chart for {coinId || 'Bitcoin'}</h2>
-      <Card className="h-[600px]">
+      <Card className="h-[min(72dvh,760px)] min-h-[340px] app-card">
         <CryptoChart data={chartData} className="h-full" />
       </Card>
     </div>

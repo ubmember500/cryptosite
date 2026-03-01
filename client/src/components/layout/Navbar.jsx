@@ -49,9 +49,9 @@ const Navbar = () => {
 
   return (
     <header className="bg-surface border-b border-border shadow-sm z-10">
-      <div className="flex items-center h-14 px-4 gap-3">
+      <div className="flex items-center h-12 md:h-14 px-3 md:px-4 gap-2 md:gap-3">
         {/* Left: search */}
-        <div className="shrink-0 w-44">
+        <div className="shrink-0 w-32 sm:w-40 md:w-44 lg:w-56">
           <label htmlFor="search" className="sr-only">{t('Search')}</label>
           <div className="relative">
             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -77,7 +77,7 @@ const Navbar = () => {
         </div>
 
         {/* Right: language switcher, theme toggle, user menu */}
-        <div className="shrink-0 flex items-center gap-2">
+        <div className="shrink-0 flex items-center gap-1.5 md:gap-2">
           <div className="flex items-center rounded-lg border border-border bg-surfaceHover/50 p-0.5" role="group" aria-label="Language">
             <button
               type="button"

@@ -13,7 +13,7 @@ const Layout = () => {
 
   if (loading) {
       return (
-          <div className="flex h-screen items-center justify-center bg-background text-textPrimary">
+        <div className="flex min-h-[100dvh] items-center justify-center bg-background text-textPrimary">
               {t('Loading...')}
           </div>
       );
@@ -24,11 +24,11 @@ const Layout = () => {
   // Given useAuth redirects, we can assume if we are here and not loading, we are either authenticated or about to be redirected.
   
   return (
-    <div className="flex h-screen bg-background text-textPrimary">
+    <div className="flex min-h-[100dvh] bg-background text-textPrimary">
       <Sidebar />
       <div className="flex-1 flex flex-col overflow-hidden">
         <Navbar />
-        <main className="flex-1 overflow-x-hidden overflow-y-auto bg-background p-4 md:p-6">
+        <main className="flex-1 overflow-x-hidden overflow-y-auto bg-background app-page">
           <Outlet />
         </main>
       </div>

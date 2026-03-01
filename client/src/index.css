@@ -4,9 +4,28 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  --app-space-xs: clamp(0.5rem, 0.35rem + 0.3vw, 0.75rem);
+  --app-space-sm: clamp(0.75rem, 0.6rem + 0.35vw, 1rem);
+  --app-space-md: clamp(1rem, 0.8rem + 0.5vw, 1.5rem);
+  --app-space-lg: clamp(1.25rem, 1rem + 0.7vw, 2rem);
+  --app-radius: clamp(0.5rem, 0.4rem + 0.25vw, 0.875rem);
+  --app-text-sm: clamp(0.75rem, 0.73rem + 0.12vw, 0.875rem);
+  --app-text-md: clamp(0.875rem, 0.82rem + 0.2vw, 1rem);
+  --app-text-lg: clamp(1rem, 0.9rem + 0.35vw, 1.25rem);
+}
+
 @layer base {
+  html,
+  body,
+  #root {
+    min-height: 100%;
+  }
+
   body {
     @apply bg-background text-textPrimary;
+    font-size: var(--app-text-md);
+    line-height: 1.45;
   }
   
   /* Custom scrollbar */
@@ -38,6 +57,26 @@
 @layer utilities {
   .scroll-smooth {
     scroll-behavior: smooth;
+  }
+
+  .app-page {
+    padding: var(--app-space-md);
+  }
+
+  .app-card {
+    border-radius: var(--app-radius);
+  }
+
+  .comfort-text-sm {
+    font-size: var(--app-text-sm);
+  }
+
+  .comfort-text-md {
+    font-size: var(--app-text-md);
+  }
+
+  .comfort-text-lg {
+    font-size: var(--app-text-lg);
   }
 }
 

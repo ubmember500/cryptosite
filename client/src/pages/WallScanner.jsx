@@ -5,7 +5,7 @@ const WallScanner = () => {
   const [secondImageError, setSecondImageError] = useState(false);
 
   return (
-    <div className="min-h-screen bg-background px-6 py-8 md:px-10 md:py-10">
+    <div className="min-h-[100dvh] bg-background app-page md:px-10 md:py-8">
       <div className="mx-auto w-full max-w-[1500px]">
         <h1 className="text-textPrimary text-2xl md:text-4xl lg:text-5xl font-bold leading-tight mb-8">
           Here you can find large densities and customize your own filters to find them on Binance Bybit Okx exchanges :{' '}
@@ -17,17 +17,17 @@ const WallScanner = () => {
           </a>
         </h1>
 
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 md:gap-6">
           <div className="rounded-xl border border-border bg-surface overflow-hidden">
             {!firstImageError ? (
               <img
                 src="/wall-scanner-1.png"
                 alt="Wall scanner radar preview"
-                className="w-full h-[500px] md:h-[680px] object-contain bg-background"
+                className="w-full h-[min(62dvh,700px)] min-h-[280px] object-contain bg-background"
                 onError={() => setFirstImageError(true)}
               />
             ) : (
-              <div className="h-[500px] md:h-[680px] flex items-center justify-center bg-gradient-to-br from-surface to-background">
+              <div className="h-[min(62dvh,700px)] min-h-[280px] flex items-center justify-center bg-gradient-to-br from-surface to-background">
                 <span className="text-textSecondary text-lg">wall-scanner-1.png not found</span>
               </div>
             )}
@@ -38,11 +38,11 @@ const WallScanner = () => {
               <img
                 src="/wall-scanner-2.png"
                 alt="Wall scanner settings preview"
-                className="w-full h-[500px] md:h-[680px] object-contain bg-background"
+                className="w-full h-[min(62dvh,700px)] min-h-[280px] object-contain bg-background"
                 onError={() => setSecondImageError(true)}
               />
             ) : (
-              <div className="h-[500px] md:h-[680px] flex items-center justify-center bg-gradient-to-br from-surface to-background">
+              <div className="h-[min(62dvh,700px)] min-h-[280px] flex items-center justify-center bg-gradient-to-br from-surface to-background">
                 <span className="text-textSecondary text-lg">wall-scanner-2.png not found</span>
               </div>
             )}

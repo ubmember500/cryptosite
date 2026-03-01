@@ -26,21 +26,21 @@ const TopNav = () => {
   const { t } = useTranslation();
 
   return (
-    <nav className="flex items-center gap-0.5">
+    <nav className="flex items-center gap-1 min-w-max px-1">
       {NAV_ITEMS.map(({ path, labelKey, icon: Icon, color }) => (
         <NavLink
           key={path}
           to={path}
           className={({ isActive }) =>
             [
-              'flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap',
+              'flex items-center gap-1 px-2 py-1 rounded-md text-[11px] md:text-xs font-medium transition-colors whitespace-nowrap',
               isActive
                 ? 'bg-accent/15 text-accent'
                 : 'text-textSecondary hover:bg-surfaceHover hover:text-textPrimary',
             ].join(' ')
           }
         >
-          <Icon className="h-3.5 w-3.5 shrink-0" style={{ color }} />
+          <Icon className="h-3 w-3 md:h-3.5 md:w-3.5 shrink-0" style={{ color }} />
           {t(labelKey)}
         </NavLink>
       ))}
