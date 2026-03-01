@@ -422,12 +422,12 @@ async function fetchKlines(symbol, exchangeType, interval = '15m', limit = 500, 
     return klinesCache[cacheKey].data;
   }
 
-  // Second-level intervals have no real historical REST data from MEXC.
-  // Return empty immediately; the live WebSocket feed provides real second-level candles.
+  // For second-level intervals, fetch 1m candles and resample after.
   const isSecondInterval = ['1s', '5s', '15s'].includes(interval);
-  if (isSecondInterval) return [];
-  const mexcInterval = mapIntervalToMexc(interval);
-  const mexcLimit = limit;
+  const mexcInterval = isSecondInterval ? '1m' : mapIntervalToMexc(interval);
+  const mexcLimit = isSecondInterval
+    ? { '1s': 50, '5s': 84, '15s': 125 }[interval]
+    : limit;
 
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {

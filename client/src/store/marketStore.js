@@ -96,12 +96,17 @@ const fetchBybitTokensDirect = async (exchangeType = 'futures', searchQuery = ''
 
 const fetchBybitKlinesDirect = async (symbol, exchangeType = 'futures', interval = '15m', limit = CHART_PAGE_LIMIT, before = null) => {
   const category = exchangeType === 'futures' ? 'linear' : 'spot';
-  const bybitInterval = mapIntervalToBybit(interval);
+  const isSecondInterval = ['1s', '5s', '15s'].includes(interval);
+  const apiInterval = isSecondInterval ? '1m' : interval;
+  const bybitInterval = mapIntervalToBybit(apiInterval);
+  const apiLimit = isSecondInterval
+    ? { '1s': 50, '5s': 84, '15s': 125 }[interval]
+    : limit;
   const params = new URLSearchParams({
     category,
     symbol: symbol.toUpperCase(),
     interval: bybitInterval,
-    limit: String(limit),
+    limit: String(apiLimit),
     ...(before ? { end: String(Math.floor(Number(before)) - 1) } : {}),
   });
   for (const baseUrl of BYBIT_BASE_URLS) {
@@ -122,7 +127,7 @@ const fetchBybitKlinesDirect = async (symbol, exchangeType = 'futures', interval
         return { time, open, high, low, close, volume, turnover };
       });
       klines.reverse();
-      return klines;
+      return isSecondInterval ? resample1mToSeconds(klines, interval) : klines;
     } catch (e) {}
   }
   throw new Error('Failed to fetch Bybit klines');
@@ -972,24 +977,12 @@ export const useMarketStore = create((set, get) => ({
   },
   
   fetchChartData: async (symbol, exchangeType, interval = '15m') => {
-    // Second-level intervals (1s, 5s, 15s) have no real historical REST data from any exchange.
-    // Returning empty lets the chart start clean; the live WebSocket feed populates real candles.
-    if (['1s', '5s', '15s'].includes(interval)) {
-      const exchange = get().exchange;
-      const historyKey = getChartHistoryKey({ exchange, exchangeType, symbol, interval });
-      const seriesKey = getChartSeriesKey({ exchange, exchangeType, symbol, interval });
-      set((state) => ({
-        chartData: [],
-        chartDataMap: { ...state.chartDataMap, [seriesKey]: [] },
-        chartHistoryMap: {
-          ...state.chartHistoryMap,
-          [historyKey]: { earliestTime: null, hasMoreHistory: false, loadingOlder: false },
-        },
-        loadingChart: false,
-        chartError: null,
-      }));
-      return;
-    }
+    const isSecondInterval = ['1s', '5s', '15s'].includes(interval);
+    // For sub-minute intervals, we fetch 1m candles from the API and resample them client-side.
+    const apiInterval = isSecondInterval ? '1m' : interval;
+    const apiLimit = isSecondInterval
+      ? { '1s': 50, '5s': 84, '15s': 125 }[interval]
+      : CHART_PAGE_LIMIT;
     set({ loadingChart: true, chartError: null });
     const exchange = get().exchange;
     const historyKey = getChartHistoryKey({ exchange, exchangeType, symbol, interval });
@@ -1023,7 +1016,7 @@ export const useMarketStore = create((set, get) => ({
             symbol,
             exchangeType,
             interval,
-            limit: CHART_PAGE_LIMIT,
+            limit: apiLimit,
           });
           logChartTelemetry('fetchChartData.directPrimaryResponse', {
             exchange,
@@ -1061,14 +1054,18 @@ export const useMarketStore = create((set, get) => ({
       const params = new URLSearchParams({
         symbol,
         exchangeType,
-        interval,
-        limit: String(CHART_PAGE_LIMIT)
+        interval: apiInterval,
+        limit: String(apiLimit)
       });
       const response = await api.get(`/market/${exchange}/klines?${params}`);
       if (!response.data?.klines || !Array.isArray(response.data.klines)) {
         throw new Error('Invalid chart data format');
       }
       let klines = response.data.klines;
+      // Resample 1m klines to sub-minute candles when a second-level interval was requested
+      if (isSecondInterval && Array.isArray(klines) && klines.length > 0) {
+        klines = resample1mToSeconds(klines, interval);
+      }
       const backendSummary = getKlineRangeSummary(klines);
       logChartTelemetry('fetchChartData.backendResponse', {
         exchange,
@@ -1237,8 +1234,12 @@ export const useMarketStore = create((set, get) => ({
   },
 
   loadOlderChartData: async (symbol, exchangeType, interval = '15m', beforeTimestampMs) => {
-    // No historical data exists for second-level intervals.
-    if (['1s', '5s', '15s'].includes(interval)) return [];
+    const isSecondInterval = ['1s', '5s', '15s'].includes(interval);
+    // For sub-minute intervals, fetch 1m candles and resample client-side.
+    const apiInterval = isSecondInterval ? '1m' : interval;
+    const apiLimit = isSecondInterval
+      ? { '1s': 50, '5s': 84, '15s': 125 }[interval]
+      : CHART_PAGE_LIMIT;
     const exchange = get().exchange;
     const historyKey = getChartHistoryKey({ exchange, exchangeType, symbol, interval });
     const seriesKey = getChartSeriesKey({ exchange, exchangeType, symbol, interval });
@@ -1273,8 +1274,8 @@ export const useMarketStore = create((set, get) => ({
       const params = new URLSearchParams({
         symbol,
         exchangeType,
-        interval,
-        limit: String(CHART_PAGE_LIMIT),
+        interval: apiInterval,
+        limit: String(apiLimit),
         before: String(Math.floor(beforeTimestamp)),
       });
       const requestPath = `/market/${exchange}/klines?${params.toString()}`;
@@ -1293,6 +1294,10 @@ export const useMarketStore = create((set, get) => ({
 
       const response = await api.get(requestPath);
       let fetchedKlines = Array.isArray(response.data?.klines) ? response.data.klines : [];
+      // Resample 1m klines to sub-minute candles when a second-level interval was requested
+      if (isSecondInterval && fetchedKlines.length > 0) {
+        fetchedKlines = resample1mToSeconds(fetchedKlines, interval);
+      }
       let olderKlines = fetchedKlines.filter((kline) => Number(kline.time) < beforeSeconds);
 
       logChartTelemetry('loadOlderChartData.backendResponse', {
