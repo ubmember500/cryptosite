@@ -496,19 +496,63 @@ const enrichTokensWithNatr14 = async (tokens) => {
 
 const resample1mToSeconds = (klines1m, secondInterval) => {
   const spanSeconds = { '1s': 1, '5s': 5, '15s': 15 }[secondInterval];
-  const subPerMinute = 60 / spanSeconds;
+  if (!spanSeconds) return klines1m;
+  const N = 60 / spanSeconds; // sub-candles per minute: 60, 12, or 4
   const result = [];
 
   for (const candle of klines1m) {
-    const volumePerSub = candle.volume / subPerMinute;
-    for (let index = 0; index < subPerMinute; index += 1) {
+    const { open, high, low, close, volume } = candle;
+    const volPer = volume / N;
+    const range = high - low;
+
+    // Flat candle — just copy
+    if (range === 0) {
+      for (let i = 0; i < N; i++) {
+        result.push({ time: candle.time + i * spanSeconds, open, high, low, close, volume: volPer });
+      }
+      continue;
+    }
+
+    // Build N+1 anchor prices forming a smooth path: open → … → close
+    // that visits high/low at realistic positions within the candle.
+    const isGreen = close >= open;
+    const seed = candle.time % 97; // deterministic per-candle variation
+    // Bullish: dip first (low early), rally later (high late)
+    // Bearish: rally first (high early), dip later (low late)
+    const highAt = isGreen ? 0.55 + (seed % 11) * 0.03 : 0.15 + (seed % 11) * 0.03;
+    const lowAt  = isGreen ? 0.15 + (seed % 7)  * 0.03 : 0.55 + (seed % 7)  * 0.03;
+
+    const prices = new Array(N + 1);
+    prices[0] = open;
+    prices[N] = close;
+
+    for (let i = 1; i < N; i++) {
+      const t = i / N;
+      // Linear open→close base
+      let p = open + (close - open) * t;
+      // Pull toward high/low using Gaussian bells centred at highAt/lowAt
+      const hPull = Math.exp(-(((t - highAt) * 5) ** 2));
+      const lPull = Math.exp(-(((t - lowAt)  * 5) ** 2));
+      p += (high - p) * hPull * 0.85;
+      p -= (p - low)  * lPull * 0.85;
+      prices[i] = Math.min(high, Math.max(low, p));
+    }
+
+    // Create sub-candles from consecutive anchor prices
+    for (let i = 0; i < N; i++) {
+      const sO = prices[i];
+      const sC = prices[i + 1];
+      const bodyHi = Math.max(sO, sC);
+      const bodyLo = Math.min(sO, sC);
+      // Small deterministic wicks (1-6% of parent range)
+      const wick = range * (0.01 + ((candle.time + i) % 13) * 0.004);
       result.push({
-        time: candle.time + index * spanSeconds,
-        open: candle.open,
-        high: candle.high,
-        low: candle.low,
-        close: candle.close,
-        volume: volumePerSub,
+        time: candle.time + i * spanSeconds,
+        open:  sO,
+        high:  Math.min(high, bodyHi + wick),
+        low:   Math.max(low,  bodyLo - wick),
+        close: sC,
+        volume: volPer,
       });
     }
   }

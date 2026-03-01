@@ -434,19 +434,46 @@ async function fetchTokensWithNATR(exchangeType, options = {}) {
  */
 function resample1mToSeconds(klines1m, secondInterval) {
   const spanSeconds = { '1s': 1, '5s': 5, '15s': 15 }[secondInterval];
-  const subPerMinute = 60 / spanSeconds;
+  if (!spanSeconds) return klines1m;
+  const N = 60 / spanSeconds;
   const result = [];
-  for (const k of klines1m) {
-    const openTimeSec = k.time;
-    const volumePerSub = k.volume / subPerMinute;
-    for (let i = 0; i < subPerMinute; i++) {
+  for (const candle of klines1m) {
+    const { open, high, low, close, volume } = candle;
+    const volPer = volume / N;
+    const range = high - low;
+    if (range === 0) {
+      for (let i = 0; i < N; i++) {
+        result.push({ time: candle.time + i * spanSeconds, open, high, low, close, volume: volPer });
+      }
+      continue;
+    }
+    const isGreen = close >= open;
+    const seed = candle.time % 97;
+    const highAt = isGreen ? 0.55 + (seed % 11) * 0.03 : 0.15 + (seed % 11) * 0.03;
+    const lowAt  = isGreen ? 0.15 + (seed % 7)  * 0.03 : 0.55 + (seed % 7)  * 0.03;
+    const prices = new Array(N + 1);
+    prices[0] = open;
+    prices[N] = close;
+    for (let i = 1; i < N; i++) {
+      const t = i / N;
+      let p = open + (close - open) * t;
+      const hPull = Math.exp(-(((t - highAt) * 5) ** 2));
+      const lPull = Math.exp(-(((t - lowAt)  * 5) ** 2));
+      p += (high - p) * hPull * 0.85;
+      p -= (p - low)  * lPull * 0.85;
+      prices[i] = Math.min(high, Math.max(low, p));
+    }
+    for (let i = 0; i < N; i++) {
+      const sO = prices[i];
+      const sC = prices[i + 1];
+      const bodyHi = Math.max(sO, sC);
+      const bodyLo = Math.min(sO, sC);
+      const wick = range * (0.01 + ((candle.time + i) % 13) * 0.004);
       result.push({
-        time: openTimeSec + i * spanSeconds,
-        open: k.open,
-        high: k.high,
-        low: k.low,
-        close: k.close,
-        volume: volumePerSub,
+        time: candle.time + i * spanSeconds,
+        open: sO, high: Math.min(high, bodyHi + wick),
+        low: Math.max(low, bodyLo - wick), close: sC,
+        volume: volPer,
       });
     }
   }
