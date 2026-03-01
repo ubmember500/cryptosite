@@ -1,5 +1,4 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { LayoutGrid } from 'lucide-react';
 import { cn } from '../../utils/cn';
 
 const ICON_W = 28;
@@ -470,16 +469,15 @@ const ChartLayoutSelector = ({ value, onChange, className }) => {
         type="button"
         onClick={() => setIsOpen((v) => !v)}
         className={cn(
-          'inline-flex items-center gap-2 px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors',
-          'text-textSecondary hover:bg-surfaceHover hover:text-textPrimary',
+          'inline-flex items-center justify-center h-8 min-w-9 px-1.5 rounded-md transition-colors',
+          'text-textPrimary hover:bg-surfaceHover',
           'border border-border bg-surface'
         )}
         title="Chart layout"
         aria-label="Chart layout"
         aria-expanded={isOpen}
       >
-        <LayoutGrid className="w-4 h-4 flex-shrink-0" />
-        <IconBox className="w-7 h-5 text-textPrimary">
+        <IconBox className="w-6 h-4 text-textPrimary">
           {renderIcon(currentButton)}
         </IconBox>
       </button>

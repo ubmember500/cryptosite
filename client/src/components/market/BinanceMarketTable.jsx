@@ -50,7 +50,7 @@ const BinanceMarketTable = ({ onTokenSelect, highlightToken }) => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [openPopoverFor]);
 
-  const VOLUME_HIGH_THRESHOLD = 100_000_000; // $100M — coins above this get highlight color
+  const VOLUME_HIGH_THRESHOLD = 100_000_000;
 
   const formatVolume = (volume) => {
     if (volume == null || !Number.isFinite(Number(volume))) return t('N/A');
@@ -396,11 +396,6 @@ const BinanceMarketTable = ({ onTokenSelect, highlightToken }) => {
                         ? 'font-semibold'
                         : 'text-textPrimary'
                     )}
-                    style={
-                      token.volume24h != null && Number(token.volume24h) >= VOLUME_HIGH_THRESHOLD
-                        ? { color: '#0ea5e9', textShadow: '0 0 10px rgba(14,165,233,0.55)' }
-                        : undefined
-                    }
                   >
                     {formatVolume(token.volume24h)}
                   </span>
