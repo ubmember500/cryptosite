@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useMarketStore } from '../../store/marketStore';
 import { useMarketFlags, FLAG_COLORS } from '../../hooks/useMarketFlags';
@@ -6,6 +6,18 @@ import { ChevronUp, ChevronDown, Flag } from 'lucide-react';
 import { cn } from '../../utils/cn';
 import LoadingSpinner from '../common/LoadingSpinner';
 import TokenContextMenu from './TokenContextMenu';
+
+/** Hover tooltip that appears above column headers */
+const HeaderTooltip = ({ text, parentRef }) => {
+  if (!text || !parentRef?.current) return null;
+  return (
+    <div className="absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-2 pointer-events-none">
+      <div className="bg-surface border border-border rounded-lg shadow-xl px-3 py-2 text-xs text-textPrimary leading-relaxed max-w-[220px] text-center whitespace-normal">
+        {text}
+      </div>
+    </div>
+  );
+};
 
 const BinanceMarketTable = ({ onTokenSelect, highlightToken }) => {
   const { t } = useTranslation();
@@ -36,6 +48,10 @@ const BinanceMarketTable = ({ onTokenSelect, highlightToken }) => {
   const [hoveredRow, setHoveredRow] = useState(null);
   const [openPopoverFor, setOpenPopoverFor] = useState(null);
   const [contextMenu, setContextMenu] = useState(null); // { x, y, token }
+  const [hoveredHeader, setHoveredHeader] = useState(null);
+  const headerRef24h = useRef(null);
+  const headerRefNatr = useRef(null);
+  const headerRefVol = useRef(null);
   const popoverRef = useRef(null);
 
   // Close popover on click outside
@@ -262,30 +278,39 @@ const BinanceMarketTable = ({ onTokenSelect, highlightToken }) => {
               </div>
             </th>
             <th
-              className="px-4 py-3 text-right text-xs font-medium text-textSecondary uppercase tracking-wider cursor-pointer hover:text-textPrimary group"
+              ref={headerRef24h}
+              className="px-4 py-3 text-right text-xs font-medium text-textSecondary uppercase tracking-wider cursor-pointer hover:text-textPrimary group relative"
               onClick={() => handleSort('priceChangePercent24h')}
+              onMouseEnter={() => setHoveredHeader('24h')}
+              onMouseLeave={() => setHoveredHeader(null)}
             >
+              {hoveredHeader === '24h' && <HeaderTooltip text={t('24h % tooltip')} parentRef={headerRef24h} />}
               <div className="flex items-center justify-end gap-1">
                 {t('24h %')}
                 <SortIcon columnKey="priceChangePercent24h" />
               </div>
             </th>
             <th
-              className="px-4 py-3 text-right text-xs font-medium text-textSecondary uppercase tracking-wider cursor-pointer hover:text-textPrimary group"
+              ref={headerRefNatr}
+              className="px-4 py-3 text-right text-xs font-medium text-textSecondary uppercase tracking-wider cursor-pointer hover:text-textPrimary group relative"
               onClick={() => handleSort('natr')}
+              onMouseEnter={() => setHoveredHeader('natr')}
+              onMouseLeave={() => setHoveredHeader(null)}
             >
+              {hoveredHeader === 'natr' && <HeaderTooltip text={t('NATR tooltip')} parentRef={headerRefNatr} />}
               <div className="flex items-center justify-end gap-1">
                 {t('NATR')}
                 <SortIcon columnKey="natr" />
               </div>
             </th>
             <th
-              className="px-4 py-3 text-right text-xs font-medium text-textSecondary uppercase tracking-wider cursor-pointer hover:text-textPrimary group"
+              ref={headerRefVol}
+              className="px-4 py-3 text-right text-xs font-medium text-textSecondary uppercase tracking-wider cursor-pointer hover:text-textPrimary group relative"
               onClick={() => handleSort('volume24h')}
-              title={sortConfig.key === 'volume24h'
-                ? (sortConfig.direction === 'desc' ? t('Vol 24h sort high to low') : t('Vol 24h sort low to high'))
-                : t('Vol 24h sort hint')}
+              onMouseEnter={() => setHoveredHeader('vol')}
+              onMouseLeave={() => setHoveredHeader(null)}
             >
+              {hoveredHeader === 'vol' && <HeaderTooltip text={t('Vol 24h tooltip')} parentRef={headerRefVol} />}
               <div className="flex items-center justify-end gap-1">
                 {t('Vol 24h')} ($)
                 <SortIcon columnKey="volume24h" />
