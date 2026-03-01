@@ -388,49 +388,45 @@ async function fetchTokensWithNATR(exchangeType) {
 /**
  * Resample 1m klines to second intervals (same as Binance/Bybit/OKX)
  */
+function _lcg(seed) { let s = seed | 0; return () => { s = (s * 1103515245 + 12345) & 0x7fffffff; return s / 0x7fffffff; }; }
 function resample1mToSeconds(klines1m, secondInterval) {
-  const spanSeconds = { '1s': 1, '5s': 5, '15s': 15 }[secondInterval];
-  if (!spanSeconds) return klines1m;
-  const N = 60 / spanSeconds;
+  const spanSec = { '1s': 1, '5s': 5, '15s': 15 }[secondInterval];
+  if (!spanSec) return klines1m;
+  const N = 60 / spanSec;
   const result = [];
   for (const candle of klines1m) {
     const { open, high, low, close, volume } = candle;
     const volPer = volume / N;
     const range = high - low;
     if (range === 0) {
-      for (let i = 0; i < N; i++) {
-        result.push({ time: candle.time + i * spanSeconds, open, high, low, close, volume: volPer });
-      }
+      for (let i = 0; i < N; i++) result.push({ time: candle.time + i * spanSec, open, high, low, close, volume: volPer });
       continue;
     }
+    const rng = _lcg(candle.time * 7 + spanSec);
     const isGreen = close >= open;
-    const seed = candle.time % 97;
-    const highAt = isGreen ? 0.55 + (seed % 11) * 0.03 : 0.15 + (seed % 11) * 0.03;
-    const lowAt  = isGreen ? 0.15 + (seed % 7)  * 0.03 : 0.55 + (seed % 7)  * 0.03;
+    const halfN = Math.max(1, Math.floor(N / 2));
+    let hiIdx, loIdx;
+    if (isGreen) { loIdx = 1 + Math.floor(rng() * halfN); hiIdx = halfN + Math.floor(rng() * (N - halfN)); }
+    else { hiIdx = 1 + Math.floor(rng() * halfN); loIdx = halfN + Math.floor(rng() * (N - halfN)); }
+    hiIdx = Math.min(hiIdx, N - 1); loIdx = Math.min(loIdx, N - 1);
+    if (hiIdx === loIdx) { hiIdx = Math.min(hiIdx + 1, N - 1); if (hiIdx === loIdx) loIdx = Math.max(1, loIdx - 1); }
     const prices = new Array(N + 1);
-    prices[0] = open;
-    prices[N] = close;
-    for (let i = 1; i < N; i++) {
-      const t = i / N;
-      let p = open + (close - open) * t;
-      const hPull = Math.exp(-(((t - highAt) * 5) ** 2));
-      const lPull = Math.exp(-(((t - lowAt)  * 5) ** 2));
-      p += (high - p) * hPull * 0.85;
-      p -= (p - low)  * lPull * 0.85;
-      prices[i] = Math.min(high, Math.max(low, p));
+    prices[0] = open; prices[N] = close; prices[hiIdx] = high; prices[loIdx] = low;
+    const sorted = [...new Set([0, hiIdx, loIdx, N])].sort((a, b) => a - b);
+    for (let s = 0; s < sorted.length - 1; s++) {
+      const from = sorted[s], to = sorted[s + 1];
+      for (let i = from + 1; i < to; i++) {
+        const t = (i - from) / (to - from);
+        const base = prices[from] + (prices[to] - prices[from]) * t;
+        const noise = (rng() - 0.5) * range * 0.18;
+        prices[i] = Math.min(high, Math.max(low, base + noise));
+      }
     }
     for (let i = 0; i < N; i++) {
-      const sO = prices[i];
-      const sC = prices[i + 1];
-      const bodyHi = Math.max(sO, sC);
-      const bodyLo = Math.min(sO, sC);
-      const wick = range * (0.01 + ((candle.time + i) % 13) * 0.004);
-      result.push({
-        time: candle.time + i * spanSeconds,
-        open: sO, high: Math.min(high, bodyHi + wick),
-        low: Math.max(low, bodyLo - wick), close: sC,
-        volume: volPer,
-      });
+      const sO = prices[i], sC = prices[i + 1];
+      const bodyHi = Math.max(sO, sC), bodyLo = Math.min(sO, sC);
+      const wick = range * (0.002 + rng() * 0.014);
+      result.push({ time: candle.time + i * spanSec, open: sO, high: Math.min(high, bodyHi + wick), low: Math.max(low, bodyLo - wick), close: sC, volume: volPer });
     }
   }
   return result;
