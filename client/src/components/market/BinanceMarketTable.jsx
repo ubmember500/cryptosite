@@ -68,7 +68,7 @@ const BinanceMarketTable = ({ onTokenSelect, highlightToken }) => {
     }
     const isPositive = value >= 0;
     return (
-      <span className={cn(isPositive ? 'text-success' : 'text-danger')}>
+      <span className={cn(isPositive ? 'text-green-400' : 'text-danger')}>
         {isPositive ? '+' : ''}{value.toFixed(2)}%
       </span>
     );
