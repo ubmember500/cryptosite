@@ -1,9 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import { cn } from '../../utils/cn';
 import { X, RotateCcw, ChevronDown, ChevronUp } from 'lucide-react';
 import Button from '../common/Button';
 import { useCandleColorStore } from '../../store/candleColorStore';
 import { getThemePalette } from '../../utils/themePalette';
+
+// ── Candle type options (klinecharts values) ─────────────────────────────
+const CANDLE_TYPES = ['candle_solid', 'candle_stroke', 'candle_up_stroke', 'candle_down_stroke', 'ohlc', 'area'];
 
 // ── Colour palette (40 swatches, 8 columns) ─────────────────────────────────
 const PALETTE = [
@@ -22,7 +26,7 @@ const PALETTE = [
 const isValidHex = (val) => /^#[0-9a-fA-F]{6}$/.test(val);
 
 // ── ColorPicker sub-component ─────────────────────────────────────────────
-const ColorPicker = ({ label, color, themeDefault, onChange, onReset }) => {
+const ColorPicker = ({ label, color, themeDefault, onChange, onReset, resetLabel = 'Reset' }) => {
   const [hexInput, setHexInput] = useState(color || themeDefault || '#ffffff');
   const [open, setOpen] = useState(false);
 
@@ -60,7 +64,7 @@ const ColorPicker = ({ label, color, themeDefault, onChange, onReset }) => {
               title="Reset to theme default"
             >
               <RotateCcw className="h-3 w-3" />
-              Reset
+              {resetLabel}
             </button>
           )}
           <button
@@ -135,13 +139,16 @@ const ColorPicker = ({ label, color, themeDefault, onChange, onReset }) => {
  * to localStorage through useCandleColorStore.
  */
 const ChartSettingsModal = ({ isOpen, onClose, chartRef }) => {
+  const { t } = useTranslation();
   const [gridVisible, setGridVisible] = useState(true);
   const [crosshairVisible, setCrosshairVisible] = useState(true);
 
-  const upColor   = useCandleColorStore((s) => s.upColor);
-  const downColor = useCandleColorStore((s) => s.downColor);
+  const upColor      = useCandleColorStore((s) => s.upColor);
+  const downColor    = useCandleColorStore((s) => s.downColor);
+  const candleType   = useCandleColorStore((s) => s.candleType);
   const setUpColor   = useCandleColorStore((s) => s.setUpColor);
   const setDownColor = useCandleColorStore((s) => s.setDownColor);
+  const setCandleType = useCandleColorStore((s) => s.setCandleType);
   const resetColors  = useCandleColorStore((s) => s.resetColors);
 
   const [themeDefaults, setThemeDefaults] = useState({ up: '#19d7c2', down: '#f6465d' });
@@ -195,6 +202,11 @@ const ChartSettingsModal = ({ isOpen, onClose, chartRef }) => {
   const handleResetDown = ()  => { setDownColor(null); applyCandleColors(upColor, null);   };
   const handleResetAll  = ()  => { resetColors();      applyCandleColors(null, null);       };
 
+  const handleCandleTypeChange = (type) => {
+    setCandleType(type);
+    applyStyles({ candle: { type } });
+  };
+
   const handleGridChange      = (v) => { setGridVisible(v);      applyStyles({ grid:      { show: v } }); };
   const handleCrosshairChange = (v) => { setCrosshairVisible(v); applyStyles({ crosshair: { show: v } }); };
 
@@ -218,7 +230,7 @@ const ChartSettingsModal = ({ isOpen, onClose, chartRef }) => {
         {/* Header */}
         <div className="flex items-center justify-between px-4 pt-4 pb-3 flex-shrink-0">
           <h2 id="chart-settings-title" className="text-lg font-semibold text-textPrimary">
-            Chart settings
+            {t('Chart settings')}
           </h2>
           <button
             type="button"
@@ -233,11 +245,35 @@ const ChartSettingsModal = ({ isOpen, onClose, chartRef }) => {
         {/* Scrollable body */}
         <div className="overflow-y-auto px-4 pb-2 space-y-5 flex-1">
 
+          {/* ── Chart type ── */}
+          <section className="space-y-3">
+            <h3 className="text-xs font-semibold text-textSecondary uppercase tracking-wider">{t('Chart type')}</h3>
+            <p className="text-xs text-textSecondary">{t('Set chart type')}</p>
+            <div className="relative">
+              <select
+                value={candleType}
+                onChange={(e) => handleCandleTypeChange(e.target.value)}
+                className={cn(
+                  'w-full appearance-none bg-surfaceDark border border-border rounded-lg',
+                  'px-3 py-2.5 pr-9 text-sm text-textPrimary',
+                  'focus:outline-none focus:border-accent cursor-pointer'
+                )}
+              >
+                {CANDLE_TYPES.map((type) => (
+                  <option key={type} value={type}>
+                    {t(type)}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-textSecondary" />
+            </div>
+          </section>
+
           {/* ── Display ── */}
           <section className="space-y-3">
-            <h3 className="text-xs font-semibold text-textSecondary uppercase tracking-wider">Display</h3>
+            <h3 className="text-xs font-semibold text-textSecondary uppercase tracking-wider">{t('Display')}</h3>
             <label className="flex items-center justify-between gap-3 cursor-pointer">
-              <span className="text-sm text-textPrimary">Show grid</span>
+              <span className="text-sm text-textPrimary">{t('Show grid')}</span>
               <input
                 type="checkbox"
                 checked={gridVisible}
@@ -246,7 +282,7 @@ const ChartSettingsModal = ({ isOpen, onClose, chartRef }) => {
               />
             </label>
             <label className="flex items-center justify-between gap-3 cursor-pointer">
-              <span className="text-sm text-textPrimary">Show crosshair</span>
+              <span className="text-sm text-textPrimary">{t('Show crosshair')}</span>
               <input
                 type="checkbox"
                 checked={crosshairVisible}
@@ -260,7 +296,7 @@ const ChartSettingsModal = ({ isOpen, onClose, chartRef }) => {
           <section className="space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-semibold text-textSecondary uppercase tracking-wider">
-                Candle colours
+                {t('Candle colours')}
               </h3>
               {hasAnyCustom && (
                 <button
@@ -269,25 +305,27 @@ const ChartSettingsModal = ({ isOpen, onClose, chartRef }) => {
                   className="flex items-center gap-1 text-xs text-textSecondary hover:text-accent transition-colors"
                 >
                   <RotateCcw className="h-3 w-3" />
-                  Reset all
+                  {t('Reset all')}
                 </button>
               )}
             </div>
 
             <ColorPicker
-              label="Bull (up) candle"
+              label={t('Bull (up) candle')}
               color={upColor}
               themeDefault={themeDefaults.up}
               onChange={handleUpColorChange}
               onReset={handleResetUp}
+              resetLabel={t('Reset')}
             />
 
             <ColorPicker
-              label="Bear (down) candle"
+              label={t('Bear (down) candle')}
               color={downColor}
               themeDefault={themeDefaults.down}
               onChange={handleDownColorChange}
               onReset={handleResetDown}
+              resetLabel={t('Reset')}
             />
           </section>
 
@@ -296,7 +334,7 @@ const ChartSettingsModal = ({ isOpen, onClose, chartRef }) => {
         {/* Footer */}
         <div className="px-4 pb-4 pt-3 flex justify-end flex-shrink-0 border-t border-border">
           <Button type="button" variant="primary" onClick={onClose}>
-            Done
+            {t('Done')}
           </Button>
         </div>
       </div>

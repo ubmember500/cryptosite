@@ -405,6 +405,7 @@ const KLineChart = ({
   // Persisted custom candle colours (null = use theme default)
   const candleUpColor   = useCandleColorStore((s) => s.upColor);
   const candleDownColor = useCandleColorStore((s) => s.downColor);
+  const candleType      = useCandleColorStore((s) => s.candleType);
 
   const [showIndicatorsModal, setShowIndicatorsModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
@@ -666,6 +667,10 @@ const KLineChart = ({
     // Mark that the next data update needs a full resetData() to replace all
     // historical candles for the new interval (not just the latest candle).
     pendingIntervalChangeRef.current = true;
+    // Clear the stale subscribeBar callback so the data-arrival effect takes
+    // the full-reload (resetData) path until klinecharts provides a fresh
+    // callback after the next getBars init load.
+    realtimeBarCallbackRef.current = null;
   }, [symbol, interval]);
 
   const handleGetBars = useCallback(async ({ type, timestamp, callback }) => {
@@ -726,16 +731,18 @@ const KLineChart = ({
     });
   }, [symbol, transformDataForKLineChart]);
 
-  // When interval changes (but symbol stays the same) update the period label
-  // and reload data without destroying and re-creating the chart instance.
-  // This preserves user-added indicators, drawings, and scroll position.
+  // When interval changes (but symbol stays the same) update the period label.
+  // We intentionally do NOT call resetData() here — at this point dataRef still
+  // contains the OLD interval's candles (the [data] sync effect hasn't run yet).
+  // Calling resetData() would reload stale data via handleGetBars, making it
+  // look like the timeframe click did nothing.  The actual data reload happens
+  // in the data-arrival effect below when the new candles arrive from the store
+  // and pendingIntervalChangeRef.current === true.
   useEffect(() => {
     if (!chartRef.current || !isInitialized) return;
     try {
       const period = mapIntervalToPeriod(interval);
       chartRef.current.setPeriod({ span: period.span, type: period.type });
-      chartRef.current.resetData();
-      requestAnimationFrame(() => applyCompactViewportDefaults());
     } catch (e) {
       // ignore – chart may be mid-dispose
     }
@@ -1489,9 +1496,10 @@ const KLineChart = ({
     try {
       const themeColors = getThemePalette();
       // Overlay user's saved candle-colour preferences (null = use theme default)
-      const { upColor: storedUp, downColor: storedDown } = useCandleColorStore.getState();
+      const { upColor: storedUp, downColor: storedDown, candleType: storedCandleType } = useCandleColorStore.getState();
       const initCandleUp   = storedUp   || themeColors.candleUp;
       const initCandleDown = storedDown || themeColors.candleDown;
+      const initCandleType = storedCandleType || 'candle_solid';
       registerCustomShapeOverlays();
       // Initialize chart with minimal configuration
       // Layout must be an array of pane configurations
@@ -1518,7 +1526,7 @@ const KLineChart = ({
             vertical: { show: false },
           },
           candle: {
-            type: 'candle_solid',
+            type: initCandleType,
             bar: {
               compareRule: 'current_open',
               upColor: initCandleUp,
@@ -1793,6 +1801,16 @@ const KLineChart = ({
     }
   }, [symbol, handleGetBars, applyCompactViewportDefaults]); // Re-initialize only when symbol changes; interval changes are handled by the separate period-update effect
 
+  // Re-apply candle type when the user changes it in settings
+  useEffect(() => {
+    if (!chartRef.current || !isInitialized) return;
+    try {
+      chartRef.current.setStyles({ candle: { type: candleType || 'candle_solid' } });
+    } catch (e) {
+      // ignore – chart may be mid-dispose
+    }
+  }, [candleType, isInitialized]);
+
   // Re-apply custom candle colours whenever the user changes them in settings
   useEffect(() => {
     if (!chartRef.current || !isInitialized) return;
@@ -1937,10 +1955,27 @@ const KLineChart = ({
       try {
         const pushCallback = realtimeBarCallbackRef.current;
         if (pushCallback && !pendingIntervalChangeRef.current) {
-          // Push only the latest candle — viewport stays where the user left it.
-          const transformed = transformDataForKLineChart(dataRef.current);
-          const latest = transformed[transformed.length - 1];
-          if (latest) pushCallback(latest);
+          // Normally push only the latest candle so the viewport stays where
+          // the user left it.  However, guard against the case where a WS tick
+          // for the new interval arrived before the full history fetch completed
+          // and "consumed" pendingIntervalChangeRef — the chart would be stuck
+          // with only 1-2 candles.  If the incoming data is significantly larger
+          // than what the chart currently holds, do a full reload instead.
+          const chartDataCount = chartRef.current.getDataList?.()?.length ?? 0;
+          const incomingCount = dataRef.current?.length ?? 0;
+          const needsFullReload =
+            incomingCount >= 20 &&
+            chartDataCount < incomingCount &&
+            (chartDataCount <= 5 || incomingCount > chartDataCount * 3);
+
+          if (needsFullReload) {
+            chartRef.current.resetData();
+            requestAnimationFrame(() => applyCompactViewportDefaults());
+          } else {
+            const transformed = transformDataForKLineChart(dataRef.current);
+            const latest = transformed[transformed.length - 1];
+            if (latest) pushCallback(latest);
+          }
         } else {
           // Full reload: either subscribeBar callback not yet available (race
           // before first init load), or the interval just changed and we need to

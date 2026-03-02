@@ -5,6 +5,7 @@ import { persist } from 'zustand/middleware';
 const INITIAL = {
   upColor: null,
   downColor: null,
+  candleType: 'candle_solid', // klinecharts candle type
 };
 
 export const useCandleColorStore = create(
@@ -13,11 +14,12 @@ export const useCandleColorStore = create(
       ...INITIAL,
       setUpColor: (color) => set({ upColor: color }),
       setDownColor: (color) => set({ downColor: color }),
+      setCandleType: (type) => set({ candleType: type }),
       resetColors: () => set(INITIAL),
     }),
     {
       name: 'candle-colors',
-      version: 1,
+      version: 2,
     }
   )
 );
