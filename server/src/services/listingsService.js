@@ -35,6 +35,25 @@ function isUpcomingMs(ms, nowMs) {
   return Number.isFinite(ms) && ms > nowMs && ms <= nowMs + UPCOMING_DAYS * 86400_000;
 }
 
+function normalizeUpcomingMs(rawMs, nowMs, fallbackHours = 12) {
+  if (isUpcomingMs(rawMs, nowMs)) {
+    return { listedAt: rawMs, tba: false };
+  }
+  return { listedAt: nowMs + fallbackHours * 3600_000, tba: true };
+}
+
+async function getWithFallback(urls, config = {}) {
+  let lastError = null;
+  for (const url of urls) {
+    try {
+      return await axios.get(url, config);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
+}
+
 function dedup(rows) {
   const seen = new Set();
   return rows.filter((row) => {
@@ -149,11 +168,11 @@ async function fetchBinanceFutures(nowMs) {
     .filter((item) => {
       const q = String(item?.quoteAsset || '').toUpperCase();
       const st = String(item?.status || '').toUpperCase();
-      const listedAt = toMs(item?.onboardDate);
-      return q === 'USDT' && st === 'PENDING_TRADING' && isUpcomingMs(listedAt, nowMs);
+      return q === 'USDT' && st === 'PENDING_TRADING';
     })
     .map((item) => {
-      const listedAt = toMs(item?.onboardDate) || nowMs;
+      const normalized = normalizeUpcomingMs(toMs(item?.onboardDate), nowMs);
+      const listedAt = normalized.listedAt;
       return {
         exchange: 'Binance',
         market: 'futures',
@@ -161,7 +180,7 @@ async function fetchBinanceFutures(nowMs) {
         coin: String(item?.baseAsset || item?.symbol || '').toUpperCase(),
         status: 'upcoming',
         listedAt,
-        date: isoDateTime(listedAt),
+        date: normalized.tba ? 'TBA' : isoDateTime(listedAt),
       };
     })
     .filter((item) => item.coin);
@@ -211,10 +230,17 @@ async function fetchBinanceSpotAnnouncements(nowMs) {
 }
 
 async function fetchBybitPage(params) {
-  const { data } = await axios.get('https://api.bybit.com/v5/market/instruments-info', {
-    params,
-    timeout: 20000,
-  });
+  const { data } = await getWithFallback(
+    [
+      'https://api.bybit.com/v5/market/instruments-info',
+      'https://api.bytick.com/v5/market/instruments-info',
+    ],
+    {
+      params,
+      timeout: 20000,
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; CryptoAlertsBot/1.0)' },
+    }
+  );
   if (Number(data?.retCode) !== 0) {
     throw new Error(data?.retMsg || 'Bybit API error');
   }
@@ -241,8 +267,8 @@ async function fetchBybitFutures(nowMs) {
     .filter((item) => String(item?.quoteCoin || '').toUpperCase() === 'USDT')
     .map((item) => {
       // PreLaunch items may have launchTime=0/null or stale past values; keep them as upcoming with TBA.
-      const rawLaunchMs = toMs(item?.launchTime);
-      const listedAt = isUpcomingMs(rawLaunchMs, nowMs) ? rawLaunchMs : nowMs + 86400_000;
+      const normalized = normalizeUpcomingMs(toMs(item?.launchTime), nowMs);
+      const listedAt = normalized.listedAt;
       const coin = String(item?.baseCoin || item?.symbol || '').toUpperCase();
       if (!coin) return null;
       return {
@@ -252,7 +278,7 @@ async function fetchBybitFutures(nowMs) {
         coin,
         status: 'upcoming',
         listedAt,
-        date: listedAt === nowMs + 86400_000 ? 'TBA' : isoDateTime(listedAt),
+        date: normalized.tba ? 'TBA' : isoDateTime(listedAt),
       };
     })
     .filter(Boolean);

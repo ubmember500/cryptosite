@@ -55,50 +55,66 @@ const Listings = () => {
 
   useEffect(() => {
     let cancelled = false;
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 min max
-    setRefreshing(true);
-    setError(null);
-    fetch(`${API_BASE_URL}/market/listings`, { signal: controller.signal })
-      .then((res) => {
-        if (!res.ok) {
-          if (res.status === 404) {
-            throw new Error('Listings API not found. Restart the server (npm run dev in project root) and try again.');
+
+    const loadSnapshot = () => {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 min max
+      setRefreshing(true);
+      setError(null);
+
+      fetch(`${API_BASE_URL}/market/listings`, { signal: controller.signal })
+        .then((res) => {
+          if (!res.ok) {
+            if (res.status === 404) {
+              throw new Error('Listings API not found. Restart the server (npm run dev in project root) and try again.');
+            }
+            throw new Error(res.statusText || 'Failed to load listings');
           }
-          throw new Error(res.statusText || 'Failed to load listings');
-        }
-        return res.json();
-      })
-      .then((data) => {
-        if (!cancelled && data.listings) {
-          setItems(
-            data.listings.map((row, i) => ({
-              ...row,
-              market: row.market || row.type || '-',
-              id: `${row.exchange}-${row.market || row.type || '-'}-${row.coin}-${i}`,
-            }))
-          );
-          const sourceRows = Array.isArray(data?.meta?.sources) && data.meta.sources.length > 0
-            ? data.meta.sources
-            : DEFAULT_SOURCES;
-          setSources(sourceRows);
-          setLastUpdatedAt(data?.meta?.lastUpdatedAt || null);
-        }
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          const msg = err.name === 'AbortError' ? 'Request took too long.' : (err.message || 'Failed to load listings. Is the server running?');
-          setError(msg);
-        }
-      })
-      .finally(() => {
+          return res.json();
+        })
+        .then((data) => {
+          if (!cancelled && data.listings) {
+            setItems(
+              data.listings.map((row, i) => ({
+                ...row,
+                market: row.market || row.type || '-',
+                id: `${row.exchange}-${row.market || row.type || '-'}-${row.coin}-${i}`,
+              }))
+            );
+            const sourceRows = Array.isArray(data?.meta?.sources) && data.meta.sources.length > 0
+              ? data.meta.sources
+              : DEFAULT_SOURCES;
+            setSources(sourceRows);
+            setLastUpdatedAt(data?.meta?.lastUpdatedAt || null);
+          }
+        })
+        .catch((err) => {
+          if (!cancelled) {
+            const msg = err.name === 'AbortError' ? 'Request took too long.' : (err.message || 'Failed to load listings. Is the server running?');
+            setError(msg);
+          }
+        })
+        .finally(() => {
+          clearTimeout(timeoutId);
+          if (!cancelled) setRefreshing(false);
+        });
+
+      return () => {
+        controller.abort();
         clearTimeout(timeoutId);
-        if (!cancelled) setRefreshing(false);
-      });
+      };
+    };
+
+    let cleanupRequest = loadSnapshot();
+    const intervalId = setInterval(() => {
+      if (cleanupRequest) cleanupRequest();
+      cleanupRequest = loadSnapshot();
+    }, 30_000);
+
     return () => {
       cancelled = true;
-      controller.abort();
-      clearTimeout(timeoutId);
+      if (cleanupRequest) cleanupRequest();
+      clearInterval(intervalId);
     };
   }, []);
 
