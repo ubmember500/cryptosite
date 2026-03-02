@@ -2,6 +2,13 @@ import axios from 'axios';
 import { useAuthStore } from '../store/authStore';
 import { API_BASE_URL } from '../utils/constants';
 
+const PUBLIC_PATHS = new Set(['/market', '/market-map', '/instructions', '/login', '/register', '/forgot-password', '/reset-password']);
+
+const isPublicPath = (pathname = '') => {
+  if (PUBLIC_PATHS.has(pathname)) return true;
+  return Array.from(PUBLIC_PATHS).some((publicPath) => publicPath !== '/' && pathname.startsWith(`${publicPath}/`));
+};
+
 const api = axios.create({
   baseURL: API_BASE_URL,
   headers: {
@@ -29,6 +36,8 @@ api.interceptors.response.use(
     const url = originalRequest?.url ?? '';
     const isAuthEndpoint =
       url.includes('auth/login') || url.includes('auth/register') || originalRequest?._skipAuthRedirect;
+    const currentPath = typeof window !== 'undefined' ? window.location.pathname : '';
+    const isOnPublicPath = isPublicPath(currentPath);
 
     // Login/register return 401 for invalid credentials — let the page show the error, never redirect
     if (isAuthEndpoint) {
@@ -39,7 +48,7 @@ api.interceptors.response.use(
     if (error.response?.status === 401 && !originalRequest._retry) {
       originalRequest._retry = true;
       useAuthStore.getState().logout();
-      if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+      if (typeof window !== 'undefined' && !isOnPublicPath && window.location.pathname !== '/login') {
         window.location.href = '/login';
       }
       return Promise.reject(error);

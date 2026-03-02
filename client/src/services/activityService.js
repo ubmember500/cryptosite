@@ -46,7 +46,7 @@ async function flushQueue() {
     await api.post('/activity/track', {
       sessionId: getActivitySessionId(),
       events,
-    });
+    }, { _skipAuthRedirect: true });
   } catch {
     queue = [...events, ...queue].slice(0, 500);
   }
