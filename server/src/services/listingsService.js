@@ -3,7 +3,6 @@ const prisma = require('../utils/prisma');
 
 const MONITORED_EXCHANGES = ['Binance', 'Bybit', 'OKX', 'MEXC', 'Bitget', 'Gate.io'];
 const UPCOMING_DAYS = Math.max(0, Number.parseInt(process.env.LISTINGS_UPCOMING_DAYS || '90', 10));
-const LOOKBACK_DAYS = Math.max(0, Number.parseInt(process.env.LISTINGS_LOOKBACK_DAYS || '14', 10));
 const REFRESH_INTERVAL_MS = Math.max(60_000, Number.parseInt(process.env.LISTINGS_REFRESH_MS || '300000', 10));
 
 let refreshTimer = null;
@@ -32,17 +31,8 @@ function isoDateTime(ms) {
   return new Date(ms).toISOString().slice(0, 16).replace('T', ' ');
 }
 
-// True for dates in the window: (now - LOOKBACK_DAYS) to (now + UPCOMING_DAYS)
-function isInWindow(ms, nowMs) {
-  return (
-    Number.isFinite(ms) &&
-    ms >= nowMs - LOOKBACK_DAYS * 86400_000 &&
-    ms <= nowMs + UPCOMING_DAYS * 86400_000
-  );
-}
-
-function listingStatus(listedAt, nowMs) {
-  return listedAt > nowMs ? 'upcoming' : 'new';
+function isUpcomingMs(ms, nowMs) {
+  return Number.isFinite(ms) && ms > nowMs && ms <= nowMs + UPCOMING_DAYS * 86400_000;
 }
 
 function dedup(rows) {
@@ -121,20 +111,22 @@ async function loadSnapshotFromDb() {
     orderBy: [{ firstSeenAt: 'asc' }, { exchange: 'asc' }],
   });
 
-const nowMs = Date.now();
-  const listings = rows.map((row) => {
-    const parsed = fromDbSymbol(row.symbol);
-    const listedAt = new Date(row.firstSeenAt).getTime();
-    return {
-      exchange: row.exchange,
-      market: parsed.market,
-      type: parsed.market,
-      coin: parsed.coin,
-      status: listingStatus(listedAt, nowMs),
-      date: isoDateTime(listedAt),
-      listedAt,
-    };
-  });
+  const nowMs = Date.now();
+  const listings = rows
+    .map((row) => {
+      const parsed = fromDbSymbol(row.symbol);
+      const listedAt = new Date(row.firstSeenAt).getTime();
+      return {
+        exchange: row.exchange,
+        market: parsed.market,
+        type: parsed.market,
+        coin: parsed.coin,
+        status: 'upcoming',
+        date: isoDateTime(listedAt),
+        listedAt,
+      };
+    })
+    .filter((row) => isUpcomingMs(row.listedAt, nowMs));
 
   const normalized = dedup(listings)
     .sort((a, b) => (a.listedAt || 0) - (b.listedAt || 0))
@@ -158,7 +150,7 @@ async function fetchBinanceFutures(nowMs) {
       const q = String(item?.quoteAsset || '').toUpperCase();
       const st = String(item?.status || '').toUpperCase();
       const listedAt = toMs(item?.onboardDate);
-      return q === 'USDT' && (st === 'PENDING_TRADING' || isInWindow(listedAt, nowMs));
+      return q === 'USDT' && st === 'PENDING_TRADING' && isUpcomingMs(listedAt, nowMs);
     })
     .map((item) => {
       const listedAt = toMs(item?.onboardDate) || nowMs;
@@ -167,7 +159,7 @@ async function fetchBinanceFutures(nowMs) {
         market: 'futures',
         type: 'futures',
         coin: String(item?.baseAsset || item?.symbol || '').toUpperCase(),
-        status: listingStatus(listedAt, nowMs),
+        status: 'upcoming',
         listedAt,
         date: isoDateTime(listedAt),
       };
@@ -191,7 +183,7 @@ async function fetchBinanceSpotAnnouncements(nowMs) {
   for (const article of articles) {
     const title = String(article?.title || '');
     const releaseMs = toMs(article?.releaseDate);
-    if (!releaseMs || !isInWindow(releaseMs, nowMs)) continue;
+    if (!releaseMs || !isUpcomingMs(releaseMs, nowMs)) continue;
 
     const market = /futures|perpetual/i.test(title) ? 'futures' : 'spot';
     const matches = [
@@ -208,7 +200,7 @@ async function fetchBinanceSpotAnnouncements(nowMs) {
         market,
         type: market,
         coin,
-        status: listingStatus(releaseMs, nowMs),
+        status: 'upcoming',
         listedAt: releaseMs,
         date: isoDateTime(releaseMs),
       });
@@ -248,9 +240,9 @@ async function fetchBybitFutures(nowMs) {
   return Array.from(all.values())
     .filter((item) => String(item?.quoteCoin || '').toUpperCase() === 'USDT')
     .map((item) => {
-      // PreLaunch items may have launchTime=0 or null — use a near-future placeholder
+      // PreLaunch items may have launchTime=0/null or stale past values; keep them as upcoming with TBA.
       const rawLaunchMs = toMs(item?.launchTime);
-      const listedAt = rawLaunchMs && rawLaunchMs > 0 ? rawLaunchMs : nowMs + 86400_000;
+      const listedAt = isUpcomingMs(rawLaunchMs, nowMs) ? rawLaunchMs : nowMs + 86400_000;
       const coin = String(item?.baseCoin || item?.symbol || '').toUpperCase();
       if (!coin) return null;
       return {
@@ -258,7 +250,7 @@ async function fetchBybitFutures(nowMs) {
         market: 'futures',
         type: 'futures',
         coin,
-        status: listingStatus(listedAt, nowMs),
+        status: 'upcoming',
         listedAt,
         date: listedAt === nowMs + 86400_000 ? 'TBA' : isoDateTime(listedAt),
       };
@@ -278,7 +270,7 @@ async function fetchOkxByType(instType, nowMs) {
   return (Array.isArray(data?.data) ? data.data : [])
     .filter((item) => {
       const settle = String(item?.settleCcy || item?.quoteCcy || '').toUpperCase();
-      return settle === 'USDT' && isInWindow(toMs(item?.listTime), nowMs);
+      return settle === 'USDT' && isUpcomingMs(toMs(item?.listTime), nowMs);
     })
     .map((item) => {
       const listedAt = toMs(item?.listTime);
@@ -287,7 +279,7 @@ async function fetchOkxByType(instType, nowMs) {
         market: 'futures',
         type: 'futures',
         coin: String(item?.baseCcy || item?.instId || '').toUpperCase(),
-        status: listingStatus(listedAt, nowMs),
+        status: 'upcoming',
         listedAt,
         date: isoDateTime(listedAt),
       };
@@ -305,7 +297,7 @@ async function fetchOkxFutures(nowMs) {
 async function fetchMexcSpot(nowMs) {
   const { data } = await axios.get('https://api.mexc.com/api/v3/exchangeInfo', { timeout: 20000 });
   return (data?.symbols || [])
-    .filter((item) => isInWindow(toMs(item?.openTime), nowMs))
+    .filter((item) => isUpcomingMs(toMs(item?.openTime), nowMs))
     .map((item) => {
       const listedAt = toMs(item?.openTime);
       return {
@@ -313,7 +305,7 @@ async function fetchMexcSpot(nowMs) {
         market: 'spot',
         type: 'spot',
         coin: String(item?.baseAsset || '').toUpperCase(),
-        status: listingStatus(listedAt, nowMs),
+        status: 'upcoming',
         listedAt,
         date: isoDateTime(listedAt),
       };
@@ -326,7 +318,7 @@ async function fetchMexcFutures(nowMs) {
   return (Array.isArray(data?.data) ? data.data : [])
     .filter((item) => {
       const listedAt = toMs(item?.launchTime || item?.openTime);
-      return String(item?.quoteCoin || item?.symbol || '').toUpperCase().includes('USDT') && isInWindow(listedAt, nowMs);
+      return String(item?.quoteCoin || item?.symbol || '').toUpperCase().includes('USDT') && isUpcomingMs(listedAt, nowMs);
     })
     .map((item) => {
       const listedAt = toMs(item?.launchTime || item?.openTime);
@@ -335,7 +327,7 @@ async function fetchMexcFutures(nowMs) {
         market: 'futures',
         type: 'futures',
         coin: String(item?.baseCoin || item?.symbol || '').toUpperCase().replace(/_?USDT$/, ''),
-        status: listingStatus(listedAt, nowMs),
+        status: 'upcoming',
         listedAt,
         date: isoDateTime(listedAt),
       };
@@ -346,7 +338,7 @@ async function fetchMexcFutures(nowMs) {
 async function fetchBitgetSpot(nowMs) {
   const { data } = await axios.get('https://api.bitget.com/api/v2/spot/public/symbols', { timeout: 20000 });
   return (data?.data || [])
-    .filter((item) => String(item?.quoteCoin || '').toUpperCase() === 'USDT' && isInWindow(toMs(item?.openTime || item?.listTime), nowMs))
+    .filter((item) => String(item?.quoteCoin || '').toUpperCase() === 'USDT' && isUpcomingMs(toMs(item?.openTime || item?.listTime), nowMs))
     .map((item) => {
       const listedAt = toMs(item?.openTime || item?.listTime);
       return {
@@ -354,7 +346,7 @@ async function fetchBitgetSpot(nowMs) {
         market: 'spot',
         type: 'spot',
         coin: String(item?.baseCoin || '').toUpperCase(),
-        status: listingStatus(listedAt, nowMs),
+        status: 'upcoming',
         listedAt,
         date: isoDateTime(listedAt),
       };
@@ -365,7 +357,7 @@ async function fetchBitgetSpot(nowMs) {
 async function fetchBitgetFutures(nowMs) {
   const { data } = await axios.get('https://api.bitget.com/api/v2/mix/market/contracts?productType=USDT-FUTURES', { timeout: 20000 });
   return (data?.data || [])
-    .filter((item) => isInWindow(toMs(item?.launchTime || item?.openTime || item?.listTime), nowMs))
+    .filter((item) => isUpcomingMs(toMs(item?.launchTime || item?.openTime || item?.listTime), nowMs))
     .map((item) => {
       const listedAt = toMs(item?.launchTime || item?.openTime || item?.listTime);
       return {
@@ -373,7 +365,7 @@ async function fetchBitgetFutures(nowMs) {
         market: 'futures',
         type: 'futures',
         coin: String(item?.baseCoin || item?.symbol || '').toUpperCase().replace(/USDT$/, ''),
-        status: listingStatus(listedAt, nowMs),
+        status: 'upcoming',
         listedAt,
         date: isoDateTime(listedAt),
       };
@@ -387,7 +379,7 @@ async function fetchGateFutures(nowMs) {
     .filter((item) => {
       // Gate.io uses create_time (seconds) when the contract was created — same as listing date
       const listedAt = toMs(item?.create_time);
-      return isInWindow(listedAt, nowMs);
+      return isUpcomingMs(listedAt, nowMs);
     })
     .map((item) => {
       const listedAt = toMs(item?.create_time);
@@ -396,7 +388,7 @@ async function fetchGateFutures(nowMs) {
         market: 'futures',
         type: 'futures',
         coin: String(item?.name || '').toUpperCase().replace('_USDT', ''),
-        status: listingStatus(listedAt, nowMs),
+        status: 'upcoming',
         listedAt,
         date: isoDateTime(listedAt),
       };

@@ -9,7 +9,14 @@ const ALL_EXCHANGES = ['Binance', 'Bybit', 'OKX', 'MEXC', 'Bitget', 'Gate.io'];
 
 const DEFAULT_SOURCES = ALL_EXCHANGES.map((exchange) => ({ exchange, count: 0 }));
 
-const STATUS_FILTERS = ['all', 'upcoming', 'new'];
+const EXCHANGE_SYMBOLS = {
+  Binance: 'BN',
+  Bybit: 'BY',
+  OKX: 'OK',
+  MEXC: 'MX',
+  Bitget: 'BG',
+  'Gate.io': 'GT',
+};
 
 // Exchange brand colours for toggle buttons
 const EXCHANGE_COLORS = {
@@ -30,7 +37,6 @@ const Listings = () => {
   const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
-  const [statusFilter, setStatusFilter] = useState('all');
   // exchange toggles: Set of currently-enabled exchange names
   const [enabledExchanges, setEnabledExchanges] = useState(() => new Set(ALL_EXCHANGES));
 
@@ -104,8 +110,7 @@ const Listings = () => {
   };
 
   const sortedItems = useMemo(() => {
-    let filtered = items.filter((r) => enabledExchanges.has(r.exchange));
-    if (statusFilter !== 'all') filtered = filtered.filter((r) => r.status === statusFilter);
+    const filtered = items.filter((r) => enabledExchanges.has(r.exchange));
     return [...filtered].sort((a, b) => {
       const aVal = a[sortConfig.key];
       const bVal = b[sortConfig.key];
@@ -113,7 +118,7 @@ const Listings = () => {
       if (aVal > bVal) return sortConfig.direction === 'asc' ? 1 : -1;
       return 0;
     });
-  }, [items, sortConfig, statusFilter, enabledExchanges]);
+  }, [items, sortConfig, enabledExchanges]);
 
   const SortIcon = ({ columnKey }) => {
     if (sortConfig.key !== columnKey) {
@@ -155,15 +160,18 @@ const Listings = () => {
                 key={source.exchange}
                 onClick={() => toggleExchange(source.exchange)}
                 title={isOn ? `Hide ${source.exchange}` : `Show ${source.exchange}`}
-                className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-all select-none ${
+                className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium transition-all select-none ${
                   isOn
                     ? colors.on
                     : 'bg-transparent border-border text-textSecondary opacity-40 hover:opacity-60'
                 }`}
               >
-                <span className={`h-1.5 w-1.5 rounded-full flex-shrink-0 ${isOn ? colors.dot : 'bg-textSecondary'}`} />
-                {source.exchange}
+                <span className={`inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold ${isOn ? 'bg-black/25 text-white' : 'bg-surfaceDark text-textSecondary'}`}>
+                  {EXCHANGE_SYMBOLS[source.exchange] || source.exchange.slice(0, 2).toUpperCase()}
+                </span>
+                <span>{source.exchange}</span>
                 <span className={`ml-0.5 ${isOn ? 'opacity-80' : 'opacity-50'}`}>{source.count}</span>
+                <span className={`ml-1 text-[10px] tracking-wide ${isOn ? 'opacity-80' : 'opacity-60'}`}>{isOn ? 'ON' : 'OFF'}</span>
               </button>
             );
           })}
@@ -175,34 +183,8 @@ const Listings = () => {
               : t('Waiting for first sync\u2026')}
           </span>
         </div>
-      </Card>      {/* Status filter bar */}
-      <div className="flex items-center gap-2">
-        {STATUS_FILTERS.map((filter) => {
-          const enabledItems = items.filter((r) => enabledExchanges.has(r.exchange));
-          const count = filter === 'all'
-            ? enabledItems.length
-            : enabledItems.filter((r) => r.status === filter).length;
-          return (
-            <button
-              key={filter}
-              onClick={() => setStatusFilter(filter)}
-              className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
-                statusFilter === filter
-                  ? filter === 'upcoming'
-                    ? 'bg-amber-500/20 border-amber-500/50 text-amber-400'
-                    : filter === 'new'
-                    ? 'bg-green-500/20 border-green-500/50 text-green-400'
-                    : 'bg-blue-500/20 border-blue-500/50 text-blue-400'
-                  : 'bg-transparent border-border text-textSecondary hover:text-textPrimary'
-              }`}
-            >
-              {filter === 'all' ? 'All' : filter.charAt(0).toUpperCase() + filter.slice(1)}
-              {' '}
-              <span className="opacity-70">{count}</span>
-            </button>
-          );
-        })}
-      </div>      <Card className="overflow-hidden p-0">
+      </Card>
+      <Card className="overflow-hidden p-0">
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-border">
             <thead className="bg-surfaceDark">
@@ -259,9 +241,7 @@ const Listings = () => {
               {sortedItems.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="px-4 py-8 text-center text-textSecondary">
-                    {statusFilter === 'all'
-                      ? t('No listings found yet. Data refreshes every 5 minutes.')
-                      : `No ${statusFilter} listings found.`}
+                    {t('No future listings found. Data refreshes every 5 minutes.')}
                   </td>
                 </tr>
               ) : (
@@ -271,15 +251,9 @@ const Listings = () => {
                     <td className="px-4 py-3 text-sm text-textPrimary">{row.exchange}</td>
                     <td className="px-4 py-3 text-sm text-textPrimary capitalize">{row.market}</td>
                     <td className="px-4 py-3 text-sm">
-                      {row.status === 'upcoming' ? (
-                        <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold bg-amber-500/15 text-amber-400 border border-amber-500/30">
-                          UPCOMING
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold bg-green-500/15 text-green-400 border border-green-500/30">
-                          NEW
-                        </span>
-                      )}
+                      <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold bg-amber-500/15 text-amber-400 border border-amber-500/30">
+                        UPCOMING
+                      </span>
                     </td>
                     <td className="px-4 py-3 text-sm text-textPrimary font-mono whitespace-nowrap">{row.date}</td>
                   </tr>
