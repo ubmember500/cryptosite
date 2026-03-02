@@ -1,20 +1,25 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronUp, ChevronDown } from 'lucide-react';
 import Card from '../components/common/Card';
 import { API_BASE_URL } from '../utils/constants';
 import usePageTitle from '../hooks/usePageTitle';
 
-const DEFAULT_SOURCES = [
-  { exchange: 'Binance', count: 0 },
-  { exchange: 'Bybit', count: 0 },
-  { exchange: 'OKX', count: 0 },
-  { exchange: 'MEXC', count: 0 },
-  { exchange: 'Bitget', count: 0 },
-  { exchange: 'Gate.io', count: 0 },
-];
+const ALL_EXCHANGES = ['Binance', 'Bybit', 'OKX', 'MEXC', 'Bitget', 'Gate.io'];
+
+const DEFAULT_SOURCES = ALL_EXCHANGES.map((exchange) => ({ exchange, count: 0 }));
 
 const STATUS_FILTERS = ['all', 'upcoming', 'new'];
+
+// Exchange brand colours for toggle buttons
+const EXCHANGE_COLORS = {
+  Binance:  { on: 'bg-yellow-500/20 border-yellow-500/50 text-yellow-400',  dot: 'bg-yellow-400' },
+  Bybit:    { on: 'bg-orange-500/20 border-orange-500/50 text-orange-400', dot: 'bg-orange-400' },
+  OKX:      { on: 'bg-blue-500/20   border-blue-500/50   text-blue-400',   dot: 'bg-blue-400'   },
+  MEXC:     { on: 'bg-cyan-500/20   border-cyan-500/50   text-cyan-400',   dot: 'bg-cyan-400'   },
+  Bitget:   { on: 'bg-teal-500/20   border-teal-500/50   text-teal-400',   dot: 'bg-teal-400'   },
+  'Gate.io':{ on: 'bg-red-500/20    border-red-500/50    text-red-400',    dot: 'bg-red-400'    },
+};
 
 const Listings = () => {
   usePageTitle('Listings');
@@ -26,6 +31,21 @@ const Listings = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
   const [statusFilter, setStatusFilter] = useState('all');
+  // exchange toggles: Set of currently-enabled exchange names
+  const [enabledExchanges, setEnabledExchanges] = useState(() => new Set(ALL_EXCHANGES));
+
+  const toggleExchange = useCallback((exchange) => {
+    setEnabledExchanges((prev) => {
+      const next = new Set(prev);
+      if (next.has(exchange)) {
+        // don't allow deselecting all
+        if (next.size > 1) next.delete(exchange);
+      } else {
+        next.add(exchange);
+      }
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -84,7 +104,8 @@ const Listings = () => {
   };
 
   const sortedItems = useMemo(() => {
-    const filtered = statusFilter === 'all' ? items : items.filter((r) => r.status === statusFilter);
+    let filtered = items.filter((r) => enabledExchanges.has(r.exchange));
+    if (statusFilter !== 'all') filtered = filtered.filter((r) => r.status === statusFilter);
     return [...filtered].sort((a, b) => {
       const aVal = a[sortConfig.key];
       const bVal = b[sortConfig.key];
@@ -92,7 +113,7 @@ const Listings = () => {
       if (aVal > bVal) return sortConfig.direction === 'asc' ? 1 : -1;
       return 0;
     });
-  }, [items, sortConfig, statusFilter]);
+  }, [items, sortConfig, statusFilter, enabledExchanges]);
 
   const SortIcon = ({ columnKey }) => {
     if (sortConfig.key !== columnKey) {
@@ -122,27 +143,45 @@ const Listings = () => {
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold text-textPrimary">{t('Listings')}</h1>
+
+      {/* Exchange toggle buttons */}
       <Card className="p-3">
         <div className="flex flex-wrap items-center gap-2">
-          {sources.map((source) => (
-            <span
-              key={source.exchange}
-              className="inline-flex items-center rounded-full border border-border bg-surfaceDark px-2.5 py-1 text-xs text-textSecondary"
-            >
-              <span className="font-medium text-textPrimary">{source.exchange}</span>
-              <span className="ml-1.5 text-blue-400">{source.count}</span>
-            </span>
-          ))}
+          {sources.map((source) => {
+            const isOn = enabledExchanges.has(source.exchange);
+            const colors = EXCHANGE_COLORS[source.exchange] || EXCHANGE_COLORS['Binance'];
+            return (
+              <button
+                key={source.exchange}
+                onClick={() => toggleExchange(source.exchange)}
+                title={isOn ? `Hide ${source.exchange}` : `Show ${source.exchange}`}
+                className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-all select-none ${
+                  isOn
+                    ? colors.on
+                    : 'bg-transparent border-border text-textSecondary opacity-40 hover:opacity-60'
+                }`}
+              >
+                <span className={`h-1.5 w-1.5 rounded-full flex-shrink-0 ${isOn ? colors.dot : 'bg-textSecondary'}`} />
+                {source.exchange}
+                <span className={`ml-0.5 ${isOn ? 'opacity-80' : 'opacity-50'}`}>{source.count}</span>
+              </button>
+            );
+          })}
           <span className="ml-auto text-xs text-textSecondary">
-            {refreshing ? t('Refreshing…') : (lastUpdatedAt ? `${t('Updated')}: ${new Date(lastUpdatedAt).toLocaleString()}` : t('Waiting for first sync…'))}
+            {refreshing
+              ? t('Refreshing\u2026')
+              : lastUpdatedAt
+              ? `${t('Updated')}: ${new Date(lastUpdatedAt).toLocaleString()}`
+              : t('Waiting for first sync\u2026')}
           </span>
         </div>
       </Card>      {/* Status filter bar */}
       <div className="flex items-center gap-2">
         {STATUS_FILTERS.map((filter) => {
+          const enabledItems = items.filter((r) => enabledExchanges.has(r.exchange));
           const count = filter === 'all'
-            ? items.length
-            : items.filter((r) => r.status === filter).length;
+            ? enabledItems.length
+            : enabledItems.filter((r) => r.status === filter).length;
           return (
             <button
               key={filter}
@@ -234,15 +273,15 @@ const Listings = () => {
                     <td className="px-4 py-3 text-sm">
                       {row.status === 'upcoming' ? (
                         <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold bg-amber-500/15 text-amber-400 border border-amber-500/30">
-                          {t('UPCOMING')}
+                          UPCOMING
                         </span>
                       ) : (
                         <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold bg-green-500/15 text-green-400 border border-green-500/30">
-                          {t('NEW')}
+                          NEW
                         </span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-sm text-textPrimary">{row.date}</td>
+                    <td className="px-4 py-3 text-sm text-textPrimary font-mono whitespace-nowrap">{row.date}</td>
                   </tr>
                 ))
               )}

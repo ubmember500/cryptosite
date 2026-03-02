@@ -26,6 +26,12 @@ function isoDate(ms) {
   return new Date(ms).toISOString().slice(0, 10);
 }
 
+// Returns 'YYYY-MM-DD HH:MM' in UTC
+function isoDateTime(ms) {
+  if (!ms || !Number.isFinite(ms)) return isoDate(ms);
+  return new Date(ms).toISOString().slice(0, 16).replace('T', ' ');
+}
+
 // True for dates in the window: (now - LOOKBACK_DAYS) to (now + UPCOMING_DAYS)
 function isInWindow(ms, nowMs) {
   return (
@@ -115,6 +121,7 @@ async function loadSnapshotFromDb() {
     orderBy: [{ firstSeenAt: 'asc' }, { exchange: 'asc' }],
   });
 
+const nowMs = Date.now();
   const listings = rows.map((row) => {
     const parsed = fromDbSymbol(row.symbol);
     const listedAt = new Date(row.firstSeenAt).getTime();
@@ -123,8 +130,8 @@ async function loadSnapshotFromDb() {
       market: parsed.market,
       type: parsed.market,
       coin: parsed.coin,
-      status: 'upcoming',
-      date: isoDate(listedAt),
+      status: listingStatus(listedAt, nowMs),
+      date: isoDateTime(listedAt),
       listedAt,
     };
   });
@@ -162,7 +169,7 @@ async function fetchBinanceFutures(nowMs) {
         coin: String(item?.baseAsset || item?.symbol || '').toUpperCase(),
         status: listingStatus(listedAt, nowMs),
         listedAt,
-        date: isoDate(listedAt),
+        date: isoDateTime(listedAt),
       };
     })
     .filter((item) => item.coin);
@@ -203,7 +210,7 @@ async function fetchBinanceSpotAnnouncements(nowMs) {
         coin,
         status: listingStatus(releaseMs, nowMs),
         listedAt: releaseMs,
-        date: isoDate(releaseMs),
+        date: isoDateTime(releaseMs),
       });
     }
   }
@@ -253,7 +260,7 @@ async function fetchBybitFutures(nowMs) {
         coin,
         status: listingStatus(listedAt, nowMs),
         listedAt,
-        date: listedAt === nowMs + 86400_000 ? 'TBA' : isoDate(listedAt),
+        date: listedAt === nowMs + 86400_000 ? 'TBA' : isoDateTime(listedAt),
       };
     })
     .filter(Boolean);
@@ -282,7 +289,7 @@ async function fetchOkxByType(instType, nowMs) {
         coin: String(item?.baseCcy || item?.instId || '').toUpperCase(),
         status: listingStatus(listedAt, nowMs),
         listedAt,
-        date: isoDate(listedAt),
+        date: isoDateTime(listedAt),
       };
     });
 }
@@ -308,7 +315,7 @@ async function fetchMexcSpot(nowMs) {
         coin: String(item?.baseAsset || '').toUpperCase(),
         status: listingStatus(listedAt, nowMs),
         listedAt,
-        date: isoDate(listedAt),
+        date: isoDateTime(listedAt),
       };
     })
     .filter((item) => item.coin);
@@ -330,7 +337,7 @@ async function fetchMexcFutures(nowMs) {
         coin: String(item?.baseCoin || item?.symbol || '').toUpperCase().replace(/_?USDT$/, ''),
         status: listingStatus(listedAt, nowMs),
         listedAt,
-        date: isoDate(listedAt),
+        date: isoDateTime(listedAt),
       };
     })
     .filter((item) => item.coin);
@@ -349,7 +356,7 @@ async function fetchBitgetSpot(nowMs) {
         coin: String(item?.baseCoin || '').toUpperCase(),
         status: listingStatus(listedAt, nowMs),
         listedAt,
-        date: isoDate(listedAt),
+        date: isoDateTime(listedAt),
       };
     })
     .filter((item) => item.coin);
@@ -368,7 +375,7 @@ async function fetchBitgetFutures(nowMs) {
         coin: String(item?.baseCoin || item?.symbol || '').toUpperCase().replace(/USDT$/, ''),
         status: listingStatus(listedAt, nowMs),
         listedAt,
-        date: isoDate(listedAt),
+        date: isoDateTime(listedAt),
       };
     })
     .filter((item) => item.coin);
@@ -391,7 +398,7 @@ async function fetchGateFutures(nowMs) {
         coin: String(item?.name || '').toUpperCase().replace('_USDT', ''),
         status: listingStatus(listedAt, nowMs),
         listedAt,
-        date: isoDate(listedAt),
+        date: isoDateTime(listedAt),
       };
     })
     .filter((item) => item.coin);
