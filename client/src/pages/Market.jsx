@@ -399,11 +399,6 @@ const Market = () => {
           </div>
         </header>
 
-        {/* SEO H1 — visible, compact, keyword-rich */}
-        <h1 className="px-3 py-1.5 text-[11px] md:text-xs text-textSecondary/70 bg-surface/30 border-b border-border/50 font-medium tracking-wide leading-snug">
-          Crypto Screener 2027 — Реал-тайм скринер с алертами и плотностями стакана
-        </h1>
-
         <div ref={splitContainerRef} className="flex flex-1 min-h-0 overflow-hidden">
           {/* Left Panel - Chart */}
           <div
@@ -675,54 +670,6 @@ const Market = () => {
       </div>
     </div>
 
-    {/* SEO Text Block — crawlable keyword-rich content (collapsed by default, scrollable) */}
-    <details open className="bg-surface/40 border-t border-border/50">
-      <summary className="px-3 py-1.5 text-[10px] text-textSecondary/50 cursor-pointer hover:text-textSecondary/70 transition-colors select-none tracking-wide">
-        About this crypto screener
-      </summary>
-      <div className="px-4 py-3 text-[11px] leading-relaxed text-textSecondary/60 max-h-64 overflow-y-auto space-y-2 columns-1 md:columns-2 gap-6">
-        <h2 className="text-xs font-semibold text-textSecondary/80 mb-1 break-inside-avoid">
-          Free Real-Time Crypto Screener 2027
-        </h2>
-        <p className="break-inside-avoid">
-          CryptoAlerts is a <strong>free crypto screener</strong> built for active traders who need
-          speed, precision and real-time data. Our <strong>cryptocurrency screener</strong> streams
-          live prices from <strong>Binance, Bybit, OKX, Bitget, Gate.io and MEXC</strong> — all in
-          a single interface. Whether you are a scalper hunting 1-second candles or a day trader
-          watching 4-hour swings, this <strong>real-time crypto screener</strong> gives you the edge.
-        </p>
-        <p className="break-inside-avoid">
-          Set <strong>price alerts</strong> that fire instantly to Telegram or email — never miss a
-          breakout or a breakdown again. The built-in <strong>order book density scanner</strong>{' '}
-          reveals hidden walls and liquidity clusters that most screeners ignore, helping you find{' '}
-          <strong>support and resistance levels</strong> before they appear on the chart.
-        </p>
-        <h2 className="text-xs font-semibold text-textSecondary/80 mb-1 break-inside-avoid">
-          Скринер криптовалют 2027 — лучший инструмент для трейдера
-        </h2>
-        <p className="break-inside-avoid">
-          <strong>Скринер криптовалют</strong> CryptoAlerts — это бесплатный{' '}
-          <strong>реал-тайм скринер</strong> с живыми ценами, алертами и сканером плотностей
-          стакана. Наш <strong>крипто скринер 2027</strong> поддерживает несколько бирж одновременно
-          и позволяет анализировать <strong>объёмы, волатильность</strong> и ценовые уровни в одном
-          окне. Используйте <strong>скринер плотностей стакана</strong> для поиска скрытых уровней
-          поддержки и сопротивления — функция, которой нет у большинства скринеров.
-        </p>
-        <p className="break-inside-avoid">
-          This <strong>multi-exchange crypto screener</strong> includes live candlestick charts with
-          10 timeframes (1s to 1D), <strong>volume and volatility filters</strong>, watchlists, and
-          a powerful token search. It is the <strong>best crypto screener 2027</strong> for scalping,
-          day trading, and swing analysis — completely <strong>free</strong>, with no hidden fees.
-        </p>
-        <p className="break-inside-avoid">
-          <strong>Бесплатный скринер криптовалют</strong> с графиками нескольких бирж, алертами цены
-          через Telegram, <strong>сканером плотностей стакана</strong>, фильтрами по объёму и
-          волатильности. Идеально подходит для <strong>скальпинга</strong> и{' '}
-          <strong>дей-трейдинга</strong>. Попробуйте лучший{' '}
-          <strong>крипто скринер для скальпинга 2027</strong> прямо сейчас.
-        </p>
-      </div>
-    </details>
   </div>
     </>
   );
