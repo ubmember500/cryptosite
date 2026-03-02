@@ -6,8 +6,10 @@ import Card from '../components/common/Card';
 import ThemeCard from '../components/common/ThemeCard';
 import { useThemeStore } from '../store/themeStore';
 import { THEME_DEFINITIONS } from '../config/themes';
+import usePageTitle from '../hooks/usePageTitle';
 
 const Settings = () => {
+  usePageTitle('Settings');
   const { t } = useTranslation();
   const currentTheme = useThemeStore((state) => state.theme);
   const setTheme = useThemeStore((state) => state.setTheme);

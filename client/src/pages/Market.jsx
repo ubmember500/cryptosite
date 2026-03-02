@@ -16,8 +16,10 @@ import { Search, X, TrendingUp, Maximize2, Minimize2 } from 'lucide-react';
 import { API_BASE_URL, ROUTES } from '../utils/constants';
 import { debounce } from 'lodash';
 import { testBinanceApi, checkApiConfig } from '../utils/debugApi';
+import usePageTitle from '../hooks/usePageTitle';
 
 const Market = () => {
+  usePageTitle('Market');
   const navigate = useNavigate();
 
   const {

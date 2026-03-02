@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
+import usePageTitle from '../hooks/usePageTitle';
 
 const WallScanner = () => {
+  usePageTitle('Wall Scanner');
   const [firstImageError, setFirstImageError] = useState(false);
   const [secondImageError, setSecondImageError] = useState(false);
 

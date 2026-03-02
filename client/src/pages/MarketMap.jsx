@@ -10,6 +10,7 @@ import UserAccountMenu from '../components/common/UserAccountMenu';
 import Modal from '../components/common/Modal';
 import api from '../services/api';
 import { ROUTES } from '../utils/constants';
+import usePageTitle from '../hooks/usePageTitle';
 
 const CARD_HIGHLIGHT_MS = 12000;
 const CARD_STALE_MS = 45000;
@@ -58,6 +59,7 @@ const ChartSkeleton = () => (
 const MarketMap = () => {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  usePageTitle('Market Map');
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
   const authLoading = useAuthStore((state) => state.loading);
 

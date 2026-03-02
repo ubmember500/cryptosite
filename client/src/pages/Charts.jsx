@@ -3,6 +3,7 @@ import CryptoChart from '../components/charts/CryptoChart';
 import Card from '../components/common/Card';
 import { useParams } from 'react-router-dom';
 import { useEffect, useState } from 'react';
+import usePageTitle from '../hooks/usePageTitle';
 
 const generateDummyChartData = (numEntries = 100) => {
   const data = [];
@@ -31,6 +32,7 @@ const generateDummyChartData = (numEntries = 100) => {
 };
 
 const Charts = () => {
+  usePageTitle('Charts');
   const { coinId } = useParams();
   const [chartData, setChartData] = useState([]);
 

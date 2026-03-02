@@ -4,8 +4,10 @@ import Card from '../components/common/Card';
 import Input from '../components/common/Input';
 import Button from '../components/common/Button';
 import { User, Mail, Lock } from 'lucide-react';
+import usePageTitle from '../hooks/usePageTitle';
 
 const Profile = () => {
+  usePageTitle('Profile');
   const user = useAuthStore((state) => state.user);
   const [passwordData, setPasswordData] = useState({
     currentPassword: '',

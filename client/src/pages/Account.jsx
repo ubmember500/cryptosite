@@ -7,8 +7,10 @@ import { alertService } from '../services/alertService';
 import Card from '../components/common/Card';
 import { ROUTES } from '../utils/constants';
 import { User, Mail, Calendar, Bell, Star, CreditCard } from 'lucide-react';
+import usePageTitle from '../hooks/usePageTitle';
 
 const Account = () => {
+  usePageTitle('Account');
   const { t, i18n } = useTranslation();
   const user = useAuthStore((state) => state.user);
 

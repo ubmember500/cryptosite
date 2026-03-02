@@ -6,8 +6,10 @@ import Button from '../components/common/Button';
 import Card from '../components/common/Card';
 import { Lock, AlertCircle } from 'lucide-react';
 import { ROUTES } from '../utils/constants';
+import usePageTitle from '../hooks/usePageTitle';
 
 const ResetPassword = () => {
+  usePageTitle('Reset Password');
   const [searchParams] = useSearchParams();
   const token = searchParams.get('token');
 

@@ -8,6 +8,7 @@ import {
   CreditCard, User, BookOpen, Zap, AlertTriangle,
   CheckCircle, Info, Monitor, Globe, Clock
 } from 'lucide-react';
+import usePageTitle from '../hooks/usePageTitle';
 
 /* ─────────────────────────────────────────────
    TABLE OF CONTENTS CONFIG
@@ -93,6 +94,7 @@ const Divider = () => <hr className="border-border my-10" />;
    MAIN PAGE
 ───────────────────────────────────────────── */
 const Instructions = () => {
+  usePageTitle('Instructions');
   const [activeId, setActiveId] = useState('welcome');
   const [mobileOpen, setMobileOpen] = useState(false);
   const contentRef = useRef(null);

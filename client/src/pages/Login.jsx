@@ -6,8 +6,10 @@ import { ROUTES } from '../utils/constants';
 import Input from '../components/common/Input';
 import Button from '../components/common/Button';
 import { Mail, Lock, TrendingUp } from 'lucide-react';
+import usePageTitle from '../hooks/usePageTitle';
 
 const Login = () => {
+  usePageTitle('Log In');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');

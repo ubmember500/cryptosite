@@ -3,8 +3,10 @@ import { useTranslation } from 'react-i18next';
 import { ChevronUp, ChevronDown } from 'lucide-react';
 import Card from '../components/common/Card';
 import { API_BASE_URL } from '../utils/constants';
+import usePageTitle from '../hooks/usePageTitle';
 
 const Listings = () => {
+  usePageTitle('Listings');
   const { t } = useTranslation();
   const [sortConfig, setSortConfig] = useState({ key: 'date', direction: 'desc' });
   const [items, setItems] = useState([]);

@@ -4,8 +4,10 @@ import { MessageSquare, ListFilter, Power, Settings, Send, Loader2 } from 'lucid
 import { useAuthStore } from '../store/authStore';
 import { useToastStore } from '../store/toastStore';
 import { telegramService } from '../services/telegramService';
+import usePageTitle from '../hooks/usePageTitle';
 
 const TelegramBots = () => {
+  usePageTitle('Telegram Bots');
   const { t } = useTranslation();
   const user = useAuthStore((state) => state.user);
   const fetchUser = useAuthStore((state) => state.fetchUser);

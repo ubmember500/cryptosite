@@ -5,10 +5,12 @@ import Input from '../components/common/Input';
 import Button from '../components/common/Button';
 import { Mail, AlertCircle, CheckCircle, RefreshCw } from 'lucide-react';
 import { ROUTES } from '../utils/constants';
+import usePageTitle from '../hooks/usePageTitle';
 
 const RESEND_COOLDOWN_SECONDS = 60;
 
 const ForgotPassword = () => {
+  usePageTitle('Forgot Password');
   const [email, setEmail] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);

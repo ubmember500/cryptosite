@@ -5,6 +5,7 @@ import { cn } from '../utils/cn';
 import api from '../services/api';
 import Modal from '../components/common/Modal';
 import { useToastStore } from '../store/toastStore';
+import usePageTitle from '../hooks/usePageTitle';
 
 // Curated payment currencies: label for display, ticker for API (must match NOWPayments)
 const PAYMENT_CURRENCIES = [
@@ -26,6 +27,7 @@ const PAYMENT_CURRENCIES = [
 ];
 
 const Subscription = () => {
+  usePageTitle('Subscription');
   const { t } = useTranslation();
   const addToast = useToastStore((state) => state.addToast);
 

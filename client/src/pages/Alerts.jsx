@@ -6,8 +6,10 @@ import CreateAlertModal from '../components/alerts/CreateAlertModal';
 import Button from '../components/common/Button';
 import { Plus, Trash2 } from 'lucide-react';
 import { useAlertStore } from '../store/alertStore';
+import usePageTitle from '../hooks/usePageTitle';
 
 const Alerts = () => {
+  usePageTitle('Alerts');
   const { t } = useTranslation();
 
   const { alerts, loading, fetchAlerts, deleteAlert, toggleAlert } = useAlertStore();
