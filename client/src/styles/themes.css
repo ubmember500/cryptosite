@@ -11,6 +11,9 @@
   --color-success: #fb923c;
   --color-danger: #ef4444;
   --color-warning: #f97316;
+  /* Candle colors - defaults inherit from success/danger */
+  --color-candle-up: var(--color-success);
+  --color-candle-down: var(--color-danger);
 }
 
 [data-theme='void'] {
@@ -67,6 +70,8 @@
   --color-success: #fbbf24;
   --color-danger: #ef4444;
   --color-warning: #fb923c;
+  --color-candle-up: #19d7c2;
+  --color-candle-down: #f6465d;
 }
 
 [data-theme='hex'] {
@@ -277,6 +282,8 @@
   --color-success: #fb923c;
   --color-danger: #ef4444;
   --color-warning: #f97316;
+  --color-candle-up: #19d7c2;
+  --color-candle-down: #f6465d;
 }
 
 [data-theme='abyss'] {

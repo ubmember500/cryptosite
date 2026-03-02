@@ -9,13 +9,8 @@ const safeGetCssVar = (variable, fallback) => {
 
 export const getThemePalette = () => {
   const getColor = (name, fallback) => safeGetCssVar(name, fallback);
-  const activeTheme =
-    typeof document !== 'undefined'
-      ? document.documentElement.getAttribute('data-theme')
-      : null;
   const success = getColor('--color-success', '#00c853');
   const danger = getColor('--color-danger', '#ff1744');
-  const isMechaTheme = activeTheme === 'mecha';
 
   return {
     surface: getColor('--color-surface', '#1a1d29'),
@@ -28,7 +23,7 @@ export const getThemePalette = () => {
     success,
     danger,
     warning: getColor('--color-warning', '#ffa726'),
-    candleUp: isMechaTheme ? '#19d7c2' : success,
-    candleDown: isMechaTheme ? '#f6465d' : danger,
+    candleUp: getColor('--color-candle-up', success),
+    candleDown: getColor('--color-candle-down', danger),
   };
 };
