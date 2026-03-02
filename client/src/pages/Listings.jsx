@@ -95,8 +95,8 @@ const Listings = () => {
       <div className="space-y-6">
         <h1 className="text-2xl font-bold text-textPrimary">{t('Listings')}</h1>
         <Card className="p-8 text-center">
-          <p className="text-textSecondary">{t('Loading...')}</p>
-          <p className="mt-2 text-sm text-textSecondary/80">{t('First load can take 30–60 seconds. Later loads use cache.')}</p>
+          <p className="text-textSecondary">{t('Loading upcoming listings…')}</p>
+          <p className="mt-2 text-sm text-textSecondary/80">{t('Fetching data from Binance, Bybit, OKX, MEXC, Bitget and Gate.io')}</p>
         </Card>
       </div>
     );
@@ -145,9 +145,15 @@ const Listings = () => {
                   onClick={() => handleSort('market')}
                 >
                   <div className="flex items-center gap-1">
-                    {t('Market')}
+                    {t('Type')}
                     <SortIcon columnKey="market" />
                   </div>
+                </th>
+                <th
+                  role="columnheader"
+                  className="px-4 py-3 text-left text-xs font-medium text-textSecondary uppercase tracking-wider"
+                >
+                  {t('Status')}
                 </th>
                 <th
                   role="columnheader"
@@ -164,16 +170,21 @@ const Listings = () => {
             <tbody className="divide-y divide-border bg-background">
               {sortedItems.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="px-4 py-8 text-center text-textSecondary">
-                    {t('No upcoming futures listings right now.')}
+                  <td colSpan={5} className="px-4 py-8 text-center text-textSecondary">
+                    {t('No upcoming listings found. Data is refreshed every 5 minutes.')}
                   </td>
                 </tr>
               ) : (
                 sortedItems.map((row) => (
                   <tr key={row.id} className="hover:bg-surfaceHover/50">
-                    <td className="px-4 py-3 text-sm text-textPrimary">{row.coin}</td>
+                    <td className="px-4 py-3 text-sm font-medium text-textPrimary">{row.coin}</td>
                     <td className="px-4 py-3 text-sm text-textPrimary">{row.exchange}</td>
                     <td className="px-4 py-3 text-sm text-textPrimary capitalize">{row.market}</td>
+                    <td className="px-4 py-3 text-sm">
+                      <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold bg-amber-500/15 text-amber-400 border border-amber-500/30">
+                        {t('UPCOMING')}
+                      </span>
+                    </td>
                     <td className="px-4 py-3 text-sm text-textPrimary">{row.date}</td>
                   </tr>
                 ))
