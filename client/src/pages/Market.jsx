@@ -446,10 +446,9 @@ const Market = () => {
                             next[activeChartSlot] = tf;
                             return next;
                           });
-                          const token = chartSlotTokens[activeChartSlot];
-                          if (token?.fullSymbol) {
-                            fetchChartData(token.fullSymbol, exchangeType, tf);
-                          }
+                          // Don't call fetchChartData here — the useEffect that
+                          // watches chartSlotIntervals will trigger it reactively.
+                          // Calling it here as well caused a double-fetch race.
                         }}
                         className={cn(
                           'px-2 py-1 text-[11px] md:text-xs font-medium rounded-md transition-colors',
@@ -590,10 +589,13 @@ const Market = () => {
                         }
                       }}
                       onTimeframeChange={!isMultiChart ? (newInterval) => {
+                        // Only update the state — the useEffect that watches
+                        // chartInterval will trigger fetchChartData reactively.
+                        // Calling fetchChartData here as well caused a double-
+                        // fetch race where the second response could overwrite
+                        // the first or arrive out of order, making it look like
+                        // the timeframe click did nothing.
                         setChartInterval(newInterval);
-                        if (selectedToken) {
-                          fetchChartData(selectedToken.fullSymbol, exchangeType, newInterval);
-                        }
                       } : undefined}
                     />
                   )}

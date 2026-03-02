@@ -812,6 +812,11 @@ export const useMarketStore = create((set, get) => ({
   chartHistoryMap: {},    // { [exchange:exchangeType:symbol:interval]: { earliestTime, hasMoreHistory, loadingOlder } }
   loadingChart: false,   // Loading state
   chartError: null,       // Error message
+  // Monotonically increasing counter — incremented at the start of each
+  // fetchChartData call.  Before applying results to state, the function
+  // checks whether the counter has changed; if it has, a newer fetch was
+  // started and this result is stale → discard it.
+  _chartFetchGeneration: 0,
   
   // Real-time subscription state
   activeSubscription: null, // { exchange, symbol, interval, exchangeType }
@@ -1043,13 +1048,21 @@ export const useMarketStore = create((set, get) => ({
     const apiLimit = isSecondInterval
       ? { '1s': 50, '5s': 84, '15s': 125 }[interval]
       : CHART_PAGE_LIMIT;
-    set({ loadingChart: true, chartError: null });
+    // Increment the generation counter.  If another fetchChartData call starts
+    // before this one finishes, our captured generation will be stale and we
+    // will skip applying results — preventing out-of-order overwrites during
+    // rapid timeframe switching.
+    const generation = (get()._chartFetchGeneration || 0) + 1;
+    set({ loadingChart: true, chartError: null, _chartFetchGeneration: generation });
     const exchange = get().exchange;
     const historyKey = getChartHistoryKey({ exchange, exchangeType, symbol, interval });
     const seriesKey = getChartSeriesKey({ exchange, exchangeType, symbol, interval });
     const directPolicy = getDirectKlineFallbackPolicy(exchange, exchangeType);
 
     const applyKlinesToState = (klines) => {
+      // If a newer fetch was started while we were in-flight, discard this
+      // result to avoid overwriting the newer interval's data.
+      if (get()._chartFetchGeneration !== generation) return;
       const earliestTime = klines.length > 0 ? Number(klines[0].time) : null;
       set((state) => ({
         chartData: klines,
@@ -1285,11 +1298,14 @@ export const useMarketStore = create((set, get) => ({
       const errorMessage = error.response?.data?.error ||
         error.message ||
         'Failed to fetch chart data';
-      set({
-        chartError: errorMessage,
-        loadingChart: false,
-        chartData: null
-      });
+      // Only apply error state if no newer fetch has been started
+      if (get()._chartFetchGeneration === generation) {
+        set({
+          chartError: errorMessage,
+          loadingChart: false,
+          chartData: null
+        });
+      }
     }
   },
 
