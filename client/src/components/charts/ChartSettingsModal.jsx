@@ -220,7 +220,7 @@ const ChartSettingsModal = ({ isOpen, onClose, chartRef }) => {
       <div
         className={cn(
           'fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50',
-          'w-full max-w-sm bg-surface border border-border rounded-xl shadow-xl',
+          'w-full max-w-md bg-surface border border-border rounded-xl shadow-xl',
           'flex flex-col max-h-[90vh]'
         )}
         role="dialog"
@@ -248,24 +248,31 @@ const ChartSettingsModal = ({ isOpen, onClose, chartRef }) => {
           {/* ── Chart type ── */}
           <section className="space-y-3">
             <h3 className="text-xs font-semibold text-textSecondary uppercase tracking-wider">{t('Chart type')}</h3>
-            <p className="text-xs text-textSecondary">{t('Set chart type')}</p>
-            <div className="relative">
-              <select
-                value={candleType}
-                onChange={(e) => handleCandleTypeChange(e.target.value)}
-                className={cn(
-                  'w-full appearance-none bg-surfaceDark border border-border rounded-lg',
-                  'px-3 py-2.5 pr-9 text-sm text-textPrimary',
-                  'focus:outline-none focus:border-accent cursor-pointer'
-                )}
-              >
-                {CANDLE_TYPES.map((type) => (
-                  <option key={type} value={type}>
+            <div className="grid grid-cols-2 gap-2">
+              {CANDLE_TYPES.map((type) => {
+                const isActive = (candleType || 'candle_solid') === type;
+                return (
+                  <button
+                    key={type}
+                    type="button"
+                    onClick={() => handleCandleTypeChange(type)}
+                    className={cn(
+                      'flex items-center gap-2 px-3 py-2.5 rounded-lg border text-sm font-medium transition-all text-left',
+                      isActive
+                        ? 'border-accent bg-accent/15 text-accent'
+                        : 'border-border bg-surfaceDark text-textSecondary hover:border-accent/50 hover:text-textPrimary'
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        'w-2.5 h-2.5 rounded-full border-2 flex-shrink-0',
+                        isActive ? 'border-accent bg-accent' : 'border-textSecondary/50'
+                      )}
+                    />
                     {t(type)}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-textSecondary" />
+                  </button>
+                );
+              })}
             </div>
           </section>
 
