@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
-import { TrendingUp } from 'lucide-react';
+import { TrendingUp, Lock } from 'lucide-react';
 import { useMarketMapStore } from '../store/marketMapStore';
+import { useAuthStore } from '../store/authStore';
 import { useSocket } from '../hooks/useSocket';
 import KLineChart from '../components/charts/KLineChart';
 import UserAccountMenu from '../components/common/UserAccountMenu';
@@ -57,6 +58,8 @@ const ChartSkeleton = () => (
 const MarketMap = () => {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const authLoading = useAuthStore((state) => state.loading);
 
   const {
     selectedExchange,
@@ -269,6 +272,63 @@ const MarketMap = () => {
     }),
     [gridLayout]
   );
+
+  // Auth gate: show overlay for unauthenticated users
+  if (!authLoading && !isAuthenticated) {
+    return (
+      <div className="h-[100dvh] min-h-[100dvh] bg-background text-textPrimary flex flex-col">
+        {/* Minimal top bar so the page still looks familiar */}
+        <div className="rounded-lg border border-border bg-surface/70 px-2 py-1 m-1.5 md:mx-2 md:mt-1.5">
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => navigate(ROUTES.MARKET)}
+              className="group flex items-center gap-1 transition-all shrink-0"
+              title="Go to Market"
+            >
+              <TrendingUp className="w-4 h-4 text-accent" />
+              <span className="text-xs font-semibold text-textPrimary hidden sm:inline">
+                Market Map
+              </span>
+            </button>
+          </div>
+        </div>
+
+        {/* Lock overlay */}
+        <div className="flex-1 flex items-center justify-center px-4">
+          <div className="flex flex-col items-center gap-5 text-center max-w-sm w-full bg-surface border border-border rounded-2xl px-8 py-10 shadow-xl">
+            <div className="flex items-center justify-center w-16 h-16 rounded-full bg-accent/10 border border-accent/20">
+              <Lock className="w-8 h-8 text-accent" />
+            </div>
+            <div className="flex flex-col gap-2">
+              <h2 className="text-xl font-bold text-textPrimary">
+                {t('market_map_auth_title')}
+              </h2>
+              <p className="text-sm text-textSecondary leading-relaxed">
+                {t('market_map_auth_subtitle')}
+              </p>
+            </div>
+            <div className="flex flex-col sm:flex-row gap-3 w-full">
+              <button
+                type="button"
+                onClick={() => navigate(ROUTES.LOGIN)}
+                className="flex-1 py-2.5 px-5 rounded-lg bg-accent text-white font-semibold text-sm hover:bg-accent/90 active:scale-95 transition-all"
+              >
+                {t('market_map_auth_login')}
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate(ROUTES.REGISTER)}
+                className="flex-1 py-2.5 px-5 rounded-lg border border-accent text-accent font-semibold text-sm hover:bg-accent/10 active:scale-95 transition-all"
+              >
+                {t('market_map_auth_signup')}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="h-[100dvh] min-h-[100dvh] overflow-hidden bg-background text-textPrimary px-1.5 py-1 md:px-2 md:py-1.5">

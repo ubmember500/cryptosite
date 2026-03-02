@@ -331,5 +331,9 @@
   "candle_up_stroke": "Hollow candles (up)",
   "candle_down_stroke": "Hollow candles (down)",
   "ohlc": "Bars",
-  "area": "Line (area)"
+  "area": "Line (area)",
+  "market_map_auth_title": "Log in to view Market Map",
+  "market_map_auth_subtitle": "Please log in or sign up to access the real-time Market Map.",
+  "market_map_auth_login": "Log in",
+  "market_map_auth_signup": "Sign up"
 }
