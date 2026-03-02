@@ -812,12 +812,15 @@ export const useMarketStore = create((set, get) => ({
   chartHistoryMap: {},    // { [exchange:exchangeType:symbol:interval]: { earliestTime, hasMoreHistory, loadingOlder } }
   loadingChart: false,   // Loading state
   chartError: null,       // Error message
-  // Monotonically increasing counter — incremented at the start of each
-  // fetchChartData call.  Before applying results to state, the function
-  // checks whether the counter has changed; if it has, a newer fetch was
-  // started and this result is stale → discard it.
-  _chartFetchGeneration: 0,
-  
+  // Per-series monotonically increasing counter — keyed by seriesKey.
+  // Incremented at the start of each fetchChartData call for that series.
+  // Before applying results to state, the function checks whether the counter
+  // for THIS series has changed; if it has, a newer fetch for the same series
+  // was started and this result is stale → discard it.
+  // Using a per-series map prevents parallel fetches for DIFFERENT symbols
+  // (e.g. multi-chart layout) from cancelling each other.
+  _chartFetchGenerationMap: {},
+
   // Real-time subscription state
   activeSubscription: null, // { exchange, symbol, interval, exchangeType }
   isRealtimeConnected: false, // WebSocket connection status
@@ -1048,21 +1051,28 @@ export const useMarketStore = create((set, get) => ({
     const apiLimit = isSecondInterval
       ? { '1s': 50, '5s': 84, '15s': 125 }[interval]
       : CHART_PAGE_LIMIT;
-    // Increment the generation counter.  If another fetchChartData call starts
-    // before this one finishes, our captured generation will be stale and we
-    // will skip applying results — preventing out-of-order overwrites during
-    // rapid timeframe switching.
-    const generation = (get()._chartFetchGeneration || 0) + 1;
-    set({ loadingChart: true, chartError: null, _chartFetchGeneration: generation });
     const exchange = get().exchange;
     const historyKey = getChartHistoryKey({ exchange, exchangeType, symbol, interval });
     const seriesKey = getChartSeriesKey({ exchange, exchangeType, symbol, interval });
+    // Increment the per-series generation counter.  If another fetchChartData
+    // call for the SAME series (symbol+interval) starts before this one
+    // finishes, our captured generation will be stale and we will skip applying
+    // results — preventing out-of-order overwrites during rapid timeframe
+    // switching.  Using a per-series map means parallel fetches for DIFFERENT
+    // symbols (multi-chart) are completely independent and do not cancel each other.
+    const prevGen = (get()._chartFetchGenerationMap?.[seriesKey] || 0);
+    const generation = prevGen + 1;
+    set((state) => ({
+      loadingChart: true,
+      chartError: null,
+      _chartFetchGenerationMap: { ...state._chartFetchGenerationMap, [seriesKey]: generation },
+    }));
     const directPolicy = getDirectKlineFallbackPolicy(exchange, exchangeType);
 
     const applyKlinesToState = (klines) => {
-      // If a newer fetch was started while we were in-flight, discard this
-      // result to avoid overwriting the newer interval's data.
-      if (get()._chartFetchGeneration !== generation) return;
+      // If a newer fetch for the same series was started while we were
+      // in-flight, discard this result to avoid overwriting the newer data.
+      if ((get()._chartFetchGenerationMap?.[seriesKey] ?? 0) !== generation) return;
       const earliestTime = klines.length > 0 ? Number(klines[0].time) : null;
       set((state) => ({
         chartData: klines,
@@ -1298,8 +1308,8 @@ export const useMarketStore = create((set, get) => ({
       const errorMessage = error.response?.data?.error ||
         error.message ||
         'Failed to fetch chart data';
-      // Only apply error state if no newer fetch has been started
-      if (get()._chartFetchGeneration === generation) {
+      // Only apply error state if no newer fetch for this series has been started
+      if ((get()._chartFetchGenerationMap?.[seriesKey] ?? 0) === generation) {
         set({
           chartError: errorMessage,
           loadingChart: false,
