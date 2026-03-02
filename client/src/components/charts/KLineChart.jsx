@@ -15,6 +15,7 @@ import OverlayContextMenu from './OverlayContextMenu';
 import IndicatorsButton from './IndicatorsButton';
 import { useToastStore } from '../../store/toastStore';
 import { getThemePalette } from '../../utils/themePalette';
+import { useCandleColorStore } from '../../store/candleColorStore';
 
 // Drawing tool constants
 export const DRAWING_TOOLS = {
@@ -401,6 +402,10 @@ const KLineChart = ({
   // handleGetBars) that are wrapped in useCallback without re-creating them on
   // every interval change – avoiding unnecessary chart re-initialisation.
   const intervalRef = useRef(interval);
+  // Persisted custom candle colours (null = use theme default)
+  const candleUpColor   = useCandleColorStore((s) => s.upColor);
+  const candleDownColor = useCandleColorStore((s) => s.downColor);
+
   const [showIndicatorsModal, setShowIndicatorsModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [showCreateAlertModal, setShowCreateAlertModal] = useState(false);
@@ -1483,6 +1488,10 @@ const KLineChart = ({
 
     try {
       const themeColors = getThemePalette();
+      // Overlay user's saved candle-colour preferences (null = use theme default)
+      const { upColor: storedUp, downColor: storedDown } = useCandleColorStore.getState();
+      const initCandleUp   = storedUp   || themeColors.candleUp;
+      const initCandleDown = storedDown || themeColors.candleDown;
       registerCustomShapeOverlays();
       // Initialize chart with minimal configuration
       // Layout must be an array of pane configurations
@@ -1512,14 +1521,14 @@ const KLineChart = ({
             type: 'candle_solid',
             bar: {
               compareRule: 'current_open',
-              upColor: themeColors.candleUp,
-              downColor: themeColors.candleDown,
+              upColor: initCandleUp,
+              downColor: initCandleDown,
               noChangeColor: themeColors.textSecondary,
-              upBorderColor: themeColors.candleUp,
-              downBorderColor: themeColors.candleDown,
+              upBorderColor: initCandleUp,
+              downBorderColor: initCandleDown,
               noChangeBorderColor: themeColors.textSecondary,
-              upWickColor: themeColors.candleUp,
-              downWickColor: themeColors.candleDown,
+              upWickColor: initCandleUp,
+              downWickColor: initCandleDown,
               noChangeWickColor: themeColors.textSecondary,
             },
             priceMark: {
@@ -1783,6 +1792,30 @@ const KLineChart = ({
       setIsInitialized(false);
     }
   }, [symbol, handleGetBars, applyCompactViewportDefaults]); // Re-initialize only when symbol changes; interval changes are handled by the separate period-update effect
+
+  // Re-apply custom candle colours whenever the user changes them in settings
+  useEffect(() => {
+    if (!chartRef.current || !isInitialized) return;
+    try {
+      const palette = getThemePalette();
+      const finalUp   = candleUpColor   || palette.candleUp;
+      const finalDown = candleDownColor || palette.candleDown;
+      chartRef.current.setStyles({
+        candle: {
+          bar: {
+            upColor:             finalUp,
+            downColor:           finalDown,
+            upBorderColor:       finalUp,
+            downBorderColor:     finalDown,
+            upWickColor:         finalUp,
+            downWickColor:       finalDown,
+          },
+        },
+      });
+    } catch (e) {
+      // ignore – chart may be mid-dispose
+    }
+  }, [candleUpColor, candleDownColor, isInitialized]);
 
   // Auto-enable bottom volume indicator when requested (e.g. Market Map cards).
   useEffect(() => {
