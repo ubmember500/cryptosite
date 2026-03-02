@@ -401,7 +401,7 @@ const Market = () => {
 
         {/* SEO H1 — visible, compact, keyword-rich */}
         <h1 className="px-3 py-1.5 text-[11px] md:text-xs text-textSecondary/70 bg-surface/30 border-b border-border/50 font-medium tracking-wide leading-snug">
-          Crypto Screener 2027 — Real-Time Crypto Scanner with Price Alerts &amp; Order Book Density
+          Crypto Screener 2027 — Реал-тайм скринер с алертами и плотностями стакана
         </h1>
 
         <div ref={splitContainerRef} className="flex flex-1 min-h-0 overflow-hidden">
@@ -676,7 +676,7 @@ const Market = () => {
     </div>
 
     {/* SEO Text Block — crawlable keyword-rich content (collapsed by default, scrollable) */}
-    <details className="bg-surface/40 border-t border-border/50">
+    <details open className="bg-surface/40 border-t border-border/50">
       <summary className="px-3 py-1.5 text-[10px] text-textSecondary/50 cursor-pointer hover:text-textSecondary/70 transition-colors select-none tracking-wide">
         About this crypto screener
       </summary>

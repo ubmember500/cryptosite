@@ -16,13 +16,13 @@ const SITE_NAME = 'CryptoAlerts';
 const DEFAULTS = {
   title: 'Crypto Screener 2027 | Real-Time Scanner with Alerts & Density',
   description:
-    'Free crypto screener 2027: real-time prices from multiple exchanges, price alerts, order book density scanner, volume & volatility filters, live charts. Best tool for crypto scalpers and day traders. Бесплатный скринер криптовалют с алертами, плотностями стакана и графиками бирж.',
+    'Free crypto screener 2027: real-time prices from multiple exchanges, price alerts, order book density scanner, volume filters, live charts. Best tool for crypto scalpers and day traders.',
   keywords:
     'crypto screener, cryptocurrency screener, real time crypto screener, crypto trading scanner, best crypto screener 2027, free crypto screener, crypto alerts scanner, order book density scanner, crypto density scanner, multi exchange crypto screener, crypto volume scanner, crypto volatility scanner, scalping crypto screener, day trading crypto tool, crypto price alerts tool, crypto scanner with alerts, скринер криптовалют, крипто скринер, скринер криптовалют 2027, скринер криптовалют с алертами, скринер плотностей стакана, реал тайм скринер криптовалют, скринер для скальпинга, бесплатный скринер криптовалют, лучший скринер криптовалют 2027, крипто скринер с плотностями',
   ogTitle: 'Crypto Screener 2027 | Скринер криптовалют с алертами и плотностями',
   ogDescription:
-    'Crypto Screener 2027 — бесплатный реал-тайм скринер: живые цены, алерты, плотности стакана, графики бирж, фильтры по объёму. Идеально для трейдеров и скальперов.',
-  ogImage: `${SITE_URL}/wall-scanner-1.png`,
+    'Бесплатный реал-тайм скринер криптовалют 2027 с алертами, плотностями стакана и графиками бирж.',
+  ogImage: `${SITE_URL}/og-screener.png`,
   canonicalUrl: `${SITE_URL}/market`,
 };
 
