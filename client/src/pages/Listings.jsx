@@ -14,15 +14,18 @@ const DEFAULT_SOURCES = [
   { exchange: 'Gate.io', count: 0 },
 ];
 
+const STATUS_FILTERS = ['all', 'upcoming', 'new'];
+
 const Listings = () => {
   usePageTitle('Listings');
   const { t } = useTranslation();
-  const [sortConfig, setSortConfig] = useState({ key: 'date', direction: 'desc' });
+  const [sortConfig, setSortConfig] = useState({ key: 'date', direction: 'asc' });
   const [items, setItems] = useState([]);
   const [sources, setSources] = useState(DEFAULT_SOURCES);
   const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
+  const [statusFilter, setStatusFilter] = useState('all');
 
   useEffect(() => {
     let cancelled = false;
@@ -81,14 +84,15 @@ const Listings = () => {
   };
 
   const sortedItems = useMemo(() => {
-    return [...items].sort((a, b) => {
+    const filtered = statusFilter === 'all' ? items : items.filter((r) => r.status === statusFilter);
+    return [...filtered].sort((a, b) => {
       const aVal = a[sortConfig.key];
       const bVal = b[sortConfig.key];
       if (aVal < bVal) return sortConfig.direction === 'asc' ? -1 : 1;
       if (aVal > bVal) return sortConfig.direction === 'asc' ? 1 : -1;
       return 0;
     });
-  }, [items, sortConfig]);
+  }, [items, sortConfig, statusFilter]);
 
   const SortIcon = ({ columnKey }) => {
     if (sortConfig.key !== columnKey) {
@@ -133,8 +137,33 @@ const Listings = () => {
             {refreshing ? t('Refreshing…') : (lastUpdatedAt ? `${t('Updated')}: ${new Date(lastUpdatedAt).toLocaleString()}` : t('Waiting for first sync…'))}
           </span>
         </div>
-      </Card>
-      <Card className="overflow-hidden p-0">
+      </Card>      {/* Status filter bar */}
+      <div className="flex items-center gap-2">
+        {STATUS_FILTERS.map((filter) => {
+          const count = filter === 'all'
+            ? items.length
+            : items.filter((r) => r.status === filter).length;
+          return (
+            <button
+              key={filter}
+              onClick={() => setStatusFilter(filter)}
+              className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+                statusFilter === filter
+                  ? filter === 'upcoming'
+                    ? 'bg-amber-500/20 border-amber-500/50 text-amber-400'
+                    : filter === 'new'
+                    ? 'bg-green-500/20 border-green-500/50 text-green-400'
+                    : 'bg-blue-500/20 border-blue-500/50 text-blue-400'
+                  : 'bg-transparent border-border text-textSecondary hover:text-textPrimary'
+              }`}
+            >
+              {filter === 'all' ? 'All' : filter.charAt(0).toUpperCase() + filter.slice(1)}
+              {' '}
+              <span className="opacity-70">{count}</span>
+            </button>
+          );
+        })}
+      </div>      <Card className="overflow-hidden p-0">
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-border">
             <thead className="bg-surfaceDark">
@@ -191,7 +220,9 @@ const Listings = () => {
               {sortedItems.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="px-4 py-8 text-center text-textSecondary">
-                    {t('No upcoming listings found. Data is refreshed every 5 minutes.')}
+                    {statusFilter === 'all'
+                      ? t('No listings found yet. Data refreshes every 5 minutes.')
+                      : `No ${statusFilter} listings found.`}
                   </td>
                 </tr>
               ) : (
@@ -201,9 +232,15 @@ const Listings = () => {
                     <td className="px-4 py-3 text-sm text-textPrimary">{row.exchange}</td>
                     <td className="px-4 py-3 text-sm text-textPrimary capitalize">{row.market}</td>
                     <td className="px-4 py-3 text-sm">
-                      <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold bg-amber-500/15 text-amber-400 border border-amber-500/30">
-                        {t('UPCOMING')}
-                      </span>
+                      {row.status === 'upcoming' ? (
+                        <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold bg-amber-500/15 text-amber-400 border border-amber-500/30">
+                          {t('UPCOMING')}
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold bg-green-500/15 text-green-400 border border-green-500/30">
+                          {t('NEW')}
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-sm text-textPrimary">{row.date}</td>
                   </tr>
