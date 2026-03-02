@@ -1,0 +1,37 @@
+# CryptoAlerts — Crypto Screener 2027
+# https://cryptosite2027.vercel.app
+
+User-agent: *
+
+# Public pages — allowed
+Allow: /market
+Allow: /market-map
+Allow: /instructions
+Allow: /login
+Allow: /register
+
+# Protected / private pages — disallowed
+Disallow: /account
+Disallow: /dashboard
+Disallow: /charts
+Disallow: /alerts
+Disallow: /profile
+Disallow: /settings
+Disallow: /wall-scanner
+Disallow: /telegram-bots
+Disallow: /subscription
+Disallow: /listings
+Disallow: /forgot-password
+Disallow: /reset-password
+
+# API endpoints
+Disallow: /api/
+
+# Assets that don't need indexing
+Disallow: /assets/
+
+# Crawl-delay (be polite)
+Crawl-delay: 1
+
+# Sitemap
+Sitemap: https://cryptosite2027.vercel.app/sitemap.xml

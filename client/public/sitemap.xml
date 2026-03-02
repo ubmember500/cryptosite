@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+        xmlns:xhtml="http://www.w3.org/1999/xhtml">
+
+  <!-- Main screener page (highest priority) -->
+  <url>
+    <loc>https://cryptosite2027.vercel.app/market</loc>
+    <lastmod>2026-03-02</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>1.0</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://cryptosite2027.vercel.app/market" />
+    <xhtml:link rel="alternate" hreflang="ru" href="https://cryptosite2027.vercel.app/market" />
+  </url>
+
+  <!-- Market map -->
+  <url>
+    <loc>https://cryptosite2027.vercel.app/market-map</loc>
+    <lastmod>2026-03-02</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.8</priority>
+  </url>
+
+  <!-- Instructions / Help -->
+  <url>
+    <loc>https://cryptosite2027.vercel.app/instructions</loc>
+    <lastmod>2026-03-02</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.5</priority>
+  </url>
+
+  <!-- Auth pages (low priority, but indexable for brand queries) -->
+  <url>
+    <loc>https://cryptosite2027.vercel.app/login</loc>
+    <lastmod>2026-03-02</lastmod>
+    <changefreq>yearly</changefreq>
+    <priority>0.3</priority>
+  </url>
+
+  <url>
+    <loc>https://cryptosite2027.vercel.app/register</loc>
+    <lastmod>2026-03-02</lastmod>
+    <changefreq>yearly</changefreq>
+    <priority>0.3</priority>
+  </url>
+
+</urlset>
