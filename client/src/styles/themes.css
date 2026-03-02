@@ -1,12 +1,12 @@
 /* Theme variables */
 :root {
-  --color-background: #1b2028;
-  --color-surface: #262d38;
-  --color-surface-hover: #323b49;
-  --color-surface-dark: #161b23;
-  --color-border: #404c5f;
-  --color-text-primary: #edf2fa;
-  --color-text-secondary: #b2bece;
+  --color-background: #1d2229;
+  --color-surface: #2f3743;
+  --color-surface-hover: #434d60;
+  --color-surface-dark: #14181e;
+  --color-border: #4a5565;
+  --color-text-primary: #eef2f8;
+  --color-text-secondary: #b1bccb;
   --color-accent: #f59e0b;
   --color-success: #fb923c;
   --color-danger: #ef4444;
@@ -59,13 +59,13 @@
 }
 
 [data-theme='carbon'] {
-  --color-background: #1c2128;
-  --color-surface: #282e38;
-  --color-surface-hover: #343c48;
-  --color-surface-dark: #161b22;
-  --color-border: #455160;
-  --color-text-primary: #f0efe9;
-  --color-text-secondary: #bbb5ab;
+  --color-background: #19191c;
+  --color-surface: #242428;
+  --color-surface-hover: #303237;
+  --color-surface-dark: #141516;
+  --color-border: #3e3e45;
+  --color-text-primary: #eeece5;
+  --color-text-secondary: #bcb6ad;
   --color-accent: #f59e0b;
   --color-success: #fbbf24;
   --color-danger: #ef4444;
