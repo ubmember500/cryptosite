@@ -9,6 +9,7 @@ const bybitMarketMapService = require('./services/bybitMarketMapService');
 const { startAlertEngine, stopAlertEngine } = require('./services/alertEngine');
 const priceWatcher = require('./services/priceWatcher');
 const telegramPolling = require('./services/telegramPolling');
+const listingsService = require('./services/listingsService');
 const { ensureActivitySchema } = require('./services/activityService');
 
 const PORT = process.env.PORT || 5000;
@@ -48,6 +49,9 @@ async function bootstrap() {
       const { logEmailStatus } = require('./utils/email');
       logEmailStatus();
 
+      listingsService.startListingsSyncScheduler();
+      console.log('📋 Listings background sync started');
+
       const telegramService = require('./services/telegramService');
       const hasToken = telegramService.hasTelegramBot();
       console.log(`📱 Telegram bot: ${hasToken ? 'configured' : 'not configured (set TELEGRAM_BOT_TOKEN in .env and restart)'}`);
@@ -86,6 +90,7 @@ async function shutdown(signal) {
   klineManager.shutdown();
   priceWatcher.stop();
   telegramPolling.stopTelegramPolling();
+  listingsService.stopListingsSyncScheduler();
   await stopAlertEngine();
 
   server.close(() => {

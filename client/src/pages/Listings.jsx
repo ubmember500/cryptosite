@@ -5,19 +5,30 @@ import Card from '../components/common/Card';
 import { API_BASE_URL } from '../utils/constants';
 import usePageTitle from '../hooks/usePageTitle';
 
+const DEFAULT_SOURCES = [
+  { exchange: 'Binance', count: 0 },
+  { exchange: 'Bybit', count: 0 },
+  { exchange: 'OKX', count: 0 },
+  { exchange: 'MEXC', count: 0 },
+  { exchange: 'Bitget', count: 0 },
+  { exchange: 'Gate.io', count: 0 },
+];
+
 const Listings = () => {
   usePageTitle('Listings');
   const { t } = useTranslation();
   const [sortConfig, setSortConfig] = useState({ key: 'date', direction: 'desc' });
   const [items, setItems] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [sources, setSources] = useState(DEFAULT_SOURCES);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 min max
-    setLoading(true);
+    setRefreshing(true);
     setError(null);
     fetch(`${API_BASE_URL}/market/listings`, { signal: controller.signal })
       .then((res) => {
@@ -38,17 +49,22 @@ const Listings = () => {
               id: `${row.exchange}-${row.market || row.type || '-'}-${row.coin}-${i}`,
             }))
           );
+          const sourceRows = Array.isArray(data?.meta?.sources) && data.meta.sources.length > 0
+            ? data.meta.sources
+            : DEFAULT_SOURCES;
+          setSources(sourceRows);
+          setLastUpdatedAt(data?.meta?.lastUpdatedAt || null);
         }
       })
       .catch((err) => {
         if (!cancelled) {
-          const msg = err.name === 'AbortError' ? 'Request took too long. Try again (next load will use cache).' : (err.message || 'Failed to load listings. Is the server running?');
+          const msg = err.name === 'AbortError' ? 'Request took too long.' : (err.message || 'Failed to load listings. Is the server running?');
           setError(msg);
         }
       })
       .finally(() => {
         clearTimeout(timeoutId);
-        if (!cancelled) setLoading(false);
+        if (!cancelled) setRefreshing(false);
       });
     return () => {
       cancelled = true;
@@ -90,18 +106,6 @@ const Listings = () => {
     );
   };
 
-  if (loading) {
-    return (
-      <div className="space-y-6">
-        <h1 className="text-2xl font-bold text-textPrimary">{t('Listings')}</h1>
-        <Card className="p-8 text-center">
-          <p className="text-textSecondary">{t('Loading upcoming listings…')}</p>
-          <p className="mt-2 text-sm text-textSecondary/80">{t('Fetching data from Binance, Bybit, OKX, MEXC, Bitget and Gate.io')}</p>
-        </Card>
-      </div>
-    );
-  }
-
   if (error) {
     return (
       <div className="space-y-6">
@@ -114,6 +118,22 @@ const Listings = () => {
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold text-textPrimary">{t('Listings')}</h1>
+      <Card className="p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          {sources.map((source) => (
+            <span
+              key={source.exchange}
+              className="inline-flex items-center rounded-full border border-border bg-surfaceDark px-2.5 py-1 text-xs text-textSecondary"
+            >
+              <span className="font-medium text-textPrimary">{source.exchange}</span>
+              <span className="ml-1.5 text-blue-400">{source.count}</span>
+            </span>
+          ))}
+          <span className="ml-auto text-xs text-textSecondary">
+            {refreshing ? t('Refreshing…') : (lastUpdatedAt ? `${t('Updated')}: ${new Date(lastUpdatedAt).toLocaleString()}` : t('Waiting for first sync…'))}
+          </span>
+        </div>
+      </Card>
       <Card className="overflow-hidden p-0">
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-border">

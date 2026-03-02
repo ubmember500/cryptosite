@@ -121,8 +121,8 @@ async function searchCoins(req, res, next) {
  */
 async function getListings(req, res, next) {
   try {
-    const listings = await listingsService.syncAndGetListings();
-    res.json({ listings });
+    const snapshot = await listingsService.getListingsSnapshot();
+    res.json(snapshot);
   } catch (error) {
     next(error);
   }
