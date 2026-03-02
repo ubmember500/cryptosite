@@ -1,9 +1,10 @@
 const axios = require('axios');
 const prisma = require('../utils/prisma');
 
+/* ─── Constants ─── */
 const MONITORED_EXCHANGES = ['Binance', 'Bybit', 'OKX', 'MEXC', 'Bitget', 'Gate.io'];
-const UPCOMING_DAYS = Math.max(0, Number.parseInt(process.env.LISTINGS_UPCOMING_DAYS || '90', 10));
-const REFRESH_INTERVAL_MS = Math.max(60_000, Number.parseInt(process.env.LISTINGS_REFRESH_MS || '300000', 10));
+const LOOKBACK_DAYS = 14; // show recently-listed items from last 14 days
+const REFRESH_INTERVAL_MS = Math.max(60_000, Number.parseInt(process.env.LISTINGS_REFRESH_MS || '3600000', 10)); // 1 hour
 
 let refreshTimer = null;
 let refreshInFlight = null;
@@ -15,31 +16,38 @@ let memorySnapshot = {
   },
 };
 
+/* ─── Helpers ─── */
 function toMs(value) {
   const n = Number(value);
   if (!Number.isFinite(n) || n <= 0) return null;
   return n < 1e12 ? n * 1000 : n;
 }
 
-function isoDate(ms) {
-  return new Date(ms).toISOString().slice(0, 10);
-}
-
-// Returns 'YYYY-MM-DD HH:MM' in UTC
 function isoDateTime(ms) {
-  if (!ms || !Number.isFinite(ms)) return isoDate(ms);
+  if (!ms || !Number.isFinite(ms)) return null;
   return new Date(ms).toISOString().slice(0, 16).replace('T', ' ');
 }
 
-function isUpcomingMs(ms, nowMs) {
-  return Number.isFinite(ms) && ms > nowMs && ms <= nowMs + UPCOMING_DAYS * 86400_000;
+/** True when timestamp is strictly in the future */
+function isUpcoming(ms, nowMs) {
+  return Number.isFinite(ms) && ms > nowMs;
 }
 
-function normalizeUpcomingMs(rawMs, nowMs, fallbackHours = 12) {
-  if (isUpcomingMs(rawMs, nowMs)) {
-    return { listedAt: rawMs, tba: false };
-  }
-  return { listedAt: nowMs + fallbackHours * 3600_000, tba: true };
+/** True when timestamp is in the past but within LOOKBACK_DAYS */
+function isRecentlyListed(ms, nowMs) {
+  if (!Number.isFinite(ms) || ms > nowMs) return false;
+  return ms >= nowMs - LOOKBACK_DAYS * 86400_000;
+}
+
+/** True when timestamp falls in our display window (recently listed OR upcoming) */
+function isInWindow(ms, nowMs) {
+  return isUpcoming(ms, nowMs) || isRecentlyListed(ms, nowMs);
+}
+
+/** Determine status label from timestamp */
+function listingStatus(ms, nowMs) {
+  if (!Number.isFinite(ms) || ms > nowMs) return 'upcoming';
+  return 'listed';
 }
 
 async function getWithFallback(urls, config = {}) {
@@ -57,7 +65,7 @@ async function getWithFallback(urls, config = {}) {
 function dedup(rows) {
   const seen = new Set();
   return rows.filter((row) => {
-    const key = `${row.exchange}|${row.market}|${row.coin}|${row.date}`;
+    const key = `${row.exchange}|${row.market}|${row.coin}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -81,6 +89,7 @@ function addSourceMeta(listings, lastUpdatedAt) {
   };
 }
 
+/* ─── DB helpers ─── */
 async function ensureListingsTable() {
   await prisma.$executeRawUnsafe(`
     CREATE TABLE IF NOT EXISTS "FutureListing" (
@@ -102,10 +111,11 @@ function toDbSymbol(row) {
 function fromDbSymbol(symbol) {
   const [market, ...coinParts] = String(symbol || '').split(':');
   const coin = coinParts.join(':') || String(symbol || '');
-  return {
-    market: market || 'futures',
-    coin,
-  };
+  return { market: market || 'futures', coin };
+}
+
+function cryptoRandomId() {
+  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
 }
 
 async function persistSnapshot(rows) {
@@ -113,7 +123,7 @@ async function persistSnapshot(rows) {
     id: cryptoRandomId(),
     exchange: row.exchange,
     symbol: toDbSymbol(row),
-    firstSeenAt: new Date(row.listedAt),
+    firstSeenAt: new Date(row.listedAt || Date.now()),
   }));
 
   await prisma.$transaction(async (tx) => {
@@ -131,21 +141,20 @@ async function loadSnapshotFromDb() {
   });
 
   const nowMs = Date.now();
-  const listings = rows
-    .map((row) => {
-      const parsed = fromDbSymbol(row.symbol);
-      const listedAt = new Date(row.firstSeenAt).getTime();
-      return {
-        exchange: row.exchange,
-        market: parsed.market,
-        type: parsed.market,
-        coin: parsed.coin,
-        status: 'upcoming',
-        date: isoDateTime(listedAt),
-        listedAt,
-      };
-    })
-    .filter((row) => isUpcomingMs(row.listedAt, nowMs));
+  // DB stores the authoritative pre-filtered snapshot — no re-filter needed
+  const listings = rows.map((row) => {
+    const parsed = fromDbSymbol(row.symbol);
+    const listedAt = new Date(row.firstSeenAt).getTime();
+    return {
+      exchange: row.exchange,
+      market: parsed.market,
+      type: parsed.market,
+      coin: parsed.coin,
+      status: listingStatus(listedAt, nowMs),
+      date: isoDateTime(listedAt) || 'TBA',
+      listedAt,
+    };
+  });
 
   const normalized = dedup(listings)
     .sort((a, b) => (a.listedAt || 0) - (b.listedAt || 0))
@@ -158,11 +167,10 @@ async function loadSnapshotFromDb() {
   return addSourceMeta(normalized, lastUpdatedAt);
 }
 
-function cryptoRandomId() {
-  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
-}
+/* ─── Exchange fetchers ─── */
 
-async function fetchBinanceFutures(nowMs) {
+// Binance Futures: PENDING_TRADING status = upcoming, regardless of timestamp
+async function fetchBinanceFutures() {
   const { data } = await axios.get('https://fapi.binance.com/fapi/v1/exchangeInfo', { timeout: 20000 });
   return (data?.symbols || [])
     .filter((item) => {
@@ -171,21 +179,21 @@ async function fetchBinanceFutures(nowMs) {
       return q === 'USDT' && st === 'PENDING_TRADING';
     })
     .map((item) => {
-      const normalized = normalizeUpcomingMs(toMs(item?.onboardDate), nowMs);
-      const listedAt = normalized.listedAt;
+      const listedAt = toMs(item?.onboardDate);
       return {
         exchange: 'Binance',
         market: 'futures',
         type: 'futures',
         coin: String(item?.baseAsset || item?.symbol || '').toUpperCase(),
-        status: 'upcoming',
+        status: 'upcoming', // PENDING_TRADING status IS the signal
         listedAt,
-        date: normalized.tba ? 'TBA' : isoDateTime(listedAt),
+        date: isoDateTime(listedAt) || 'TBA',
       };
     })
     .filter((item) => item.coin);
 }
 
+// Binance Spot Announcements: articles from last 30 days, parse coin tickers
 async function fetchBinanceSpotAnnouncements(nowMs) {
   const { data } = await axios.get(
     'https://www.binance.com/bapi/composite/v1/public/cms/article/list/query?type=1&catalogId=48&pageNo=1&pageSize=30',
@@ -196,15 +204,17 @@ async function fetchBinanceSpotAnnouncements(nowMs) {
   );
 
   const articles = data?.data?.catalogs?.[0]?.articles || data?.data?.articles || [];
-  const excluded = new Set(['USDT', 'USD', 'BTC', 'ETH', 'BNB', 'AND', 'THE', 'FOR', 'ON']);
+  const excluded = new Set(['USDT', 'USD', 'BTC', 'ETH', 'BNB', 'AND', 'THE', 'FOR', 'ON', 'WILL', 'NEW']);
   const rows = [];
+  const thirtyDaysAgo = nowMs - 30 * 86400_000;
 
   for (const article of articles) {
     const title = String(article?.title || '');
     const releaseMs = toMs(article?.releaseDate);
-    if (!releaseMs || !isUpcomingMs(releaseMs, nowMs)) continue;
+    if (!releaseMs || releaseMs < thirtyDaysAgo) continue;
 
     const market = /futures|perpetual/i.test(title) ? 'futures' : 'spot';
+    const status = isUpcoming(releaseMs, nowMs) ? 'upcoming' : 'listed';
     const matches = [
       ...title.matchAll(/\(([A-Z0-9]{2,20})(?:\/USDT)?\)/g),
       ...title.matchAll(/Will List ([A-Z0-9]{2,20})[\s(]/g),
@@ -219,7 +229,7 @@ async function fetchBinanceSpotAnnouncements(nowMs) {
         market,
         type: market,
         coin,
-        status: 'upcoming',
+        status,
         listedAt: releaseMs,
         date: isoDateTime(releaseMs),
       });
@@ -229,6 +239,7 @@ async function fetchBinanceSpotAnnouncements(nowMs) {
   return rows;
 }
 
+// Bybit: ALL PreLaunch items are upcoming regardless of launchTime
 async function fetchBybitPage(params) {
   const { data } = await getWithFallback(
     [
@@ -247,7 +258,7 @@ async function fetchBybitPage(params) {
   return data?.result || {};
 }
 
-async function fetchBybitFutures(nowMs) {
+async function fetchBybitFutures() {
   const all = new Map();
   let cursor = '';
   do {
@@ -266,24 +277,23 @@ async function fetchBybitFutures(nowMs) {
   return Array.from(all.values())
     .filter((item) => String(item?.quoteCoin || '').toUpperCase() === 'USDT')
     .map((item) => {
-      // PreLaunch items may have launchTime=0/null or stale past values; keep them as upcoming with TBA.
-      const normalized = normalizeUpcomingMs(toMs(item?.launchTime), nowMs);
-      const listedAt = normalized.listedAt;
       const coin = String(item?.baseCoin || item?.symbol || '').toUpperCase();
       if (!coin) return null;
+      const launchMs = toMs(item?.launchTime);
       return {
         exchange: 'Bybit',
         market: 'futures',
         type: 'futures',
         coin,
-        status: 'upcoming',
-        listedAt,
-        date: normalized.tba ? 'TBA' : isoDateTime(listedAt),
+        status: 'upcoming', // PreLaunch status IS the signal
+        listedAt: launchMs,
+        date: isoDateTime(launchMs) || 'TBA',
       };
     })
     .filter(Boolean);
 }
 
+// OKX: recently listed within 14 days + upcoming
 async function fetchOkxByType(instType, nowMs) {
   const { data } = await axios.get('https://www.okx.com/api/v5/public/instruments', {
     params: { instType },
@@ -296,7 +306,8 @@ async function fetchOkxByType(instType, nowMs) {
   return (Array.isArray(data?.data) ? data.data : [])
     .filter((item) => {
       const settle = String(item?.settleCcy || item?.quoteCcy || '').toUpperCase();
-      return settle === 'USDT' && isUpcomingMs(toMs(item?.listTime), nowMs);
+      const lt = toMs(item?.listTime);
+      return settle === 'USDT' && isInWindow(lt, nowMs);
     })
     .map((item) => {
       const listedAt = toMs(item?.listTime);
@@ -304,8 +315,8 @@ async function fetchOkxByType(instType, nowMs) {
         exchange: 'OKX',
         market: 'futures',
         type: 'futures',
-        coin: String(item?.baseCcy || item?.instId || '').toUpperCase(),
-        status: 'upcoming',
+        coin: String(item?.ctValCcy || item?.baseCcy || item?.instId || '').toUpperCase(),
+        status: listingStatus(listedAt, nowMs),
         listedAt,
         date: isoDateTime(listedAt),
       };
@@ -320,31 +331,40 @@ async function fetchOkxFutures(nowMs) {
   return [...swaps, ...futures];
 }
 
+// MEXC Spot: recently listed (openTime within 14 days) or status-based
 async function fetchMexcSpot(nowMs) {
   const { data } = await axios.get('https://api.mexc.com/api/v3/exchangeInfo', { timeout: 20000 });
   return (data?.symbols || [])
-    .filter((item) => isUpcomingMs(toMs(item?.openTime), nowMs))
+    .filter((item) => {
+      const ot = toMs(item?.openTime);
+      if (ot && isInWindow(ot, nowMs)) return true;
+      // status '2' may indicate pre-listing on MEXC
+      if (String(item?.status) === '2') return true;
+      return false;
+    })
     .map((item) => {
       const listedAt = toMs(item?.openTime);
+      const st = String(item?.status);
       return {
         exchange: 'MEXC',
         market: 'spot',
         type: 'spot',
         coin: String(item?.baseAsset || '').toUpperCase(),
-        status: 'upcoming',
+        status: st === '2' ? 'upcoming' : listingStatus(listedAt, nowMs),
         listedAt,
-        date: isoDateTime(listedAt),
+        date: isoDateTime(listedAt) || 'TBA',
       };
     })
     .filter((item) => item.coin);
 }
 
+// MEXC Futures: wrapped in try/catch for 403
 async function fetchMexcFutures(nowMs) {
   const { data } = await axios.get('https://contract.mexc.com/api/v1/contract/list', { timeout: 20000 });
   return (Array.isArray(data?.data) ? data.data : [])
     .filter((item) => {
       const listedAt = toMs(item?.launchTime || item?.openTime);
-      return String(item?.quoteCoin || item?.symbol || '').toUpperCase().includes('USDT') && isUpcomingMs(listedAt, nowMs);
+      return String(item?.quoteCoin || item?.symbol || '').toUpperCase().includes('USDT') && isInWindow(listedAt, nowMs);
     })
     .map((item) => {
       const listedAt = toMs(item?.launchTime || item?.openTime);
@@ -353,7 +373,7 @@ async function fetchMexcFutures(nowMs) {
         market: 'futures',
         type: 'futures',
         coin: String(item?.baseCoin || item?.symbol || '').toUpperCase().replace(/_?USDT$/, ''),
-        status: 'upcoming',
+        status: listingStatus(listedAt, nowMs),
         listedAt,
         date: isoDateTime(listedAt),
       };
@@ -361,10 +381,15 @@ async function fetchMexcFutures(nowMs) {
     .filter((item) => item.coin);
 }
 
+// Bitget Spot: recently listed within 14 days
 async function fetchBitgetSpot(nowMs) {
   const { data } = await axios.get('https://api.bitget.com/api/v2/spot/public/symbols', { timeout: 20000 });
   return (data?.data || [])
-    .filter((item) => String(item?.quoteCoin || '').toUpperCase() === 'USDT' && isUpcomingMs(toMs(item?.openTime || item?.listTime), nowMs))
+    .filter((item) => {
+      const q = String(item?.quoteCoin || '').toUpperCase();
+      const lt = toMs(item?.openTime || item?.listTime);
+      return q === 'USDT' && isInWindow(lt, nowMs);
+    })
     .map((item) => {
       const listedAt = toMs(item?.openTime || item?.listTime);
       return {
@@ -372,7 +397,7 @@ async function fetchBitgetSpot(nowMs) {
         market: 'spot',
         type: 'spot',
         coin: String(item?.baseCoin || '').toUpperCase(),
-        status: 'upcoming',
+        status: listingStatus(listedAt, nowMs),
         listedAt,
         date: isoDateTime(listedAt),
       };
@@ -380,10 +405,14 @@ async function fetchBitgetSpot(nowMs) {
     .filter((item) => item.coin);
 }
 
+// Bitget Futures: recently listed within 14 days
 async function fetchBitgetFutures(nowMs) {
   const { data } = await axios.get('https://api.bitget.com/api/v2/mix/market/contracts?productType=USDT-FUTURES', { timeout: 20000 });
   return (data?.data || [])
-    .filter((item) => isUpcomingMs(toMs(item?.launchTime || item?.openTime || item?.listTime), nowMs))
+    .filter((item) => {
+      const lt = toMs(item?.launchTime || item?.openTime || item?.listTime);
+      return isInWindow(lt, nowMs);
+    })
     .map((item) => {
       const listedAt = toMs(item?.launchTime || item?.openTime || item?.listTime);
       return {
@@ -391,7 +420,7 @@ async function fetchBitgetFutures(nowMs) {
         market: 'futures',
         type: 'futures',
         coin: String(item?.baseCoin || item?.symbol || '').toUpperCase().replace(/USDT$/, ''),
-        status: 'upcoming',
+        status: listingStatus(listedAt, nowMs),
         listedAt,
         date: isoDateTime(listedAt),
       };
@@ -399,13 +428,13 @@ async function fetchBitgetFutures(nowMs) {
     .filter((item) => item.coin);
 }
 
+// Gate.io Futures: recently listed within 14 days
 async function fetchGateFutures(nowMs) {
   const { data } = await axios.get('https://api.gateio.ws/api/v4/futures/usdt/contracts', { timeout: 20000 });
   return (Array.isArray(data) ? data : [])
     .filter((item) => {
-      // Gate.io uses create_time (seconds) when the contract was created — same as listing date
       const listedAt = toMs(item?.create_time);
-      return isUpcomingMs(listedAt, nowMs);
+      return isInWindow(listedAt, nowMs);
     })
     .map((item) => {
       const listedAt = toMs(item?.create_time);
@@ -414,7 +443,7 @@ async function fetchGateFutures(nowMs) {
         market: 'futures',
         type: 'futures',
         coin: String(item?.name || '').toUpperCase().replace('_USDT', ''),
-        status: 'upcoming',
+        status: listingStatus(listedAt, nowMs),
         listedAt,
         date: isoDateTime(listedAt),
       };
@@ -422,12 +451,13 @@ async function fetchGateFutures(nowMs) {
     .filter((item) => item.coin);
 }
 
-async function collectUpcomingRows() {
+/* ─── Collection & scheduling ─── */
+async function collectRows() {
   const nowMs = Date.now();
   const settled = await Promise.allSettled([
-    fetchBinanceFutures(nowMs),
+    fetchBinanceFutures(),
     fetchBinanceSpotAnnouncements(nowMs),
-    fetchBybitFutures(nowMs),
+    fetchBybitFutures(),
     fetchOkxFutures(nowMs),
     fetchMexcSpot(nowMs),
     fetchMexcFutures(nowMs),
@@ -455,11 +485,12 @@ async function refreshListingsSnapshot() {
 
   refreshInFlight = (async () => {
     await ensureListingsTable();
-    const rows = await collectUpcomingRows();
+    const rows = await collectRows();
     if (rows.length > 0) {
       await persistSnapshot(rows);
       const outputRows = rows.map(({ listedAt, ...rest }) => rest);
       memorySnapshot = addSourceMeta(outputRows, new Date().toISOString());
+      console.log(`[listingsService] refreshed: ${rows.length} listings from ${MONITORED_EXCHANGES.length} exchanges`);
       return memorySnapshot;
     }
 

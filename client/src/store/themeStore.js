@@ -99,7 +99,7 @@ export const useThemeStore = create(
     }),
     {
       name: THEME_KEY,
-      version: 2,
+      version: 3,
       migrate: (persistedState) => {
         if (!persistedState || typeof persistedState !== 'object') {
           return {
@@ -109,9 +109,14 @@ export const useThemeStore = create(
           };
         }
 
-        const theme = normalizeTheme(persistedState.theme);
+        // Migrate old default (mecha) to new default (carbon)
+        const rawTheme =
+          persistedState.theme === 'mecha' ? 'carbon' : persistedState.theme;
+        const theme = normalizeTheme(rawTheme);
+        const rawDark =
+          persistedState.lastDarkTheme === 'mecha' ? 'carbon' : persistedState.lastDarkTheme;
         const dark = sanitizeCategoryTheme(
-          persistedState.lastDarkTheme,
+          rawDark,
           DARK_THEME_IDS,
           isDarkTheme(theme) ? theme : DEFAULT_DARK_THEME_ID
         );

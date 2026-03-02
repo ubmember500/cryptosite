@@ -28,6 +28,12 @@ const EXCHANGE_COLORS = {
   'Gate.io':{ on: 'bg-red-500/20    border-red-500/50    text-red-400',    dot: 'bg-red-400'    },
 };
 
+const STATUS_FILTERS = [
+  { key: 'all',      label: 'All' },
+  { key: 'upcoming', label: 'Upcoming' },
+  { key: 'listed',   label: 'Recently Listed' },
+];
+
 const Listings = () => {
   usePageTitle('Listings');
   const { t } = useTranslation();
@@ -37,6 +43,7 @@ const Listings = () => {
   const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
+  const [statusFilter, setStatusFilter] = useState('all');
   // exchange toggles: Set of currently-enabled exchange names
   const [enabledExchanges, setEnabledExchanges] = useState(() => new Set(ALL_EXCHANGES));
 
@@ -109,7 +116,7 @@ const Listings = () => {
     const intervalId = setInterval(() => {
       if (cleanupRequest) cleanupRequest();
       cleanupRequest = loadSnapshot();
-    }, 30_000);
+    }, 60_000);
 
     return () => {
       cancelled = true;
@@ -126,7 +133,10 @@ const Listings = () => {
   };
 
   const sortedItems = useMemo(() => {
-    const filtered = items.filter((r) => enabledExchanges.has(r.exchange));
+    let filtered = items.filter((r) => enabledExchanges.has(r.exchange));
+    if (statusFilter !== 'all') {
+      filtered = filtered.filter((r) => r.status === statusFilter);
+    }
     return [...filtered].sort((a, b) => {
       const aVal = a[sortConfig.key];
       const bVal = b[sortConfig.key];
@@ -134,7 +144,7 @@ const Listings = () => {
       if (aVal > bVal) return sortConfig.direction === 'asc' ? 1 : -1;
       return 0;
     });
-  }, [items, sortConfig, enabledExchanges]);
+  }, [items, sortConfig, enabledExchanges, statusFilter]);
 
   const SortIcon = ({ columnKey }) => {
     if (sortConfig.key !== columnKey) {
@@ -199,6 +209,22 @@ const Listings = () => {
               : t('Waiting for first sync\u2026')}
           </span>
         </div>
+        {/* Status filter pills */}
+        <div className="mt-2 flex items-center gap-2 border-t border-border pt-2">
+          {STATUS_FILTERS.map((sf) => (
+            <button
+              key={sf.key}
+              onClick={() => setStatusFilter(sf.key)}
+              className={`rounded-full px-3 py-0.5 text-xs font-medium transition-all select-none ${
+                statusFilter === sf.key
+                  ? 'bg-blue-500/20 border border-blue-500/50 text-blue-400'
+                  : 'bg-transparent border border-border text-textSecondary hover:text-textPrimary'
+              }`}
+            >
+              {t(sf.label)}
+            </button>
+          ))}
+        </div>
       </Card>
       <Card className="overflow-hidden p-0">
         <div className="overflow-x-auto">
@@ -257,7 +283,7 @@ const Listings = () => {
               {sortedItems.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="px-4 py-8 text-center text-textSecondary">
-                    {t('No future listings found. Data refreshes every 5 minutes.')}
+                    {t('No listings found. Data refreshes every hour.')}
                   </td>
                 </tr>
               ) : (
@@ -267,9 +293,15 @@ const Listings = () => {
                     <td className="px-4 py-3 text-sm text-textPrimary">{row.exchange}</td>
                     <td className="px-4 py-3 text-sm text-textPrimary capitalize">{row.market}</td>
                     <td className="px-4 py-3 text-sm">
-                      <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold bg-amber-500/15 text-amber-400 border border-amber-500/30">
-                        UPCOMING
-                      </span>
+                      {row.status === 'listed' ? (
+                        <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold bg-green-500/15 text-green-400 border border-green-500/30">
+                          LISTED
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold bg-amber-500/15 text-amber-400 border border-amber-500/30">
+                          UPCOMING
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-sm text-textPrimary font-mono whitespace-nowrap">{row.date}</td>
                   </tr>
