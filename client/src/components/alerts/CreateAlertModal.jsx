@@ -7,14 +7,39 @@ import Select from '../common/Select';
 import TokenSelector from './TokenSelector';
 import { useMarketStore } from '../../store/marketStore';
 import { useAlertStore } from '../../store/alertStore';
+import { useAuthStore } from '../../store/authStore';
 import { fetchLivePrice } from '../../utils/fetchLivePrice';
 import { AlertCircle, ArrowUp, ArrowDown, Info, Lock, X } from 'lucide-react';
 import { cn } from '../../utils/cn';
+
+const DEFAULT_NOTIFICATION_CHANNELS = {
+  soundEnabled: true,
+  inAppPopupEnabled: true,
+  browserPushEnabled: true,
+  telegramEnabled: true,
+};
+
+function normalizeNotificationOptions(raw) {
+  const source = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  const channels = source.channels && typeof source.channels === 'object' ? source.channels : {};
+  const toBool = (v, fallback = true) => (typeof v === 'boolean' ? v : fallback);
+  return {
+    ...source,
+    channels: {
+      soundEnabled: toBool(channels.soundEnabled, DEFAULT_NOTIFICATION_CHANNELS.soundEnabled),
+      inAppPopupEnabled: toBool(channels.inAppPopupEnabled, DEFAULT_NOTIFICATION_CHANNELS.inAppPopupEnabled),
+      browserPushEnabled: toBool(channels.browserPushEnabled, DEFAULT_NOTIFICATION_CHANNELS.browserPushEnabled),
+      telegramEnabled: toBool(channels.telegramEnabled, DEFAULT_NOTIFICATION_CHANNELS.telegramEnabled),
+    },
+  };
+}
 
 const CreateAlertModal = ({ isOpen, onClose, onSuccess, editingAlertId, editingAlert, initialData = null }) => {
   const { t } = useTranslation();
   const { fetchBinanceTokens, binanceTokens, loadingBinance, setExchange } = useMarketStore();
   const { createAlert, updateAlert } = useAlertStore();
+  const user = useAuthStore((state) => state.user);
+  const isTelegramConnected = Boolean(user?.telegramConnectedAt || user?.telegramChatId);
 
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
@@ -29,7 +54,7 @@ const CreateAlertModal = ({ isOpen, onClose, onSuccess, editingAlertId, editingA
     name: '',
     exchanges: ['binance'],
     market: 'futures', // 'futures' | 'spot'
-    notificationOptions: {},
+    notificationOptions: normalizeNotificationOptions({}),
     symbols: [],
     conditions: [],
     targetValue: '',
@@ -54,13 +79,14 @@ const CreateAlertModal = ({ isOpen, onClose, onSuccess, editingAlertId, editingA
         const notifOptions = editingAlert.notificationOptions 
           ? (typeof editingAlert.notificationOptions === 'string' ? JSON.parse(editingAlert.notificationOptions) : editingAlert.notificationOptions)
           : {};
+        const normalizedNotifOptions = normalizeNotificationOptions(notifOptions);
         
         setFormData({
           alertType: editingAlert.alertType || 'price',
           name: editingAlert.name || '',
           exchanges: editingAlert.exchanges || [editingAlert.exchange || 'binance'],
           market: editingAlert.market || 'futures',
-          notificationOptions: notifOptions,
+          notificationOptions: normalizedNotifOptions,
           symbols,
           conditions: Array.isArray(conditions) && conditions.length > 0 ? [conditions[0]] : [{ type: 'pct_change', value: '', timeframe: '1m' }],
           targetValue: editingAlert.targetValue || '',
@@ -69,7 +95,7 @@ const CreateAlertModal = ({ isOpen, onClose, onSuccess, editingAlertId, editingA
         
         // Detect alertForMode from notificationOptions or symbols count
         if (editingAlert.alertType === 'complex') {
-          const mode = notifOptions.alertForMode || (symbols.length > 0 && symbols.length < 100 ? 'whitelist' : 'all');
+          const mode = normalizedNotifOptions.alertForMode || (symbols.length > 0 && symbols.length < 100 ? 'whitelist' : 'all');
           setAlertForMode(mode);
         }
       } catch (err) {
@@ -87,7 +113,7 @@ const CreateAlertModal = ({ isOpen, onClose, onSuccess, editingAlertId, editingA
         name: '',
         exchanges: [presetExchange],
         market: presetMarket,
-        notificationOptions: {},
+        notificationOptions: normalizeNotificationOptions({}),
         symbols: presetSymbol ? [presetSymbol] : [],
         conditions: [{ type: 'pct_change', value: '', timeframe: '1m' }],
         targetValue: presetTargetValue,
@@ -167,6 +193,13 @@ const CreateAlertModal = ({ isOpen, onClose, onSuccess, editingAlertId, editingA
     setError('');
     try {
       let payload;
+      const notificationOptions = normalizeNotificationOptions({
+        ...formData.notificationOptions,
+        ...(formData.alertType === 'complex' ? { alertForMode } : {}),
+      });
+      if (!isTelegramConnected) {
+        notificationOptions.channels.telegramEnabled = false;
+      }
       if (formData.alertType === 'price') {
         const exchange = formData.exchanges[0] || 'binance';
         const market = formData.market;
@@ -193,6 +226,7 @@ const CreateAlertModal = ({ isOpen, onClose, onSuccess, editingAlertId, editingA
           market,
           symbols: formData.symbols,
           targetValue: Number(formData.targetValue),
+          notificationOptions,
           ...(currentPrice != null ? { currentPrice } : {}),
         };
       } else {
@@ -203,13 +237,15 @@ const CreateAlertModal = ({ isOpen, onClose, onSuccess, editingAlertId, editingA
           market: formData.market,
           symbols: alertForMode === 'all' ? [] : formData.symbols,
           conditions: formData.conditions.map(c => ({ ...c, timeframe: '1m' })),
-          notificationOptions: { ...formData.notificationOptions, alertForMode },
+          notificationOptions,
         };
       }
 
       if (editingAlertId) {
         // Price alert: only name is editable (backend constraint — symbol/target are immutable)
-        const editPayload = formData.alertType === 'price' ? { name: formData.name } : payload;
+        const editPayload = formData.alertType === 'price'
+          ? { name: formData.name, notificationOptions }
+          : payload;
         await updateAlert(editingAlertId, editPayload);
       } else {
         await createAlert(payload);
@@ -366,6 +402,91 @@ const CreateAlertModal = ({ isOpen, onClose, onSuccess, editingAlertId, editingA
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                 placeholder={t('e.g. BTC target')}
               />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-textPrimary mb-2">
+                {t('Notifications')}
+              </label>
+              <div className="space-y-2 rounded-lg border border-border bg-surface/50 p-3">
+                {[
+                  {
+                    key: 'soundEnabled',
+                    label: t('Sound in website'),
+                    description: t('Play alert sound when triggered.'),
+                    disabled: false,
+                  },
+                  {
+                    key: 'inAppPopupEnabled',
+                    label: t('Web pop-up in website'),
+                    description: t('Show in-site pop-up and toast when triggered.'),
+                    disabled: false,
+                  },
+                  {
+                    key: 'browserPushEnabled',
+                    label: t('Browser notification'),
+                    description: t('Show browser-level notification if permission is granted.'),
+                    disabled: false,
+                  },
+                  {
+                    key: 'telegramEnabled',
+                    label: t('Telegram notification'),
+                    description: isTelegramConnected
+                      ? t('Send alert message to your connected Telegram account.')
+                      : t('Connect Telegram in profile to enable this channel.'),
+                    disabled: !isTelegramConnected,
+                  },
+                ].map((item) => {
+                  const channels = normalizeNotificationOptions(formData.notificationOptions).channels;
+                  const enabled = item.disabled ? false : Boolean(channels[item.key]);
+                  return (
+                    <div key={item.key} className="flex items-center justify-between gap-3 rounded-md border border-border/60 px-3 py-2">
+                      <div className="min-w-0">
+                        <p className={cn('text-sm font-medium', item.disabled ? 'text-textSecondary' : 'text-textPrimary')}>
+                          {item.label}
+                        </p>
+                        <p className="text-xs text-textSecondary">{item.description}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (item.disabled) return;
+                          setFormData((prev) => {
+                            const normalized = normalizeNotificationOptions(prev.notificationOptions);
+                            return {
+                              ...prev,
+                              notificationOptions: {
+                                ...normalized,
+                                channels: {
+                                  ...normalized.channels,
+                                  [item.key]: !normalized.channels[item.key],
+                                },
+                              },
+                            };
+                          });
+                        }}
+                        className={cn(
+                          'h-5 w-10 rounded-full transition-colors relative flex-shrink-0',
+                          item.disabled
+                            ? 'bg-surfaceHover/70 cursor-not-allowed opacity-60'
+                            : enabled
+                              ? 'bg-accent/80'
+                              : 'bg-surfaceHover'
+                        )}
+                        aria-label={item.label}
+                        disabled={item.disabled}
+                      >
+                        <span
+                          className={cn(
+                            'absolute top-0.5 h-4 w-4 rounded-full bg-black transition-transform',
+                            enabled ? 'translate-x-5' : 'translate-x-0.5'
+                          )}
+                        />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
 
             <div className="flex justify-between gap-3 pt-4">

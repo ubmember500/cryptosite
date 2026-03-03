@@ -244,6 +244,7 @@ async function checkAlertHistorically(alert) {
     market,
     alertType: 'price',
     priceSource: `historical_${exchange}_klines`,
+    notificationOptions: normalizeNotificationOptions(alert.notificationOptions, null),
     ...(alert.initialPrice != null && Number.isFinite(Number(alert.initialPrice))
       ? { initialPrice: Number(alert.initialPrice) } : {}),
   };
@@ -251,6 +252,9 @@ async function checkAlertHistorically(alert) {
 
 async function sendAlertToTelegram(userId, payload) {
   try {
+    const notifOpts = normalizeNotificationOptions(payload?.notificationOptions || null, null);
+    if (notifOpts?.channels?.telegramEnabled === false) return;
+
     const user = await prisma.user.findUnique({
       where: { id: userId },
       select: { telegramChatId: true },
@@ -358,6 +362,45 @@ function parseSymbolsInput(value) {
   return [];
 }
 
+function parseNotificationOptionsInput(value) {
+  if (!value) return {};
+  if (typeof value === 'object' && !Array.isArray(value)) return value;
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
+function normalizeNotificationChannels(rawChannels) {
+  const source = rawChannels && typeof rawChannels === 'object' ? rawChannels : {};
+  const toBool = (v, fallback = true) => (typeof v === 'boolean' ? v : fallback);
+  return {
+    soundEnabled: toBool(source.soundEnabled, true),
+    inAppPopupEnabled: toBool(source.inAppPopupEnabled, true),
+    browserPushEnabled: toBool(source.browserPushEnabled, true),
+    telegramEnabled: toBool(source.telegramEnabled, true),
+  };
+}
+
+function normalizeNotificationOptions(value, existing = null) {
+  const incoming = parseNotificationOptionsInput(value);
+  const base = parseNotificationOptionsInput(existing);
+
+  return {
+    ...base,
+    ...incoming,
+    channels: normalizeNotificationChannels({
+      ...(base.channels || {}),
+      ...(incoming.channels || {}),
+    }),
+  };
+}
+
 function buildCanonicalCreateBody(input) {
   const body = { ...input };
   if (body.type != null && body.alertType == null) body.alertType = body.type;
@@ -398,7 +441,7 @@ function buildCanonicalCreateBody(input) {
   }
 
   if (body.notificationOptions != null) {
-    body.notificationOptions = typeof body.notificationOptions === 'string' ? body.notificationOptions : JSON.stringify(body.notificationOptions);
+    body.notificationOptions = normalizeNotificationOptions(body.notificationOptions, null);
   }
 
   if (body.targetValue !== undefined && body.targetValue !== null && body.targetValue !== '') {
@@ -440,6 +483,7 @@ function buildImmediateTriggerPayload(alert, currentPrice) {
     market: alert.market,
     alertType: 'price',
     initialPrice: alert.initialPrice,
+    notificationOptions: normalizeNotificationOptions(alert.notificationOptions, null),
   };
 }
 
@@ -572,6 +616,11 @@ async function createAlert(req, res, next) {
     const userId = req.user.id;
     console.log('[createAlert] User ID:', userId);
 
+    const normalizedNotificationOptions = normalizeNotificationOptions(
+      validatedData.notificationOptions,
+      null,
+    );
+
     let symbolsForStorage =
       validatedData.symbols != null
         ? (Array.isArray(validatedData.symbols) ? validatedData.symbols : [validatedData.symbols])
@@ -579,9 +628,7 @@ async function createAlert(req, res, next) {
 
     // For complex "all coins" mode, force empty array — server uses WS history dynamically
     if (validatedData.alertType === 'complex') {
-      const notifOpts = validatedData.notificationOptions || {};
-      const parsedOpts = typeof notifOpts === 'string' ? JSON.parse(notifOpts) : notifOpts;
-      if ((parsedOpts.alertForMode || 'all') === 'all') {
+      if ((normalizedNotificationOptions.alertForMode || 'all') === 'all') {
         symbolsForStorage = [];
       }
     }
@@ -592,12 +639,7 @@ async function createAlert(req, res, next) {
           ? validatedData.conditions
           : JSON.stringify(validatedData.conditions)
         : null;
-    const notificationOptionsStr =
-      validatedData.notificationOptions != null
-        ? typeof validatedData.notificationOptions === 'string'
-          ? validatedData.notificationOptions
-          : JSON.stringify(validatedData.notificationOptions)
-        : null;
+    const notificationOptionsStr = JSON.stringify(normalizedNotificationOptions);
 
     let coinId = validatedData.coinId ?? '';
     let coinSymbol = validatedData.coinSymbol ?? '';
@@ -912,10 +954,11 @@ async function updateAlert(req, res, next) {
           : JSON.stringify(validatedData.conditions);
     }
     if (validatedData.notificationOptions !== undefined) {
-      data.notificationOptions =
-        typeof validatedData.notificationOptions === 'string'
-          ? validatedData.notificationOptions
-          : JSON.stringify(validatedData.notificationOptions);
+      const normalizedOptions = normalizeNotificationOptions(
+        validatedData.notificationOptions,
+        existingAlert.notificationOptions,
+      );
+      data.notificationOptions = JSON.stringify(normalizedOptions);
     }
 
     const updatedAlert = await prisma.alert.update({

@@ -84,6 +84,35 @@ function deriveCoinSymbol(alert, resolvedSymbol) {
     .trim();
 }
 
+function parseNotificationOptions(notifOptions) {
+  if (!notifOptions) return {};
+  if (typeof notifOptions === 'object' && !Array.isArray(notifOptions)) return notifOptions;
+  if (typeof notifOptions === 'string') {
+    try {
+      const parsed = JSON.parse(notifOptions);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
+function normalizeNotificationOptions(notifOptions) {
+  const parsed = parseNotificationOptions(notifOptions);
+  const channelsRaw = parsed.channels && typeof parsed.channels === 'object' ? parsed.channels : {};
+  const toBool = (v, fallback = true) => (typeof v === 'boolean' ? v : fallback);
+  return {
+    ...parsed,
+    channels: {
+      soundEnabled: toBool(channelsRaw.soundEnabled, true),
+      inAppPopupEnabled: toBool(channelsRaw.inAppPopupEnabled, true),
+      browserPushEnabled: toBool(channelsRaw.browserPushEnabled, true),
+      telegramEnabled: toBool(channelsRaw.telegramEnabled, true),
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Exchange service accessor
 // ---------------------------------------------------------------------------
@@ -248,6 +277,7 @@ function createPriceAlertProcessor(deps = {}) {
           symbol: resolved.symbol || firstSymbol,
           alertType: 'price',
           priceSource: source,
+          notificationOptions: normalizeNotificationOptions(alert.notificationOptions),
           ...(initialPrice != null && Number.isFinite(initialPrice)
             ? { initialPrice }
             : {}),

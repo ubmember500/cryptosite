@@ -12,6 +12,62 @@ import ProtectedRoute from './components/common/ProtectedRoute';
 import Toast from './components/common/Toast';
 import AlertTriggeredModal from './components/alerts/AlertTriggeredModal';
 
+function normalizeNotificationOptions(raw) {
+  let source = {};
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    source = raw;
+  } else if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        source = parsed;
+      }
+    } catch {
+      source = {};
+    }
+  }
+  const channels = source.channels && typeof source.channels === 'object' ? source.channels : {};
+  const toBool = (value, fallback = true) => (typeof value === 'boolean' ? value : fallback);
+  return {
+    ...source,
+    channels: {
+      soundEnabled: toBool(channels.soundEnabled, true),
+      inAppPopupEnabled: toBool(channels.inAppPopupEnabled, true),
+      browserPushEnabled: toBool(channels.browserPushEnabled, true),
+      telegramEnabled: toBool(channels.telegramEnabled, true),
+    },
+  };
+}
+
+async function maybeShowBrowserNotification(alertData, options) {
+  if (!options?.channels?.browserPushEnabled) return;
+  if (typeof window === 'undefined' || typeof Notification === 'undefined') return;
+
+  let permission = Notification.permission;
+  if (permission === 'default') {
+    try {
+      permission = await Notification.requestPermission();
+    } catch {
+      return;
+    }
+  }
+  if (permission !== 'granted') return;
+
+  const symbol = alertData?.symbol || alertData?.coinSymbol || 'token';
+  const target = Number(alertData?.targetValue);
+  const hasTarget = Number.isFinite(target);
+  const title = alertData?.alertType === 'complex' ? 'Complex alert triggered' : 'Price alert hit';
+  const body = alertData?.alertType === 'complex'
+    ? `${symbol} moved sharply.`
+    : `${symbol}${hasTarget ? ` @ ${target}` : ''}`;
+
+  try {
+    new Notification(title, { body, tag: `alert-${alertData?.id || alertData?.alertId || Date.now()}` });
+  } catch {
+    // Ignore browser notification failures silently
+  }
+}
+
 function ThemeSync() {
   const theme = useThemeStore((state) => state.theme);
   useEffect(() => {
@@ -140,16 +196,26 @@ function App() {
   // (handles the race condition where socket hadn't joined the room yet when sweep fired)
   useEffect(() => {
     if (!pendingTriggerAlert) return;
-    playAlertSound().catch(() => {});
-    const symbol = pendingTriggerAlert?.symbol || pendingTriggerAlert?.coinSymbol || 'token';
-    const target = Number(pendingTriggerAlert?.targetValue);
-    const hasTarget = Number.isFinite(target);
-    addToast(
-      `Price alert hit: ${symbol}${hasTarget ? ` @ ${target}` : ''}`,
-      'warning',
-      8000
-    );
-    setTriggeredAlert(pendingTriggerAlert);
+
+    const options = normalizeNotificationOptions(pendingTriggerAlert?.notificationOptions || null);
+    if (options.channels.soundEnabled) {
+      playAlertSound().catch(() => {});
+    }
+
+    maybeShowBrowserNotification(pendingTriggerAlert, options).catch(() => {});
+
+    if (options.channels.inAppPopupEnabled) {
+      const symbol = pendingTriggerAlert?.symbol || pendingTriggerAlert?.coinSymbol || 'token';
+      const target = Number(pendingTriggerAlert?.targetValue);
+      const hasTarget = Number.isFinite(target);
+      addToast(
+        `Price alert hit: ${symbol}${hasTarget ? ` @ ${target}` : ''}`,
+        'warning',
+        8000
+      );
+      setTriggeredAlert(pendingTriggerAlert);
+    }
+
     clearPendingTriggerAlert();
   }, [pendingTriggerAlert, addToast, clearPendingTriggerAlert]);
 
@@ -159,18 +225,24 @@ function App() {
       const applied = applyTriggeredEvent(alertData);
       if (!applied) return;
 
-      playAlertSound().catch(() => {}); // Play loud alert sound immediately when alert triggers
+      const options = normalizeNotificationOptions(alertData?.notificationOptions || null);
 
-      const symbol = alertData?.symbol || alertData?.coinSymbol || 'token';
-      const target = Number(alertData?.targetValue);
-      const hasTarget = Number.isFinite(target);
-      const toastMessage = alertData?.alertType === 'price'
-        ? `Price alert hit: ${symbol}${hasTarget ? ` @ ${target}` : ''}`
-        : `Complex alert triggered: ${symbol}`;
-      addToast(toastMessage, 'warning', 8000);
-      
-      // Show the alert modal with full details
-      setTriggeredAlert(alertData);
+      if (options.channels.soundEnabled) {
+        playAlertSound().catch(() => {});
+      }
+
+      maybeShowBrowserNotification(alertData, options).catch(() => {});
+
+      if (options.channels.inAppPopupEnabled) {
+        const symbol = alertData?.symbol || alertData?.coinSymbol || 'token';
+        const target = Number(alertData?.targetValue);
+        const hasTarget = Number.isFinite(target);
+        const toastMessage = alertData?.alertType === 'price'
+          ? `Price alert hit: ${symbol}${hasTarget ? ` @ ${target}` : ''}`
+          : `Complex alert triggered: ${symbol}`;
+        addToast(toastMessage, 'warning', 8000);
+        setTriggeredAlert(alertData);
+      }
     },
   });
 

@@ -282,6 +282,7 @@ async function fireTriggerAsync(alert, symbol, stats, spanPct, nowMs) {
       baselinePrice: direction >= 0 ? stats.min : stats.max,
       currentPrice: direction >= 0 ? stats.max : stats.min,
       windowSeconds: alert.timeframeSec,
+      notificationOptions: normalizeNotificationOptions(updatedAlert.notificationOptions),
     };
 
     socketService.emitAlertTriggered(updatedAlert.userId, payload);
@@ -784,6 +785,11 @@ function formatAlertMessage(payload) {
  */
 async function sendAlertToTelegram(userId, payload) {
   try {
+    const notifOpts = normalizeNotificationOptions(payload?.notificationOptions || null);
+    if (notifOpts.channels.telegramEnabled === false) {
+      return;
+    }
+
     const user = await prisma.user.findUnique({
       where: { id: userId },
       select: { telegramChatId: true },
@@ -837,6 +843,21 @@ function parseNotificationOptions(notifOptions) {
     }
   }
   return {};
+}
+
+function normalizeNotificationOptions(notifOptions) {
+  const parsed = parseNotificationOptions(notifOptions);
+  const channelsRaw = parsed.channels && typeof parsed.channels === 'object' ? parsed.channels : {};
+  const toBool = (v, fallback = true) => (typeof v === 'boolean' ? v : fallback);
+  return {
+    ...parsed,
+    channels: {
+      soundEnabled: toBool(channelsRaw.soundEnabled, true),
+      inAppPopupEnabled: toBool(channelsRaw.inAppPopupEnabled, true),
+      browserPushEnabled: toBool(channelsRaw.browserPushEnabled, true),
+      telegramEnabled: toBool(channelsRaw.telegramEnabled, true),
+    },
+  };
 }
 
 const TIMEFRAME_TO_INTERVAL = {
