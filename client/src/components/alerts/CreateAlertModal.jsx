@@ -632,7 +632,7 @@ const CreateAlertModal = ({ isOpen, onClose, onSuccess, editingAlertId, editingA
               <label className="block text-sm font-medium text-textPrimary mb-1.5">
                 {t('Notifications')}
               </label>
-              <div className="space-y-0.5">
+              <div className="space-y-1">
                 {[
                   { key: 'soundEnabled', label: t('Sound in website'), disabled: false },
                   { key: 'inAppPopupEnabled', label: t('Web pop-up in website'), disabled: false },
@@ -647,45 +647,42 @@ const CreateAlertModal = ({ isOpen, onClose, onSuccess, editingAlertId, editingA
                   const channels = normalizeNotificationOptions(formData.notificationOptions).channels;
                   const enabled = item.disabled ? false : Boolean(channels[item.key]);
                   return (
-                    <button
-                      key={item.key}
-                      type="button"
-                      disabled={item.disabled}
-                      onClick={() => {
-                        if (item.disabled) return;
-                        setFormData((prev) => {
-                          const normalized = normalizeNotificationOptions(prev.notificationOptions);
-                          return {
-                            ...prev,
-                            notificationOptions: {
-                              ...normalized,
-                              channels: { ...normalized.channels, [item.key]: !normalized.channels[item.key] },
-                            },
-                          };
-                        });
-                      }}
-                      className={cn(
-                        'flex items-center gap-2.5 w-full px-2 py-1.5 rounded text-left transition-colors',
-                        item.disabled ? 'opacity-40 cursor-not-allowed' : 'hover:bg-surface/60 cursor-pointer'
-                      )}
-                    >
-                      <span
-                        className={cn(
-                          'flex-shrink-0 h-4 w-4 rounded border flex items-center justify-center transition-colors',
-                          enabled ? 'bg-accent border-accent' : 'border-border bg-transparent'
-                        )}
-                      >
-                        {enabled && (
-                          <svg className="h-2.5 w-2.5 text-black" viewBox="0 0 10 8" fill="none">
-                            <path d="M1 4l3 3 5-6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                          </svg>
-                        )}
-                      </span>
-                      <span className={cn('text-sm', item.disabled ? 'text-textSecondary' : 'text-textPrimary')}>
+                    <div key={item.key} className={cn('flex items-center justify-between py-1', item.disabled && 'opacity-40')}>
+                      <span className="text-sm text-textPrimary">
                         {item.label}
                         {item.hint && <span className="ml-1.5 text-xs text-textSecondary">({item.hint})</span>}
                       </span>
-                    </button>
+                      <button
+                        type="button"
+                        disabled={item.disabled}
+                        onClick={() => {
+                          if (item.disabled) return;
+                          setFormData((prev) => {
+                            const normalized = normalizeNotificationOptions(prev.notificationOptions);
+                            return {
+                              ...prev,
+                              notificationOptions: {
+                                ...normalized,
+                                channels: { ...normalized.channels, [item.key]: !normalized.channels[item.key] },
+                              },
+                            };
+                          });
+                        }}
+                        className={cn(
+                          'relative inline-flex h-4 w-8 flex-shrink-0 rounded-full transition-colors duration-200',
+                          item.disabled ? 'cursor-not-allowed' : 'cursor-pointer',
+                          enabled ? 'bg-accent' : 'bg-gray-600'
+                        )}
+                        aria-label={item.label}
+                      >
+                        <span
+                          className={cn(
+                            'absolute top-0.5 h-3 w-3 rounded-full bg-white shadow transition-transform duration-200',
+                            enabled ? 'translate-x-4' : 'translate-x-0.5'
+                          )}
+                        />
+                      </button>
+                    </div>
                   );
                 })}
               </div>
