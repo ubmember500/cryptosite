@@ -629,85 +629,63 @@ const CreateAlertModal = ({ isOpen, onClose, onSuccess, editingAlertId, editingA
             )}
 
             <div>
-              <label className="block text-sm font-medium text-textPrimary mb-2">
+              <label className="block text-sm font-medium text-textPrimary mb-1.5">
                 {t('Notifications')}
               </label>
-              <div className="space-y-2 rounded-lg border border-border bg-surface/50 p-3">
+              <div className="space-y-0.5">
                 {[
-                  {
-                    key: 'soundEnabled',
-                    label: t('Sound in website'),
-                    description: t('Play alert sound when triggered.'),
-                    disabled: false,
-                  },
-                  {
-                    key: 'inAppPopupEnabled',
-                    label: t('Web pop-up in website'),
-                    description: t('Show in-site pop-up and toast when triggered.'),
-                    disabled: false,
-                  },
-                  {
-                    key: 'browserPushEnabled',
-                    label: t('Browser notification'),
-                    description: t('Show browser-level notification if permission is granted.'),
-                    disabled: false,
-                  },
+                  { key: 'soundEnabled', label: t('Sound in website'), disabled: false },
+                  { key: 'inAppPopupEnabled', label: t('Web pop-up in website'), disabled: false },
+                  { key: 'browserPushEnabled', label: t('Browser notification'), disabled: false },
                   {
                     key: 'telegramEnabled',
                     label: t('Telegram notification'),
-                    description: isTelegramConnected
-                      ? t('Send alert message to your connected Telegram account.')
-                      : t('Connect Telegram in profile to enable this channel.'),
                     disabled: !isTelegramConnected,
+                    hint: !isTelegramConnected ? t('Connect Telegram in profile to enable.') : null,
                   },
                 ].map((item) => {
                   const channels = normalizeNotificationOptions(formData.notificationOptions).channels;
                   const enabled = item.disabled ? false : Boolean(channels[item.key]);
                   return (
-                    <div key={item.key} className="flex items-center justify-between gap-3 rounded-md border border-border/60 px-3 py-2">
-                      <div className="min-w-0">
-                        <p className={cn('text-sm font-medium', item.disabled ? 'text-textSecondary' : 'text-textPrimary')}>
-                          {item.label}
-                        </p>
-                        <p className="text-xs text-textSecondary">{item.description}</p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (item.disabled) return;
-                          setFormData((prev) => {
-                            const normalized = normalizeNotificationOptions(prev.notificationOptions);
-                            return {
-                              ...prev,
-                              notificationOptions: {
-                                ...normalized,
-                                channels: {
-                                  ...normalized.channels,
-                                  [item.key]: !normalized.channels[item.key],
-                                },
-                              },
-                            };
-                          });
-                        }}
+                    <button
+                      key={item.key}
+                      type="button"
+                      disabled={item.disabled}
+                      onClick={() => {
+                        if (item.disabled) return;
+                        setFormData((prev) => {
+                          const normalized = normalizeNotificationOptions(prev.notificationOptions);
+                          return {
+                            ...prev,
+                            notificationOptions: {
+                              ...normalized,
+                              channels: { ...normalized.channels, [item.key]: !normalized.channels[item.key] },
+                            },
+                          };
+                        });
+                      }}
+                      className={cn(
+                        'flex items-center gap-2.5 w-full px-2 py-1.5 rounded text-left transition-colors',
+                        item.disabled ? 'opacity-40 cursor-not-allowed' : 'hover:bg-surface/60 cursor-pointer'
+                      )}
+                    >
+                      <span
                         className={cn(
-                          'h-5 w-10 rounded-full transition-colors relative flex-shrink-0',
-                          item.disabled
-                            ? 'bg-surfaceHover/70 cursor-not-allowed opacity-60'
-                            : enabled
-                              ? 'bg-accent/80'
-                              : 'bg-surfaceHover'
+                          'flex-shrink-0 h-4 w-4 rounded border flex items-center justify-center transition-colors',
+                          enabled ? 'bg-accent border-accent' : 'border-border bg-transparent'
                         )}
-                        aria-label={item.label}
-                        disabled={item.disabled}
                       >
-                        <span
-                          className={cn(
-                            'absolute top-0.5 h-4 w-4 rounded-full bg-black transition-transform',
-                            enabled ? 'translate-x-5' : 'translate-x-0.5'
-                          )}
-                        />
-                      </button>
-                    </div>
+                        {enabled && (
+                          <svg className="h-2.5 w-2.5 text-black" viewBox="0 0 10 8" fill="none">
+                            <path d="M1 4l3 3 5-6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        )}
+                      </span>
+                      <span className={cn('text-sm', item.disabled ? 'text-textSecondary' : 'text-textPrimary')}>
+                        {item.label}
+                        {item.hint && <span className="ml-1.5 text-xs text-textSecondary">({item.hint})</span>}
+                      </span>
+                    </button>
                   );
                 })}
               </div>
