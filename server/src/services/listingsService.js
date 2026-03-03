@@ -3,7 +3,6 @@ const prisma = require('../utils/prisma');
 
 /* ─── Constants ─── */
 const MONITORED_EXCHANGES = ['Binance', 'Bybit', 'OKX', 'MEXC', 'Bitget', 'Gate.io'];
-const LOOKBACK_DAYS = 14; // show recently-listed items from last 14 days
 const REFRESH_INTERVAL_MS = Math.max(60_000, Number.parseInt(process.env.LISTINGS_REFRESH_MS || '3600000', 10)); // 1 hour
 
 let refreshTimer = null;
@@ -31,23 +30,6 @@ function isoDateTime(ms) {
 /** True when timestamp is strictly in the future */
 function isUpcoming(ms, nowMs) {
   return Number.isFinite(ms) && ms > nowMs;
-}
-
-/** True when timestamp is in the past but within LOOKBACK_DAYS */
-function isRecentlyListed(ms, nowMs) {
-  if (!Number.isFinite(ms) || ms > nowMs) return false;
-  return ms >= nowMs - LOOKBACK_DAYS * 86400_000;
-}
-
-/** True when timestamp falls in our display window (recently listed OR upcoming) */
-function isInWindow(ms, nowMs) {
-  return isUpcoming(ms, nowMs) || isRecentlyListed(ms, nowMs);
-}
-
-/** Determine status label from timestamp */
-function listingStatus(ms, nowMs) {
-  if (!Number.isFinite(ms) || ms > nowMs) return 'upcoming';
-  return 'listed';
 }
 
 async function getWithFallback(urls, config = {}) {
@@ -136,12 +118,17 @@ async function persistSnapshot(rows) {
 
 async function loadSnapshotFromDb() {
   await ensureListingsTable();
+  const nowMs = Date.now();
+  // Only load rows that are status-based (detected recently) or have a future timestamp.
+  // firstSeenAt stores the listing launch time OR Date.now() for status-based items.
+  // We reload all rows — the refresh cycle keeps only future/status-based items in DB.
   const rows = await prisma.futureListing.findMany({
+    where: {
+      firstSeenAt: { gte: new Date(nowMs - 7 * 24 * 3600_000) }, // within last 7 days (covers status-based items)
+    },
     orderBy: [{ firstSeenAt: 'asc' }, { exchange: 'asc' }],
   });
 
-  const nowMs = Date.now();
-  // DB stores the authoritative pre-filtered snapshot — no re-filter needed
   const listings = rows.map((row) => {
     const parsed = fromDbSymbol(row.symbol);
     const listedAt = new Date(row.firstSeenAt).getTime();
@@ -150,7 +137,7 @@ async function loadSnapshotFromDb() {
       market: parsed.market,
       type: parsed.market,
       coin: parsed.coin,
-      status: listingStatus(listedAt, nowMs),
+      status: 'upcoming',
       date: isoDateTime(listedAt) || 'TBA',
       listedAt,
     };
@@ -293,7 +280,7 @@ async function fetchBybitFutures() {
     .filter(Boolean);
 }
 
-// OKX: recently listed within 14 days + upcoming
+// OKX: future listings only
 async function fetchOkxByType(instType, nowMs) {
   const { data } = await axios.get('https://www.okx.com/api/v5/public/instruments', {
     params: { instType },
@@ -307,7 +294,7 @@ async function fetchOkxByType(instType, nowMs) {
     .filter((item) => {
       const settle = String(item?.settleCcy || item?.quoteCcy || '').toUpperCase();
       const lt = toMs(item?.listTime);
-      return settle === 'USDT' && isInWindow(lt, nowMs);
+      return settle === 'USDT' && isUpcoming(lt, nowMs);
     })
     .map((item) => {
       const listedAt = toMs(item?.listTime);
@@ -316,7 +303,7 @@ async function fetchOkxByType(instType, nowMs) {
         market: 'futures',
         type: 'futures',
         coin: String(item?.ctValCcy || item?.baseCcy || item?.instId || '').toUpperCase(),
-        status: listingStatus(listedAt, nowMs),
+        status: 'upcoming',
         listedAt,
         date: isoDateTime(listedAt),
       };
@@ -331,26 +318,25 @@ async function fetchOkxFutures(nowMs) {
   return [...swaps, ...futures];
 }
 
-// MEXC Spot: recently listed (openTime within 14 days) or status-based
+// MEXC Spot: status '2' = pre-listing (status-based), or future openTime
 async function fetchMexcSpot(nowMs) {
   const { data } = await axios.get('https://api.mexc.com/api/v3/exchangeInfo', { timeout: 20000 });
   return (data?.symbols || [])
     .filter((item) => {
       const ot = toMs(item?.openTime);
-      if (ot && isInWindow(ot, nowMs)) return true;
-      // status '2' may indicate pre-listing on MEXC
+      if (ot && isUpcoming(ot, nowMs)) return true;
+      // status '2' indicates pre-listing on MEXC — status IS the signal
       if (String(item?.status) === '2') return true;
       return false;
     })
     .map((item) => {
       const listedAt = toMs(item?.openTime);
-      const st = String(item?.status);
       return {
         exchange: 'MEXC',
         market: 'spot',
         type: 'spot',
         coin: String(item?.baseAsset || '').toUpperCase(),
-        status: st === '2' ? 'upcoming' : listingStatus(listedAt, nowMs),
+        status: 'upcoming',
         listedAt,
         date: isoDateTime(listedAt) || 'TBA',
       };
@@ -358,13 +344,13 @@ async function fetchMexcSpot(nowMs) {
     .filter((item) => item.coin);
 }
 
-// MEXC Futures: wrapped in try/catch for 403
+// MEXC Futures: future listings only (handles 403 gracefully via try/catch in collectRows)
 async function fetchMexcFutures(nowMs) {
   const { data } = await axios.get('https://contract.mexc.com/api/v1/contract/list', { timeout: 20000 });
   return (Array.isArray(data?.data) ? data.data : [])
     .filter((item) => {
       const listedAt = toMs(item?.launchTime || item?.openTime);
-      return String(item?.quoteCoin || item?.symbol || '').toUpperCase().includes('USDT') && isInWindow(listedAt, nowMs);
+      return String(item?.quoteCoin || item?.symbol || '').toUpperCase().includes('USDT') && isUpcoming(listedAt, nowMs);
     })
     .map((item) => {
       const listedAt = toMs(item?.launchTime || item?.openTime);
@@ -373,7 +359,7 @@ async function fetchMexcFutures(nowMs) {
         market: 'futures',
         type: 'futures',
         coin: String(item?.baseCoin || item?.symbol || '').toUpperCase().replace(/_?USDT$/, ''),
-        status: listingStatus(listedAt, nowMs),
+        status: 'upcoming',
         listedAt,
         date: isoDateTime(listedAt),
       };
@@ -381,14 +367,14 @@ async function fetchMexcFutures(nowMs) {
     .filter((item) => item.coin);
 }
 
-// Bitget Spot: recently listed within 14 days
+// Bitget Spot: future listings only
 async function fetchBitgetSpot(nowMs) {
   const { data } = await axios.get('https://api.bitget.com/api/v2/spot/public/symbols', { timeout: 20000 });
   return (data?.data || [])
     .filter((item) => {
       const q = String(item?.quoteCoin || '').toUpperCase();
       const lt = toMs(item?.openTime || item?.listTime);
-      return q === 'USDT' && isInWindow(lt, nowMs);
+      return q === 'USDT' && isUpcoming(lt, nowMs);
     })
     .map((item) => {
       const listedAt = toMs(item?.openTime || item?.listTime);
@@ -397,7 +383,7 @@ async function fetchBitgetSpot(nowMs) {
         market: 'spot',
         type: 'spot',
         coin: String(item?.baseCoin || '').toUpperCase(),
-        status: listingStatus(listedAt, nowMs),
+        status: 'upcoming',
         listedAt,
         date: isoDateTime(listedAt),
       };
@@ -405,13 +391,13 @@ async function fetchBitgetSpot(nowMs) {
     .filter((item) => item.coin);
 }
 
-// Bitget Futures: recently listed within 14 days
+// Bitget Futures: future listings only
 async function fetchBitgetFutures(nowMs) {
   const { data } = await axios.get('https://api.bitget.com/api/v2/mix/market/contracts?productType=USDT-FUTURES', { timeout: 20000 });
   return (data?.data || [])
     .filter((item) => {
       const lt = toMs(item?.launchTime || item?.openTime || item?.listTime);
-      return isInWindow(lt, nowMs);
+      return isUpcoming(lt, nowMs);
     })
     .map((item) => {
       const listedAt = toMs(item?.launchTime || item?.openTime || item?.listTime);
@@ -420,7 +406,7 @@ async function fetchBitgetFutures(nowMs) {
         market: 'futures',
         type: 'futures',
         coin: String(item?.baseCoin || item?.symbol || '').toUpperCase().replace(/USDT$/, ''),
-        status: listingStatus(listedAt, nowMs),
+        status: 'upcoming',
         listedAt,
         date: isoDateTime(listedAt),
       };
@@ -428,13 +414,13 @@ async function fetchBitgetFutures(nowMs) {
     .filter((item) => item.coin);
 }
 
-// Gate.io Futures: recently listed within 14 days
+// Gate.io Futures: future listings only
 async function fetchGateFutures(nowMs) {
   const { data } = await axios.get('https://api.gateio.ws/api/v4/futures/usdt/contracts', { timeout: 20000 });
   return (Array.isArray(data) ? data : [])
     .filter((item) => {
       const listedAt = toMs(item?.create_time);
-      return isInWindow(listedAt, nowMs);
+      return isUpcoming(listedAt, nowMs);
     })
     .map((item) => {
       const listedAt = toMs(item?.create_time);
@@ -443,7 +429,7 @@ async function fetchGateFutures(nowMs) {
         market: 'futures',
         type: 'futures',
         coin: String(item?.name || '').toUpperCase().replace('_USDT', ''),
-        status: listingStatus(listedAt, nowMs),
+        status: 'upcoming',
         listedAt,
         date: isoDateTime(listedAt),
       };
@@ -508,13 +494,7 @@ async function getListingsSnapshot() {
   if (memorySnapshot.listings.length > 0) {
     return memorySnapshot;
   }
-
-  const dbSnapshot = await loadSnapshotFromDb();
-  if (dbSnapshot.listings.length > 0) {
-    memorySnapshot = dbSnapshot;
-    return memorySnapshot;
-  }
-
+  // No cached data — run a fresh refresh (joins any in-flight refresh automatically)
   return refreshListingsSnapshot();
 }
 
