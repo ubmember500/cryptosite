@@ -49,20 +49,30 @@ const FALLBACK_SPOT = [
 /**
  * Fetch JSON from the first working base URL.
  */
-async function fetchJSON(bases, path, timeout = 5000) {
+/**
+ * Fetch JSON from the first working base URL.
+ * Collects errors for diagnostics.
+ */
+async function fetchJSON(bases, path, timeout = 5000, errors = []) {
   for (const base of bases) {
+    const url = `${base}${path}`;
     try {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeout);
-      const res = await fetch(`${base}${path}`, {
+      const res = await fetch(url, {
         method: 'GET',
         headers: { Accept: 'application/json', 'User-Agent': 'Mozilla/5.0 CryptoAlerts/1.0' },
         signal: controller.signal,
       });
       clearTimeout(timer);
-      if (!res.ok) continue;
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        errors.push(`${url} → HTTP ${res.status}: ${text.slice(0, 120)}`);
+        continue;
+      }
       return await res.json();
-    } catch {
+    } catch (e) {
+      errors.push(`${url} → ${e.name}: ${e.message}`);
       continue;
     }
   }
@@ -75,9 +85,9 @@ async function fetchJSON(bases, path, timeout = 5000) {
  *  2. Dynamic ticker fetch (works well for futures ~300 symbols)
  *  3. Hardcoded fallback (ensures function always returns data)
  */
-async function resolveSymbols(market, bases, top) {
+async function resolveSymbols(market, bases, top, errors) {
   // Try dynamic fetch with a tight timeout (4s leaves 6s for depth)
-  const tickers = await fetchJSON(bases, '/ticker/24hr', 4000);
+  const tickers = await fetchJSON(bases, '/ticker/24hr', 4000, errors);
 
   if (tickers && Array.isArray(tickers) && tickers.length > 0) {
     const ranked = tickers
@@ -113,6 +123,8 @@ export default async function handler(req, res) {
 
   const bases = market === 'spot' ? SPOT_BASES : FUTURES_BASES;
   const startTime = Date.now();
+  const debug = req.query.debug === '1';
+  const errors = [];
 
   // Step 1: Determine symbols to scan
   let symbols, symbolSource;
@@ -122,7 +134,7 @@ export default async function handler(req, res) {
     symbols = symbolsParam.split(',').map(s => s.trim().toUpperCase()).filter(Boolean).slice(0, top);
     symbolSource = 'param';
   } else {
-    const resolved = await resolveSymbols(market, bases, top);
+    const resolved = await resolveSymbols(market, bases, top, errors);
     symbols = resolved.symbols;
     symbolSource = resolved.source;
   }
@@ -136,7 +148,7 @@ export default async function handler(req, res) {
 
   await Promise.allSettled(
     symbols.map(async (symbol) => {
-      const data = await fetchJSON(bases, `/depth?symbol=${symbol}&limit=${limit}`, 4000);
+      const data = await fetchJSON(bases, `/depth?symbol=${symbol}&limit=${limit}`, 4000, errors);
       if (data && (data.bids || data.asks)) {
         books[symbol] = { bids: data.bids || [], asks: data.asks || [] };
       }
@@ -145,7 +157,7 @@ export default async function handler(req, res) {
 
   const elapsed = Date.now() - startTime;
 
-  return res.status(200).json({
+  const result = {
     market,
     books,
     symbols,           // full symbol list (so caller can cache it)
@@ -153,5 +165,12 @@ export default async function handler(req, res) {
     symbolCount: Object.keys(books).length,
     elapsed,
     ts: Date.now(),
-  });
+  };
+
+  // Include errors in debug mode for diagnostics
+  if (debug) {
+    result.errors = errors.slice(0, 20);
+  }
+
+  return res.status(200).json(result);
 }
