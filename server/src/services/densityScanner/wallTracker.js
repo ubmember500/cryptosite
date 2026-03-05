@@ -129,8 +129,17 @@ class WallTracker {
       const match = this._findMatchingWall(wall.exchange, wall.symbol, wall.side, wall.price);
 
       if (match) {
-        // Update existing wall
         const record = match.record;
+
+        // If this bucket was already updated in THIS SAME batch (same timestamp),
+        // only replace if the incoming wall has a LARGER volumeUSD.
+        // This prevents big walls from being overwritten by smaller walls
+        // that happen to fall into the same toPrecision(3) price bucket.
+        if (record.lastSeenAt === now && wall.volumeUSD <= record.volumeUSD) {
+          continue; // skip — keep the bigger wall in this bucket
+        }
+
+        // Update existing wall
         record.lastSeenAt = now;
         record.price = wall.price;
         record.volume = wall.volume;
