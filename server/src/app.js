@@ -46,6 +46,27 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// Temporary diagnostic (remove after verifying deploy)
+app.get('/api/density-screener/diag', (req, res) => {
+  try {
+    const svc = require('./services/densityScanner');
+    const walls = svc.getWalls();
+    const summary = {};
+    for (const w of walls) {
+      const k = `${w.exchange}_${w.market}`;
+      if (!summary[k]) summary[k] = { total: 0, gt300K: 0, gt500K: 0, gt1M: 0, top3: [] };
+      summary[k].total++;
+      if (w.volumeUSD >= 300000) summary[k].gt300K++;
+      if (w.volumeUSD >= 500000) summary[k].gt500K++;
+      if (w.volumeUSD >= 1000000) summary[k].gt1M++;
+      if (summary[k].top3.length < 3) summary[k].top3.push({ s: w.symbol, v: Math.round(w.volumeUSD) });
+    }
+    const aster = walls.filter(w => w.symbol === 'ASTERUSDT').sort((a, b) => b.volumeUSD - a.volumeUSD).slice(0, 5)
+      .map(w => ({ side: w.side, vol: Math.round(w.volumeUSD), price: w.price }));
+    res.json({ total: walls.length, summary, aster });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // API routes
 app.get('/api/binance-klines', marketController.getBinanceFuturesKlinesProxy);
 app.use('/api/market', require('./routes/market'));
