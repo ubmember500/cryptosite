@@ -47,7 +47,7 @@ app.get('/health', (req, res) => {
 });
 
 // Density scanner diagnostics (no auth — for debugging)
-app.get('/api/density-screener/diag', (req, res) => {
+app.get('/api/density-screener/diag', async (req, res) => {
   try {
     const densityScannerService = require('./services/densityScanner');
     const status = densityScannerService.getStatus();
@@ -67,9 +67,63 @@ app.get('/api/density-screener/diag', (req, res) => {
       }
     }
 
-    res.json({ status: status.exchanges, tracker: status.tracker, wallSummary: summary, totalWalls: walls.length });
+    // ── Live test: call Vercel proxy with 3 symbols and limit=100 ──
+    let liveTest = null;
+    try {
+      const axios = require('axios');
+      const proxyURL = process.env.VERCEL_PROXY_URL || 'https://cryptosite2027.vercel.app';
+      const testSymbols = ['BTCUSDT', 'SOLUSDT', 'ETHUSDT'];
+      const resp = await axios.get(`${proxyURL}/api/binance-depth`, {
+        params: { market: 'futures', symbols: testSymbols.join(','), limit: 100 },
+        timeout: 12000,
+      });
+      const books = resp.data.books || {};
+      const bookSummary = {};
+      for (const [sym, book] of Object.entries(books)) {
+        bookSummary[sym] = {
+          bidLevels: (book.bids || []).length,
+          askLevels: (book.asks || []).length,
+          topBid: book.bids?.[0],
+          topAsk: book.asks?.[0],
+        };
+      }
+      liveTest = {
+        proxyURL,
+        requestedSymbols: testSymbols,
+        returnedBooks: Object.keys(books).length,
+        elapsed: resp.data.elapsed,
+        bookSummary,
+      };
+    } catch (e) {
+      liveTest = { error: e.message };
+    }
+
+    // ── Scanner internal state ──
+    const scannerState = {};
+    if (densityScannerService.scanners) {
+      for (const [key, scanner] of Object.entries(densityScannerService.scanners)) {
+        scannerState[key] = {
+          type: scanner.constructor.name,
+          cachedSymbols: scanner.cachedSymbols?.length || 0,
+          groups: scanner._groups?.length || 0,
+          groupSizes: scanner._groups?.map(g => g.length) || [],
+          currentGroupIndex: scanner.currentGroupIndex || 0,
+          proxyURL: scanner.proxyURL || null,
+          market: scanner.market || null,
+        };
+      }
+    }
+
+    res.json({
+      status: status.exchanges,
+      tracker: status.tracker,
+      wallSummary: summary,
+      totalWalls: walls.length,
+      liveTest,
+      scannerState,
+    });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: e.message, stack: e.stack });
   }
 });
 
