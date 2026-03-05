@@ -2,15 +2,24 @@
  * WallTracker — Persistent wall identity & age tracking.
  *
  * Tracks order-book walls across scan cycles so we can compute wall "age"
- * (how long a wall has persisted). Uses price-proximity matching to identify
- * the same wall even if its exact price drifts slightly between scans.
+ * (how long a wall has persisted). Uses logarithmic price bucketing with
+ * adjacent-bucket search for robust cross-scan matching even when grouped
+ * wall prices drift slightly.
+ *
+ * Bucketing: Math.round(ln(price) × 1000) → each bucket ≈ 0.1% of price.
+ * This gives uniform relative resolution regardless of absolute price
+ * ($0.70 tokens and $71,000 BTC both get ~0.1% buckets).
+ *
+ * Matching: checks ±3 adjacent buckets (≈ 0.3% tolerance) to find the
+ * same wall when its grouped price shifts between scans.
  *
  * @module densityScanner/wallTracker
  */
 
 const MAX_TRACKED_WALLS = 50000;
 const STALE_WALL_TTL_MS = 10 * 60 * 1000; // 10 minutes – remove walls not seen for this long
-const PRICE_MATCH_TOLERANCE = 0.0015; // 0.15% tolerance for matching same wall across scans
+const MATCH_BUCKET_RADIUS = 3;             // ±3 buckets ≈ ±0.3% price tolerance
+const PRICE_MATCH_TOLERANCE = 0.003;       // 0.3% — verify stored price is within this
 
 class WallTracker {
   constructor() {
@@ -19,9 +28,9 @@ class WallTracker {
   }
 
   /**
-   * Generate a coarse tracking key for fast lookup.
-   * Uses exchange + symbol + side + rounded price.
-   * The price is rounded to 3 significant figures to create "buckets".
+   * Generate a tracking key using logarithmic price bucketing.
+   * Each bucket spans approximately 0.1% of the price, giving uniform
+   * relative precision across all price ranges.
    *
    * @param {string} exchange
    * @param {string} symbol
@@ -30,20 +39,16 @@ class WallTracker {
    * @returns {string}
    */
   _makeTrackingKey(exchange, symbol, side, price) {
-    const rounded = Number(price.toPrecision(4));
-    return `${exchange}:${symbol}:${side}:${rounded}`;
+    const bucket = Math.round(Math.log(price) * 1000);
+    return `${exchange}:${symbol}:${side}:${bucket}`;
   }
 
   /**
    * Find an existing tracked wall that matches a newly detected wall.
-   * Searches activeWalls for same exchange + symbol + side where price
-   * is within PRICE_MATCH_TOLERANCE (0.15%) of the existing wall.
    *
-   * Uses a two-step approach:
-   * 1. First try exact bucket lookup (fast O(1))
-   * 2. If not found, try adjacent buckets (price ± tolerance)
-   *
-   * Returns the matching key + record, or null.
+   * Uses logarithmic bucketing: checks the exact bucket plus ±3 adjacent
+   * buckets (each ~0.1% of price, so ±3 = ~0.3% tolerance). This is just
+   * 7 Map.get() calls — fast and deterministic.
    *
    * @param {string} exchange
    * @param {string} symbol
@@ -52,56 +57,34 @@ class WallTracker {
    * @returns {{ key: string, record: object } | null}
    */
   _findMatchingWall(exchange, symbol, side, price) {
-    // Step 1: exact bucket lookup
-    const exactKey = this._makeTrackingKey(exchange, symbol, side, price);
+    const centerBucket = Math.round(Math.log(price) * 1000);
+    const prefix = `${exchange}:${symbol}:${side}:`;
+
+    // Step 1: exact bucket (fast path)
+    const exactKey = `${prefix}${centerBucket}`;
     const exactRecord = this.activeWalls.get(exactKey);
     if (exactRecord) {
       return { key: exactKey, record: exactRecord };
     }
 
-    // Step 2: try adjacent buckets by shifting price within tolerance
-    const delta = PRICE_MATCH_TOLERANCE * price;
-    const candidates = [];
+    // Step 2: check adjacent buckets within ±MATCH_BUCKET_RADIUS
+    let bestMatch = null;
+    let bestDiff = Infinity;
 
-    const priceLow = price - delta;
-    const priceHigh = price + delta;
-
-    const keyLow = this._makeTrackingKey(exchange, symbol, side, priceLow);
-    const keyHigh = this._makeTrackingKey(exchange, symbol, side, priceHigh);
-
-    // Deduplicate – if adjacent keys equal the exact key we already tried, skip
-    const tried = new Set([exactKey]);
-
-    if (!tried.has(keyLow)) {
-      tried.add(keyLow);
-      const rec = this.activeWalls.get(keyLow);
-      if (rec) {
-        // Verify the actual stored price is within tolerance of the incoming price
-        const priceDiff = Math.abs(rec.price - price) / price;
-        if (priceDiff <= PRICE_MATCH_TOLERANCE) {
-          candidates.push({ key: keyLow, record: rec, diff: priceDiff });
+    for (let offset = -MATCH_BUCKET_RADIUS; offset <= MATCH_BUCKET_RADIUS; offset++) {
+      if (offset === 0) continue;
+      const key = `${prefix}${centerBucket + offset}`;
+      const record = this.activeWalls.get(key);
+      if (record) {
+        const diff = Math.abs(record.price - price) / price;
+        if (diff <= PRICE_MATCH_TOLERANCE && diff < bestDiff) {
+          bestDiff = diff;
+          bestMatch = { key, record };
         }
       }
     }
 
-    if (!tried.has(keyHigh)) {
-      tried.add(keyHigh);
-      const rec = this.activeWalls.get(keyHigh);
-      if (rec) {
-        const priceDiff = Math.abs(rec.price - price) / price;
-        if (priceDiff <= PRICE_MATCH_TOLERANCE) {
-          candidates.push({ key: keyHigh, record: rec, diff: priceDiff });
-        }
-      }
-    }
-
-    if (candidates.length === 0) {
-      return null;
-    }
-
-    // If multiple candidates match, prefer the one closest in price
-    candidates.sort((a, b) => a.diff - b.diff);
-    return { key: candidates[0].key, record: candidates[0].record };
+    return bestMatch;
   }
 
   /**
@@ -134,7 +117,7 @@ class WallTracker {
         // If this bucket was already updated in THIS SAME batch (same timestamp),
         // only replace if the incoming wall has a LARGER volumeUSD.
         // This prevents big walls from being overwritten by smaller walls
-        // that happen to fall into the same toPrecision(3) price bucket.
+        // that happen to fall into the same log-bucket.
         if (record.lastSeenAt === now && wall.volumeUSD <= record.volumeUSD) {
           continue; // skip — keep the bigger wall in this bucket
         }

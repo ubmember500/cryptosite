@@ -163,6 +163,8 @@ const DensityTable = () => {
       updateFilter('sort', key);
       updateFilter('order', 'desc');
     }
+    // Trigger a fetch so the server returns data in the new sort order
+    setTimeout(() => useDensityScreenerStore.getState().fetchWalls(), 50);
   };
 
   const getSortIcon = (key) => {

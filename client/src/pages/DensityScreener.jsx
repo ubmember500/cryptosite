@@ -35,6 +35,15 @@ const DensityScreener = () => {
           </p>
         </div>
 
+        {/* Beta banner */}
+        <div className="mx-4 md:mx-0 mb-4 px-4 py-2.5 rounded-lg bg-yellow-500/10 border border-yellow-500/30">
+          <p className="text-yellow-400 text-xs font-medium">
+            <span className="inline-block px-1.5 py-0.5 rounded bg-yellow-500/20 text-yellow-300 text-[10px] font-bold uppercase mr-2">Beta</span>
+            This feature is in beta. Wall detection accuracy and coverage are being actively improved.
+            If you don&apos;t see expected walls, try adjusting &quot;Min Wall Age&quot; to &quot;Any&quot; and &quot;Max Distance&quot; to 5%+.
+          </p>
+        </div>
+
         {/* Main layout: sidebar + table */}
         <div className="flex flex-col md:flex-row gap-4 px-4 md:px-0">
           {/* Filter sidebar */}
