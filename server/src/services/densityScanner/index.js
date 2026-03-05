@@ -21,9 +21,9 @@ const DEFAULT_RADIUS = 1;           // no grouping by default
 
 // How often each exchange rescans (milliseconds)
 const SCAN_INTERVALS = {
-  binance: 30000, // 30s — Vercel proxy (1 HTTP call returns all books)
+  binance: 15000, // 15s — Vercel proxy (multi-batch, ~2-4s for 640+ symbols)
   bybit:   15000, // 15s — WebSocket, instant memory reads
-  okx:     30000, // 30s — REST, slower
+  okx:     30000, // 30s — REST, scans all symbols
 };
 
 // Stagger start delays (ms).
@@ -49,12 +49,12 @@ class DensityScannerService {
     //
     // Binance: Vercel proxy scanner. Binance blocks cloud-provider IPs
     //   (REST 418 + WebSocket blocked from Render/AWS). Route through
-    //   Vercel serverless function which can reach Binance successfully.
-    //   One HTTP call per scan returns all 40 order books.
+    //   Vercel serverless functions in Singapore. Multi-batch: splits
+    //   640+ symbols into batches of 150, fires all in parallel (~2-4s).
     //
-    // Bybit: WebSocket scanner — works from Render.
+    // Bybit: WebSocket scanner — 500 symbols, instant memory reads.
     //
-    // OKX: REST scanner — works fine from all IPs.
+    // OKX: REST scanner — works fine from all IPs, scans all symbols.
     this.scanners = {
       binance_futures: new BinanceProxyScanner('futures'),
       binance_spot:    new BinanceProxyScanner('spot'),

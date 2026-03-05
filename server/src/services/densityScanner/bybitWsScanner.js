@@ -44,8 +44,8 @@ const REST_FALLBACK = 'https://api.bytick.com';
 
 const RECONNECT_DELAY = 5000;
 const PING_INTERVAL = 20000;                     // Bybit requires ping every 20s
-const SYMBOL_REFRESH_INTERVAL = 4 * 60 * 60000;  // refresh symbol list every 4h
-const MAX_SYMBOLS = 50;                           // top 50 by volume
+const SYMBOL_REFRESH_INTERVAL = 30 * 60 * 1000;  // refresh symbol list every 30min
+const MAX_SYMBOLS = 500;                          // scan ALL symbols (Bybit WS allows 500 subs/conn)
 const STALE_THRESHOLD = 30000;                    // 30s — skip stale books
 const SUBSCRIBE_BATCH = 10;                       // Bybit allows max 10 args per subscribe
 
