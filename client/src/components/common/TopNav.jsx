@@ -3,12 +3,13 @@ import { NavLink } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
   Bell, List, Layers, TrendingUp, LayoutGrid,
-  Bot, CreditCard, BookOpen, Settings,
+  Bot, CreditCard, BookOpen, Settings, BarChart3,
 } from 'lucide-react';
 
 const NAV_ITEMS = [
   { path: '/alerts',        labelKey: 'Alerts',        icon: Bell,       color: '#fbbf24' },
   { path: '/listings',      labelKey: 'Listings',      icon: List,       color: '#34d399' },
+  { path: '/density-screener', labelKey: 'Density',     icon: BarChart3,  color: '#f97316' },
   { path: '/wall-scanner',  labelKey: 'Wall Scanner',  icon: Layers,     color: '#fb923c' },
   { path: '/market',        labelKey: 'Market',        icon: TrendingUp, color: '#22d3ee' },
   { path: '/market-map',    labelKey: 'Market Map',    icon: LayoutGrid, color: '#a78bfa' },

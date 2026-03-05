@@ -50,6 +50,7 @@ app.get('/health', (req, res) => {
 app.get('/api/binance-klines', marketController.getBinanceFuturesKlinesProxy);
 app.use('/api/market', require('./routes/market'));
 app.use('/api/wall-scanner', require('./routes/wallScanner'));
+app.use('/api/density-screener', require('./routes/densityScreener'));
 app.use('/api/watchlist', require('./routes/watchlist'));
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/alerts', require('./routes/alerts'));

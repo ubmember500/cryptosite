@@ -90,9 +90,11 @@ import TelegramBots from './pages/TelegramBots';
 import Subscription from './pages/Subscription';
 import Listings from './pages/Listings';
 import WallScanner from './pages/WallScanner';
+import DensityScreener from './pages/DensityScreener';
 import MarketMap from './pages/MarketMap';
 import Settings from './pages/Settings';
 import Instructions from './pages/Instructions';
+import Formations from './pages/Formations';
 
 function ActivityTracker() {
   const location = useLocation();
@@ -292,8 +294,10 @@ function App() {
             <Route path="subscription" element={<Subscription />} />
             <Route path="listings" element={<Listings />} />
             <Route path="wall-scanner" element={<WallScanner />} />
+            <Route path="density-screener" element={<DensityScreener />} />
             <Route path="profile" element={<Profile />} />
             <Route path="settings" element={<Settings />} />
+            <Route path="formations" element={<Formations />} />
           </Route>
 
           {/* Catch all - redirect to account or login */}

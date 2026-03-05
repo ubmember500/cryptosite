@@ -8,6 +8,7 @@ const binanceMarketMapService = require('./services/binanceMarketMapService');
 const bybitMarketMapService = require('./services/bybitMarketMapService');
 const { startAlertEngine, stopAlertEngine } = require('./services/alertEngine');
 const priceWatcher = require('./services/priceWatcher');
+const densityScannerService = require('./services/densityScanner');
 const telegramPolling = require('./services/telegramPolling');
 const listingsService = require('./services/listingsService');
 const { ensureActivitySchema } = require('./services/activityService');
@@ -45,6 +46,9 @@ async function bootstrap() {
 
       await priceWatcher.start();
       console.log('📊 Price watcher started (WebSocket ticker streams)');
+
+      await densityScannerService.start();
+      console.log('🔍 Density scanner started (continuous order book scanning)');
 
       const { logEmailStatus } = require('./utils/email');
       logEmailStatus();
@@ -89,6 +93,7 @@ async function shutdown(signal) {
 
   klineManager.shutdown();
   priceWatcher.stop();
+  densityScannerService.stop();
   telegramPolling.stopTelegramPolling();
   listingsService.stopListingsSyncScheduler();
   await stopAlertEngine();
