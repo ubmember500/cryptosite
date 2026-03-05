@@ -17,7 +17,7 @@ const { WallTracker } = require('./wallTracker');
 // Default scan settings (server-wide, not per-user)
 const DEFAULT_DEPTH = 5;            // 5% from mid
 const DEFAULT_MIN_WALL_SIZE = 50000; // $50K minimum — low threshold, filtering is done per-user request
-const DEFAULT_RADIUS = 10;          // group levels within 0.5% of each other — aggregates nearby liquidity into meaningful clusters
+const DEFAULT_RADIUS = 20;          // group levels within 1% of each other — captures distributed liquidity zones like ASTER
 
 // How often each exchange rescans (milliseconds)
 const SCAN_INTERVALS = {
@@ -88,6 +88,7 @@ class DensityScannerService {
   /**
    * Start all scan loops. Called once during server bootstrap.
    * Staggered start to avoid simultaneous API bursts.
+   * Restores wall state from DB first so wall ages survive restarts.
    */
   async start() {
     if (this.running) {
@@ -96,6 +97,10 @@ class DensityScannerService {
     }
     this.running = true;
     console.log('[DensityScanner] Starting density scanner service...');
+
+    // Restore persisted wall state from DB (preserves wall ages across deploys)
+    await this.wallTracker.restoreFromDB();
+    this.wallTracker.startPersistence();
 
     // Launch each exchange+market pair with staggered delays
     for (const exchange of ['binance', 'bybit', 'okx']) {
@@ -131,6 +136,9 @@ class DensityScannerService {
       clearInterval(timerId);
     }
     this.scanTimers.clear();
+    this.wallTracker.stopPersistence();
+    // Save one final snapshot before shutting down
+    this.wallTracker._saveToDB().catch(() => {});
     console.log('[DensityScanner] Stopped');
   }
 

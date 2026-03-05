@@ -18,6 +18,7 @@ const densityScannerService = require('../services/densityScanner');
  *   maxVolume   — maximum wall volumeUSD (optional, no default)
  *   side        — BID, ASK, or Both (default: Both)
  *   symbols     — comma-separated symbol filter, e.g. BTCUSDT,ETHUSDT (optional — all if empty)
+ *   excludeSymbols — comma-separated symbols to HIDE, e.g. BTCUSDT,ETHUSDT (optional)
  *   minAge      — minimum wall age in seconds (default: 0)
  *   maxDistFromMid — maximum |percentFromMid| (default: 10)
  *   depth       — not used for filtering (scanning uses server default), but kept for compatibility
@@ -46,6 +47,10 @@ async function getWalls(req, res, next) {
     const symbolFilter = req.query.symbols
       ? req.query.symbols.split(',').map(s => s.trim().toUpperCase()).filter(Boolean)
       : [];
+    
+    const excludeSymbols = req.query.excludeSymbols
+      ? new Set(req.query.excludeSymbols.split(',').map(s => s.trim().toUpperCase()).filter(Boolean))
+      : new Set();
     
     const minAgeSeconds = parseInt(req.query.minAge) || 0;
     const minAgeMs = minAgeSeconds * 1000;
@@ -78,6 +83,9 @@ async function getWalls(req, res, next) {
       
       // Symbol filter (if provided)
       if (symbolFilter.length > 0 && !symbolFilter.includes(w.symbol)) return false;
+      
+      // Exclude symbols (hidden tokens)
+      if (excludeSymbols.size > 0 && excludeSymbols.has(w.symbol)) return false;
       
       // Wall age filter
       if (minAgeMs > 0 && w.wallAgeMs < minAgeMs) return false;
@@ -112,6 +120,7 @@ async function getWalls(req, res, next) {
           minVolume,
           side: sideFilter,
           symbols: symbolFilter,
+          excludeSymbols: [...excludeSymbols],
           minAgeSeconds,
           maxDistFromMid,
         },

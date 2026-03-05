@@ -13,6 +13,9 @@
  * Matching: checks ±3 adjacent buckets (≈ 0.3% tolerance) to find the
  * same wall when its grouped price shifts between scans.
  *
+ * Persistence: saves wall state to PostgreSQL every SAVE_INTERVAL_MS.
+ * On startup, restores previously-tracked walls so age survives restarts.
+ *
  * @module densityScanner/wallTracker
  */
 
@@ -20,6 +23,8 @@ const MAX_TRACKED_WALLS = 50000;
 const STALE_WALL_TTL_MS = 10 * 60 * 1000; // 10 minutes – remove walls not seen for this long
 const MATCH_BUCKET_RADIUS = 3;             // ±3 buckets ≈ ±0.3% price tolerance
 const PRICE_MATCH_TOLERANCE = 0.003;       // 0.3% — verify stored price is within this
+const SAVE_INTERVAL_MS = 60 * 1000;        // Save wall state to DB every 60s
+const SAVE_TABLE = 'density_wall_snapshots'; // raw SQL table (no Prisma model needed)
 
 class WallTracker {
   constructor() {
@@ -239,6 +244,133 @@ class WallTracker {
       totalTracked: this.activeWalls.size,
       byExchange,
     };
+  }
+
+  // ─── Persistence (PostgreSQL via raw SQL) ────────────────
+
+  /**
+   * Start periodic saving of wall state to the database.
+   * Called once during server bootstrap.
+   */
+  startPersistence() {
+    if (this._saveTimer) return;
+    this._saveTimer = setInterval(() => {
+      this._saveToDB().catch(err =>
+        console.error('[WallTracker] DB save error:', err.message)
+      );
+    }, SAVE_INTERVAL_MS);
+    console.log('[WallTracker] Persistence started (save every 60s)');
+  }
+
+  /**
+   * Stop the periodic save timer.
+   */
+  stopPersistence() {
+    if (this._saveTimer) {
+      clearInterval(this._saveTimer);
+      this._saveTimer = null;
+    }
+  }
+
+  /**
+   * Restore wall state from the database on startup.
+   * Walls that are older than STALE_WALL_TTL_MS are discarded.
+   * Wall ages are preserved — firstSeenAt timestamps are restored.
+   */
+  async restoreFromDB() {
+    let prisma;
+    try {
+      prisma = require('../../utils/prisma');
+    } catch (err) {
+      console.warn('[WallTracker] Prisma not available, skipping restore:', err.message);
+      return;
+    }
+
+    try {
+      // Ensure table exists
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS ${SAVE_TABLE} (
+          id INTEGER PRIMARY KEY DEFAULT 1,
+          data JSONB NOT NULL,
+          saved_at TIMESTAMPTZ DEFAULT NOW()
+        )
+      `);
+
+      const rows = await prisma.$queryRawUnsafe(
+        `SELECT data, saved_at FROM ${SAVE_TABLE} WHERE id = 1`
+      );
+
+      if (!rows || rows.length === 0) {
+        console.log('[WallTracker] No saved state found in DB');
+        return;
+      }
+
+      const { data, saved_at } = rows[0];
+      const savedAt = new Date(saved_at).getTime();
+      const now = Date.now();
+      const ageOfSnapshot = now - savedAt;
+
+      // If the snapshot is extremely old (>1 hour), ignore it
+      if (ageOfSnapshot > 60 * 60 * 1000) {
+        console.log('[WallTracker] Saved state is >1h old, ignoring');
+        return;
+      }
+
+      const entries = typeof data === 'string' ? JSON.parse(data) : data;
+
+      if (!Array.isArray(entries)) {
+        console.warn('[WallTracker] Invalid snapshot data format');
+        return;
+      }
+
+      let restored = 0;
+      let skipped = 0;
+
+      for (const [key, record] of entries) {
+        // Skip walls that haven't been seen in STALE_WALL_TTL_MS
+        if (now - record.lastSeenAt > STALE_WALL_TTL_MS) {
+          skipped++;
+          continue;
+        }
+        this.activeWalls.set(key, record);
+        restored++;
+      }
+
+      console.log(
+        `[WallTracker] Restored ${restored} walls from DB ` +
+        `(${skipped} stale, snapshot age: ${Math.round(ageOfSnapshot / 1000)}s)`
+      );
+    } catch (err) {
+      console.error('[WallTracker] Restore from DB failed:', err.message);
+    }
+  }
+
+  /**
+   * Save current wall state to the database.
+   * Stores all activeWalls entries as a JSON array of [key, record] pairs.
+   */
+  async _saveToDB() {
+    if (this.activeWalls.size === 0) return;
+
+    let prisma;
+    try {
+      prisma = require('../../utils/prisma');
+    } catch {
+      return; // Prisma not available
+    }
+
+    try {
+      const entries = [...this.activeWalls.entries()];
+      const json = JSON.stringify(entries);
+
+      await prisma.$executeRawUnsafe(`
+        INSERT INTO ${SAVE_TABLE} (id, data, saved_at)
+        VALUES (1, $1::jsonb, NOW())
+        ON CONFLICT (id) DO UPDATE SET data = $1::jsonb, saved_at = NOW()
+      `, json);
+    } catch (err) {
+      console.error('[WallTracker] Save to DB failed:', err.message);
+    }
   }
 }
 
