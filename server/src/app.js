@@ -127,6 +127,39 @@ app.get('/api/density-screener/diag', async (req, res) => {
   }
 });
 
+// Density scanner diagnostics - test scan (no auth — for debugging)
+app.get('/api/density-screener/diag-scan', async (req, res) => {
+  try {
+    const { BinanceProxyScanner } = require('./services/densityScanner/binanceProxyScanner');
+    const scanner = new BinanceProxyScanner('futures');
+    const walls = await scanner.scanForWalls({ minWallSize: 50000, depth: 5, radius: 1 });
+    walls.sort((a, b) => (b.volumeUSD || 0) - (a.volumeUSD || 0));
+
+    const above = { '300K': 0, '500K': 0, '1M': 0 };
+    for (const w of walls) {
+      if (w.volumeUSD >= 300000) above['300K']++;
+      if (w.volumeUSD >= 500000) above['500K']++;
+      if (w.volumeUSD >= 1000000) above['1M']++;
+    }
+
+    res.json({
+      totalWalls: walls.length,
+      above,
+      cachedSymbols: scanner.cachedSymbols?.length || 0,
+      groups: scanner._groups?.length || 0,
+      groupSizes: scanner._groups?.map(g => g.length) || [],
+      currentGroupIndex: scanner.currentGroupIndex,
+      proxyURL: scanner.proxyURL,
+      top10: walls.slice(0, 10).map(w => ({
+        sym: w.symbol, side: w.side, vol: Math.round(w.volumeUSD),
+        pct: w.percentFromMid?.toFixed(2) + '%',
+      })),
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message, stack: e.stack });
+  }
+});
+
 // API routes
 app.get('/api/binance-klines', marketController.getBinanceFuturesKlinesProxy);
 app.use('/api/market', require('./routes/market'));
