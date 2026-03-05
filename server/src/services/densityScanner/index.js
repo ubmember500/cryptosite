@@ -9,9 +9,8 @@
  * @module densityScanner
  */
 
-const { BinanceFuturesWsScanner } = require('./binanceFuturesWsScanner');
-const { BinanceDensityScanner } = require('./binanceDensityScanner');
-const { BybitFastScanner } = require('./bybitFastScanner');
+const { BinanceWsScanner } = require('./binanceWsScanner');
+const { BybitWsScanner } = require('./bybitWsScanner');
 const { OkxFastScanner } = require('./okxFastScanner');
 const { WallTracker } = require('./wallTracker');
 
@@ -21,20 +20,25 @@ const DEFAULT_MIN_WALL_SIZE = 50000; // $50K minimum — low threshold, filterin
 const DEFAULT_RADIUS = 1;           // no grouping by default
 
 // How often each exchange rescans (milliseconds)
+// Binance & Bybit use WebSocket — data is always fresh, but we still
+// run periodic scans to feed walls into WallTracker for age tracking.
 const SCAN_INTERVALS = {
-  binance: 30000, // 30 seconds — conservative to avoid 418 bans on fapi
-  bybit:   15000, // 15 seconds
-  okx:     30000, // 30 seconds — OKX is slower due to rate limits
+  binance: 15000, // 15s — WS scanners are instant (~1ms), just reads memory
+  bybit:   15000, // 15s — same, WS-based
+  okx:     30000, // 30s — OKX still uses REST, needs more time
 };
 
-// Stagger start delays to avoid thundering herd
+// Stagger start delays (ms).
+// WebSocket scanners (Binance, Bybit) need time to connect and receive
+// initial order book data before the first scan. 15s is enough for WS
+// to connect + receive snapshots for all 50 symbols.
 const STAGGER_DELAYS = {
-  binance_futures: 0,
-  binance_spot:    2000,
-  bybit_futures:   4000,
-  bybit_spot:      6000,
-  okx_futures:     8000,
-  okx_spot:       10000,
+  binance_futures: 15000,  // 15s — give WS time to connect + receive data
+  binance_spot:    17000,  // 17s
+  bybit_futures:   19000,  // 19s
+  bybit_spot:      21000,  // 21s
+  okx_futures:     0,      // 0s — OKX REST works fine, start immediately
+  okx_spot:        2000,   // 2s
 };
 
 class DensityScannerService {
@@ -43,17 +47,19 @@ class DensityScannerService {
     this.scanTimers = new Map(); // key → intervalId
     this.running = false;
 
-    // IMPORTANT: Create scanner instances ONCE and reuse them across scan cycles.
-    // This preserves order-book caches and symbol-list caches between scans,
-    // dramatically reducing API calls and avoiding rate limits (HTTP 418/429).
+    // IMPORTANT: Create scanner instances ONCE and reuse across scan cycles.
     //
-    // Binance futures uses WebSocket (fstream.binance.com) — zero rate limits.
-    // REST fapi.binance.com gets HTTP 418 from US datacenter IPs.
+    // Binance & Bybit: WebSocket-based scanners — zero rate limits.
+    //   REST APIs (fapi.binance.com, api.bybit.com) return HTTP 418/429
+    //   from US datacenter IPs (Render). WebSocket streams work everywhere.
+    //   Data updates every 500ms; scanForWalls() reads memory in ~1ms.
+    //
+    // OKX: REST-based scanner — works fine from all IPs.
     this.scanners = {
-      binance_futures: new BinanceFuturesWsScanner(),
-      binance_spot:    new BinanceDensityScanner('spot'),
-      bybit_futures:   new BybitFastScanner('futures'),
-      bybit_spot:      new BybitFastScanner('spot'),
+      binance_futures: new BinanceWsScanner('futures'),
+      binance_spot:    new BinanceWsScanner('spot'),
+      bybit_futures:   new BybitWsScanner('futures'),
+      bybit_spot:      new BybitWsScanner('spot'),
       okx_futures:     new OkxFastScanner('futures'),
       okx_spot:        new OkxFastScanner('spot'),
     };
