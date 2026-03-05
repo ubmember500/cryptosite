@@ -43,14 +43,26 @@ class BinanceDensityScanner {
     this.batchDelay = this.isFutures ? FUTURES_DELAY : SPOT_DELAY;
     this.orderBookCache = new Map();
     this._rateLimited = false;       // flag: skip remaining batches if banned
+
+    // Symbol list cache — refreshes every 5 minutes, not every scan cycle.
+    // If the API fails, we fall back to the last known good list.
+    this._symbolCache = null;        // cached symbol array
+    this._symbolCacheTs = 0;         // timestamp of last successful fetch
   }
+
+  // How long to cache the symbol list (5 minutes)
+  static SYMBOL_CACHE_TTL = 5 * 60 * 1000;
 
   /**
    * Get USDT symbols filtered by 24h volume, sorted descending.
-   * For futures: uses fapi.binance.com/fapi/v1/ticker/24hr
-   * For spot: uses data-api.binance.vision/api/v3/ticker/24hr (unrestricted)
+   * Caches for 5 minutes. Falls back to stale cache on API failure.
    */
   async getAllSymbols(minVolumeUSD = 0) {
+    // Return cached list if still fresh
+    if (this._symbolCache && Date.now() - this._symbolCacheTs < BinanceDensityScanner.SYMBOL_CACHE_TTL) {
+      return this._symbolCache.filter(s => s.volumeUSD >= minVolumeUSD);
+    }
+
     const endpoint = this.isFutures
       ? '/fapi/v1/ticker/24hr'
       : '/api/v3/ticker/24hr';
@@ -63,12 +75,11 @@ class BinanceDensityScanner {
 
       const tickers = response.data || [];
 
-      // Only USDT pairs, with volume above threshold
+      // Only USDT pairs, store ALL with volume data for flexible re-filtering
       const symbols = tickers
         .filter((t) => {
           const sym = t.symbol || '';
-          const vol = parseFloat(t.quoteVolume || 0);
-          return sym.endsWith('USDT') && vol >= minVolumeUSD;
+          return sym.endsWith('USDT');
         })
         .map((t) => ({
           symbol: t.symbol,
@@ -76,16 +87,30 @@ class BinanceDensityScanner {
         }))
         .sort((a, b) => b.volumeUSD - a.volumeUSD);
 
-      console.log(
-        `[BinanceDensity] ${this.market}: ${symbols.length} symbols with volume >= $${minVolumeUSD}`
-      );
+      // Update cache
+      this._symbolCache = symbols;
+      this._symbolCacheTs = Date.now();
 
-      return symbols;
+      const filtered = symbols.filter(s => s.volumeUSD >= minVolumeUSD);
+      console.log(
+        `[BinanceDensity] ${this.market}: ${filtered.length} symbols with volume >= $${minVolumeUSD} (fresh)`
+      );
+      return filtered;
     } catch (error) {
       const status = error.response?.status;
       console.error(
         `[BinanceDensity] ${this.market}: ticker fetch failed — HTTP ${status || 'N/A'}: ${error.message}`
       );
+
+      // Fall back to stale cache if available
+      if (this._symbolCache) {
+        const filtered = this._symbolCache.filter(s => s.volumeUSD >= minVolumeUSD);
+        console.log(
+          `[BinanceDensity] ${this.market}: using stale symbol cache (${filtered.length} symbols, age ${Math.round((Date.now() - this._symbolCacheTs) / 1000)}s)`
+        );
+        return filtered;
+      }
+
       return [];
     }
   }

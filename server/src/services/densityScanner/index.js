@@ -42,6 +42,18 @@ class DensityScannerService {
     this.scanTimers = new Map(); // key → intervalId
     this.running = false;
 
+    // IMPORTANT: Create scanner instances ONCE and reuse them across scan cycles.
+    // This preserves order-book caches and symbol-list caches between scans,
+    // dramatically reducing API calls and avoiding rate limits (HTTP 418/429).
+    this.scanners = {
+      binance_futures: new BinanceDensityScanner('futures'),
+      binance_spot:    new BinanceDensityScanner('spot'),
+      bybit_futures:   new BybitFastScanner('futures'),
+      bybit_spot:      new BybitFastScanner('spot'),
+      okx_futures:     new OkxFastScanner('futures'),
+      okx_spot:        new OkxFastScanner('spot'),
+    };
+
     // Per-exchange status tracking
     this.status = {};
 
@@ -131,7 +143,8 @@ class DensityScannerService {
     const startTime = Date.now();
 
     try {
-      const scanner = this._createScanner(exchange, market);
+      const key2 = `${exchange}_${market}`;
+      const scanner = this.scanners[key2];
       let walls = await scanner.scanForWalls({
         minVolumeUSD: 0,         // Scan ALL symbols
         minWallSize: DEFAULT_MIN_WALL_SIZE,
@@ -163,21 +176,8 @@ class DensityScannerService {
     }
   }
 
-  /**
-   * Factory — create the right scanner instance for the exchange+market.
-   */
-  _createScanner(exchange, market) {
-    switch (exchange) {
-      case 'binance':
-        return new BinanceDensityScanner(market);
-      case 'bybit':
-        return new BybitFastScanner(market);
-      case 'okx':
-        return new OkxFastScanner(market);
-      default:
-        throw new Error(`Unknown exchange: ${exchange}`);
-    }
-  }
+  // Scanner instances are created once in the constructor and reused.
+  // No more _createScanner factory — this preserves caches across cycles.
 
   /**
    * Get all tracked walls (for the API layer to filter and return).
