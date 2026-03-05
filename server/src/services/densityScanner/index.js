@@ -9,7 +9,7 @@
  * @module densityScanner
  */
 
-const { BinanceFastScanner } = require('../binanceFastScanner');
+const { BinanceDensityScanner } = require('./binanceDensityScanner');
 const { BybitFastScanner } = require('./bybitFastScanner');
 const { OkxFastScanner } = require('./okxFastScanner');
 const { WallTracker } = require('./wallTracker');
@@ -21,7 +21,7 @@ const DEFAULT_RADIUS = 1;           // no grouping by default
 
 // How often each exchange rescans (milliseconds)
 const SCAN_INTERVALS = {
-  binance: 15000, // 15 seconds — Binance is fast
+  binance: 30000, // 30 seconds — conservative to avoid 418 bans on fapi
   bybit:   15000, // 15 seconds
   okx:     30000, // 30 seconds — OKX is slower due to rate limits
 };
@@ -139,20 +139,6 @@ class DensityScannerService {
         radius: DEFAULT_RADIUS,
       });
 
-      // Normalize walls from BinanceFastScanner which doesn't include
-      // market/originalSymbol/midPrice fields and returns percentFromMid as string.
-      if (exchange === 'binance') {
-        walls = walls.map(w => ({
-          ...w,
-          market: w.market || market,
-          originalSymbol: w.originalSymbol || w.symbol,
-          midPrice: w.midPrice || 0,
-          percentFromMid: typeof w.percentFromMid === 'string'
-            ? parseFloat(w.percentFromMid)
-            : w.percentFromMid,
-        }));
-      }
-
       // Count unique symbols that have walls (not total symbols scanned)
       const symbolsWithWalls = new Set(walls.map(w => w.symbol));
 
@@ -183,7 +169,7 @@ class DensityScannerService {
   _createScanner(exchange, market) {
     switch (exchange) {
       case 'binance':
-        return new BinanceFastScanner(market);
+        return new BinanceDensityScanner(market);
       case 'bybit':
         return new BybitFastScanner(market);
       case 'okx':
