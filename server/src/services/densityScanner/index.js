@@ -17,7 +17,7 @@ const { WallTracker } = require('./wallTracker');
 // Default scan settings (server-wide, not per-user)
 const DEFAULT_DEPTH = 5;            // 5% from mid
 const DEFAULT_MIN_WALL_SIZE = 50000; // $50K minimum — low threshold, filtering is done per-user request
-const DEFAULT_RADIUS = 1;           // no grouping by default
+const DEFAULT_RADIUS = 10;          // group levels within 0.5% of each other — aggregates nearby liquidity into meaningful clusters
 
 // How often each exchange rescans (milliseconds)
 const SCAN_INTERVALS = {

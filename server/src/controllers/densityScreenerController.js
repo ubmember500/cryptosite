@@ -28,13 +28,15 @@ const densityScannerService = require('../services/densityScanner');
 async function getWalls(req, res, next) {
   try {
     // Parse query params with defaults
-    const exchangeFilter = req.query.exchanges
+    let exchangeFilter = req.query.exchanges
       ? req.query.exchanges.split(',').map(e => e.trim().toLowerCase()).filter(Boolean)
       : ['binance', 'bybit', 'okx'];
+    if (exchangeFilter.length === 0) exchangeFilter = ['binance', 'bybit', 'okx'];
     
-    const marketFilter = req.query.markets
+    let marketFilter = req.query.markets
       ? req.query.markets.split(',').map(m => m.trim().toLowerCase()).filter(Boolean)
       : ['futures'];
+    if (marketFilter.length === 0) marketFilter = ['futures', 'spot'];
     
     const minVolume = parseFloat(req.query.minVolume) || 100000;
     const maxVolume = req.query.maxVolume ? parseFloat(req.query.maxVolume) : Infinity;

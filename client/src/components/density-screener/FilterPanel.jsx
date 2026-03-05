@@ -106,18 +106,20 @@ export default function FilterPanel() {
     [updateFilter, debouncedFetch],
   );
 
-  // --- Exchange toggle ---
+  // --- Exchange toggle (prevent deselecting last) ---
   const toggleExchange = (exchangeKey) => {
     const current = filters.exchanges || [];
+    if (current.includes(exchangeKey) && current.length <= 1) return;
     const next = current.includes(exchangeKey)
       ? current.filter((e) => e !== exchangeKey)
       : [...current, exchangeKey];
     handleFilterChange('exchanges', next);
   };
 
-  // --- Market toggle ---
+  // --- Market toggle (prevent deselecting last) ---
   const toggleMarket = (marketKey) => {
     const current = filters.markets || [];
+    if (current.includes(marketKey) && current.length <= 1) return;
     const next = current.includes(marketKey)
       ? current.filter((m) => m !== marketKey)
       : [...current, marketKey];

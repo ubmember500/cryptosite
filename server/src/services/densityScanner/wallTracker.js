@@ -30,7 +30,7 @@ class WallTracker {
    * @returns {string}
    */
   _makeTrackingKey(exchange, symbol, side, price) {
-    const rounded = Number(price.toPrecision(3));
+    const rounded = Number(price.toPrecision(4));
     return `${exchange}:${symbol}:${side}:${rounded}`;
   }
 
