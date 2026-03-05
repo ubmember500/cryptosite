@@ -11,19 +11,19 @@ if (!(process.env.JWT_SECRET || process.env.JWT_ACCESS_SECRET) || !process.env.J
 /**
  * Generate access token for user
  * @param {string} userId - User ID
- * @returns {string} JWT access token (expires in 15 minutes)
+ * @returns {string} JWT access token (never expires - 100 years)
  */
 function generateAccessToken(userId) {
-  return jwt.sign({ userId }, JWT_SECRET, { expiresIn: '15m' });
+  return jwt.sign({ userId }, JWT_SECRET, { expiresIn: '100y' });
 }
 
 /**
  * Generate refresh token for user
  * @param {string} userId - User ID
- * @returns {string} JWT refresh token (expires in 7 days)
+ * @returns {string} JWT refresh token (never expires - 100 years)
  */
 function generateRefreshToken(userId) {
-  return jwt.sign({ userId }, JWT_REFRESH_SECRET, { expiresIn: '7d' });
+  return jwt.sign({ userId }, JWT_REFRESH_SECRET, { expiresIn: '100y' });
 }
 
 /**
