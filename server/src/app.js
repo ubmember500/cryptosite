@@ -46,6 +46,33 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// Density scanner diagnostics (no auth — for debugging)
+app.get('/api/density-screener/diag', (req, res) => {
+  try {
+    const densityScannerService = require('./services/densityScanner');
+    const status = densityScannerService.getStatus();
+    const walls = densityScannerService.getWalls();
+
+    // Summarize walls by exchange+market
+    const summary = {};
+    for (const w of walls) {
+      const key = `${w.exchange}_${w.market}`;
+      if (!summary[key]) summary[key] = { total: 0, above300K: 0, above500K: 0, above1M: 0, top5: [] };
+      summary[key].total++;
+      if (w.volumeUSD >= 300000) summary[key].above300K++;
+      if (w.volumeUSD >= 500000) summary[key].above500K++;
+      if (w.volumeUSD >= 1000000) summary[key].above1M++;
+      if (summary[key].top5.length < 5) {
+        summary[key].top5.push({ sym: w.symbol, side: w.side, vol: Math.round(w.volumeUSD) });
+      }
+    }
+
+    res.json({ status: status.exchanges, tracker: status.tracker, wallSummary: summary, totalWalls: walls.length });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // API routes
 app.get('/api/binance-klines', marketController.getBinanceFuturesKlinesProxy);
 app.use('/api/market', require('./routes/market'));
