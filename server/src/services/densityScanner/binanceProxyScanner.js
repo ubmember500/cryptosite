@@ -2,23 +2,25 @@
  * BinanceProxyScanner — Full-coverage Binance order book scanner.
  *
  * Scans ALL USDT symbols on Binance (640+ futures, 400+ spot) for density
- * walls by routing through Vercel serverless proxy functions.
+ * walls by routing through Vercel serverless proxy functions in Singapore.
  *
- * Architecture:
- *   Binance blocks cloud-provider IPs (Render/AWS). This scanner routes
- *   requests through Vercel functions running in Singapore (sin1), which
- *   can reach Binance successfully.
+ * Rate-limit-safe group rotation:
+ *   Binance futures allows 2400 API weight/min. Each depth call at limit=100
+ *   costs 5 weight. So max ~480 calls/min → ~120 per 15s cycle.
+ *   With 640 symbols, we split into 6 groups of ~107 and rotate:
+ *     Cycle 1 → group 0 (syms 1-107)
+ *     Cycle 2 → group 1 (syms 108-214)
+ *     ...
+ *     Cycle 6 → group 5 (syms 535-640)
+ *     Cycle 7 → group 0 again
+ *   Full rotation: 6 × 15s = 90s. All symbols scanned every 90s.
+ *   WallTracker retains walls for 10 min, so 90s rotation is fine.
  *
- * Multi-batch approach:
- *   1. Symbol discovery: One Vercel call with symbolsOnly=1 fetches ALL
- *      USDT symbols (cached 5 min). No depth data — lightweight.
- *   2. Depth scanning: The full symbol list is split into batches of ~150.
- *      All batches fire in parallel via separate Vercel function calls.
- *      Each function fetches ~150 order books in ~300ms from Singapore.
- *   3. Wall extraction: Merged books are processed through extractWalls().
+ *   Binance spot has a 6000 weight/min limit → 300 calls/cycle → 3 groups → 45s rotation.
  *
- * Full scan of 640 futures symbols completes in ~2-4s (5 parallel batches).
- * Runs every 15s to keep wall data fresh.
+ * Multi-batch within each group:
+ *   Each group may have more symbols than fit in one Vercel function call.
+ *   Groups are split into batches of 150 symbols and fired in parallel.
  *
  * @module densityScanner/binanceProxyScanner
  */
@@ -27,12 +29,27 @@ const axios = require('axios');
 const { extractWalls, normalizeSymbol } = require('./utils');
 
 const DEFAULT_PROXY_URL = 'https://cryptosite2027.vercel.app';
-const SYMBOL_CACHE_TTL = 5 * 60 * 1000;   // 5 minutes — refresh symbol list
-const BATCH_SIZE = 150;                     // symbols per Vercel function call
-const DEPTH_LIMIT = 50;                     // order book levels per side (50 bid + 50 ask)
-                                            // Binance futures weight: limit≤50 = 2 per call
-                                            // Binance spot weight:    limit≤100 = 5 per call
-const BATCH_TIMEOUT = 12000;                // 12s timeout per batch (Vercel has 10s limit)
+
+// ── Rate limit configuration per market ─────────────────────────────────────
+
+const MARKET_CONFIG = {
+  futures: {
+    depthLimit: 100,        // 100 levels per side (adequate for wall detection at 1-5% depth)
+    depthWeight: 5,         // Binance API weight: limit=100 → weight 5
+    rateLimitPerMin: 2400,  // Binance futures /fapi/v1 rate limit
+  },
+  spot: {
+    depthLimit: 50,         // 50 levels per side (spot weight: limit≤100 → weight 5)
+    depthWeight: 5,         // Binance API weight: limit≤100 → weight 5
+    rateLimitPerMin: 6000,  // Binance spot /api/v3 rate limit (more generous)
+  },
+};
+
+const SCAN_INTERVAL_MS = 15000;         // Must match orchestrator interval
+const RATE_LIMIT_SAFETY = 0.90;         // Use 90% of rate limit budget
+const SYMBOL_CACHE_TTL = 5 * 60 * 1000; // 5 min symbol list cache
+const BATCH_SIZE = 150;                  // Max symbols per Vercel function call
+const BATCH_TIMEOUT = 12000;             // Per-batch HTTP timeout (Vercel has 10s function limit)
 
 class BinanceProxyScanner {
   /**
@@ -43,12 +60,16 @@ class BinanceProxyScanner {
     this.proxyURL = process.env.VERCEL_PROXY_URL || DEFAULT_PROXY_URL;
     this.cachedSymbols = null;
     this.symbolsCachedAt = 0;
+
+    // Group rotation state
+    this.currentGroupIndex = 0;
+    this._groups = null;
+    this._groupsSymbolCount = 0; // Track when to rebuild groups
   }
 
   /**
    * Fetch ALL USDT symbols from Binance via the Vercel proxy.
-   * Uses symbolsOnly=1 mode — returns just the symbol list, no depth data.
-   * Single lightweight API call (~200ms).
+   * Uses symbolsOnly=1 mode — no depth data fetched. Single lightweight call.
    */
   async _fetchAllSymbols() {
     const label = `[BinanceProxy:${this.market}]`;
@@ -89,18 +110,51 @@ class BinanceProxyScanner {
   }
 
   /**
+   * Build rotation groups from the symbol list based on rate limits.
+   *
+   * Computes how many symbols can be scanned per 15s cycle without
+   * exceeding the Binance rate limit, then splits the full list into
+   * that many groups for round-robin rotation.
+   */
+  _buildGroups(symbols) {
+    const cfg = MARKET_CONFIG[this.market];
+    const scansPerMin = Math.ceil(60000 / SCAN_INTERVAL_MS); // 4 at 15s
+
+    // Max symbols we can safely scan per cycle
+    const maxPerCycle = Math.floor(
+      (cfg.rateLimitPerMin * RATE_LIMIT_SAFETY) / cfg.depthWeight / scansPerMin
+    );
+    // futures: floor(2400 * 0.9 / 5 / 4) = 108
+    // spot:    floor(6000 * 0.9 / 5 / 4) = 270
+
+    const groups = [];
+    for (let i = 0; i < symbols.length; i += maxPerCycle) {
+      groups.push(symbols.slice(i, i + maxPerCycle));
+    }
+
+    const rotationSec = groups.length * SCAN_INTERVAL_MS / 1000;
+    console.log(
+      `[BinanceProxy:${this.market}] Built ${groups.length} groups of ~${maxPerCycle} ` +
+      `(${symbols.length} total symbols, full rotation: ${rotationSec}s)`
+    );
+
+    this._groups = groups;
+    this._groupsSymbolCount = symbols.length;
+    return groups;
+  }
+
+  /**
    * Fetch order books for a batch of symbols via one Vercel proxy call.
-   * Returns { books: {...}, symbolCount, elapsed }.
    */
   async _fetchBatch(symbols, batchIndex) {
-    const label = `[BinanceProxy:${this.market}]`;
+    const cfg = MARKET_CONFIG[this.market];
 
     try {
       const response = await axios.get(`${this.proxyURL}/api/binance-depth`, {
         params: {
           market: this.market,
           symbols: symbols.join(','),
-          limit: DEPTH_LIMIT,
+          limit: cfg.depthLimit,
         },
         timeout: BATCH_TIMEOUT,
         headers: { Accept: 'application/json' },
@@ -110,21 +164,21 @@ class BinanceProxyScanner {
     } catch (error) {
       const status = error.response?.status;
       const msg = error.response?.data?.error || error.message;
-      console.error(`${label} batch ${batchIndex} failed (${symbols.length} syms) — HTTP ${status || 'N/A'}: ${msg}`);
+      console.error(
+        `[BinanceProxy:${this.market}] batch ${batchIndex} failed ` +
+        `(${symbols.length} syms) — HTTP ${status || 'N/A'}: ${msg}`
+      );
       return { books: {}, symbolCount: 0 };
     }
   }
 
   /**
-   * Scan ALL Binance symbols for density walls.
+   * Scan one rotation group of Binance symbols for density walls.
    *
-   * Flow:
-   *  1. Get full symbol list (cached 5 min, ~640 futures / ~400 spot)
-   *  2. Split into batches of BATCH_SIZE (~150)
-   *  3. Fire ALL batches in parallel via Vercel proxy
-   *  4. Merge all order books from all batches
-   *  5. Extract walls from each book
-   *  6. Return sorted walls
+   * Each call scans the NEXT group in the rotation. After all groups
+   * have been scanned, it wraps around. This ensures all symbols are
+   * covered within the full rotation period while staying within
+   * Binance rate limits.
    *
    * Compatible with DensityScannerService orchestrator interface.
    */
@@ -146,18 +200,29 @@ class BinanceProxyScanner {
         return [];
       }
 
-      // Step 2: Split into batches
-      const batches = [];
-      for (let i = 0; i < allSymbols.length; i += BATCH_SIZE) {
-        batches.push(allSymbols.slice(i, i + BATCH_SIZE));
+      // Step 2: Build/rebuild rotation groups if symbol list changed
+      if (!this._groups || this._groupsSymbolCount !== allSymbols.length) {
+        this._buildGroups(allSymbols);
       }
 
-      // Step 3: Fire all batches in parallel
+      // Step 3: Pick the current group and advance
+      const numGroups = this._groups.length;
+      const groupIndex = this.currentGroupIndex % numGroups;
+      const groupSymbols = this._groups[groupIndex];
+      this.currentGroupIndex++;
+
+      // Step 4: Split group into Vercel batches (if group > 150 symbols)
+      const batches = [];
+      for (let i = 0; i < groupSymbols.length; i += BATCH_SIZE) {
+        batches.push(groupSymbols.slice(i, i + BATCH_SIZE));
+      }
+
+      // Step 5: Fire all batches in parallel
       const batchResults = await Promise.allSettled(
         batches.map((batch, idx) => this._fetchBatch(batch, idx))
       );
 
-      // Step 4: Merge all books
+      // Step 6: Merge all books
       const allBooks = {};
       let totalBookCount = 0;
       let failedBatches = 0;
@@ -175,11 +240,11 @@ class BinanceProxyScanner {
       }
 
       if (totalBookCount === 0) {
-        console.log(`${label} all ${batches.length} batches returned 0 books`);
+        console.log(`${label} group ${groupIndex}/${numGroups}: 0 books returned`);
         return [];
       }
 
-      // Step 5: Extract walls from each book
+      // Step 7: Extract walls from each book
       const allWalls = [];
 
       for (const [symbol, rawBook] of Object.entries(allBooks)) {
@@ -209,10 +274,10 @@ class BinanceProxyScanner {
       allWalls.sort((a, b) => (b.volumeUSD || 0) - (a.volumeUSD || 0));
 
       const elapsed = Date.now() - startTime;
-      const failInfo = failedBatches > 0 ? ` (${failedBatches} batches failed)` : '';
+      const failInfo = failedBatches > 0 ? ` (${failedBatches} batch failures)` : '';
       console.log(
-        `${label} ✓ ${allWalls.length} walls from ${totalBookCount}/${allSymbols.length} books ` +
-        `(${batches.length} batches) in ${elapsed}ms${failInfo}`
+        `${label} ✓ ${allWalls.length} walls from ${totalBookCount}/${groupSymbols.length} books ` +
+        `(group ${groupIndex + 1}/${numGroups}) in ${elapsed}ms${failInfo}`
       );
 
       return allWalls;
