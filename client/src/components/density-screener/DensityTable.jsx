@@ -9,6 +9,7 @@ import {
   Download,
   ExternalLink,
   Loader2,
+  EyeOff,
 } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
@@ -145,6 +146,7 @@ const DensityTable = () => {
     exportCSV,
     filters,
     updateFilter,
+    fetchWalls,
   } = useDensityScreenerStore();
 
   // Current sort from store
@@ -319,7 +321,7 @@ const DensityTable = () => {
                   <tr
                     key={`${wall.exchange}-${wall.symbol}-${wall.price}-${wall.side}-${i}`}
                     className={cn(
-                      'border-b border-border transition-colors',
+                      'group border-b border-border transition-colors',
                       isBid
                         ? 'border-l-4 border-l-green-500'
                         : 'border-l-4 border-l-red-500',
@@ -347,8 +349,24 @@ const DensityTable = () => {
                     </td>
 
                     {/* Symbol */}
-                    <td className="px-4 py-3 whitespace-nowrap font-semibold">
-                      {wall.symbol}
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <span className="inline-flex items-center gap-1.5">
+                        <span className="font-semibold">{wall.symbol}</span>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const current = filters.hiddenSymbols || [];
+                            if (!current.includes(wall.symbol)) {
+                              updateFilter('hiddenSymbols', [...current, wall.symbol]);
+                              setTimeout(() => fetchWalls(), 50);
+                            }
+                          }}
+                          className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-500/20 hover:text-red-400 text-textSecondary/40 transition-all"
+                          title={`Hide ${wall.symbol}`}
+                        >
+                          <EyeOff size={12} />
+                        </button>
+                      </span>
                     </td>
 
                     {/* Side */}

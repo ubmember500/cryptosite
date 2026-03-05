@@ -1,5 +1,5 @@
 import React, { useRef, useCallback, useState } from 'react';
-import { SlidersHorizontal, X, RotateCcw, Save, ChevronDown, ChevronUp } from 'lucide-react';
+import { SlidersHorizontal, X, RotateCcw, Save, ChevronDown, ChevronUp, EyeOff } from 'lucide-react';
 import { useDensityScreenerStore } from '../../store/densityScreenerStore';
 
 const EXCHANGES = [
@@ -87,6 +87,7 @@ export default function FilterPanel() {
 
   const debounceRef = useRef(null);
   const [tokenInput, setTokenInput] = useState('');
+  const [hideTokenInput, setHideTokenInput] = useState('');
   const [presetName, setPresetName] = useState('');
   const [showPresetInput, setShowPresetInput] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -173,6 +174,34 @@ export default function FilterPanel() {
     const current = filters.symbols || [];
     handleFilterChange(
       'symbols',
+      current.filter((s) => s !== sym),
+    );
+  };
+
+  // --- Hidden tokens ---
+  const handleHideTokenKeyDown = (e) => {
+    if (e.key === 'Enter' && hideTokenInput.trim()) {
+      e.preventDefault();
+      addHiddenTokens();
+    }
+  };
+
+  const addHiddenTokens = () => {
+    if (!hideTokenInput.trim()) return;
+    const newSymbols = hideTokenInput
+      .split(',')
+      .map((s) => s.trim().toUpperCase())
+      .filter(Boolean);
+    const current = filters.hiddenSymbols || [];
+    const merged = [...new Set([...current, ...newSymbols])];
+    handleFilterChange('hiddenSymbols', merged);
+    setHideTokenInput('');
+  };
+
+  const removeHiddenSymbol = (sym) => {
+    const current = filters.hiddenSymbols || [];
+    handleFilterChange(
+      'hiddenSymbols',
       current.filter((s) => s !== sym),
     );
   };
@@ -337,6 +366,54 @@ export default function FilterPanel() {
             ))
           ) : (
             <span className="text-[11px] text-textSecondary/60 italic">All tokens</span>
+          )}
+        </div>
+      </div>
+
+      {/* Hidden tokens */}
+      <div>
+        <SectionLabel>
+          <span className="flex items-center gap-1">
+            <EyeOff size={11} />
+            Hide Tokens
+          </span>
+        </SectionLabel>
+        <div className="flex gap-1.5">
+          <input
+            type="text"
+            value={hideTokenInput}
+            onChange={(e) => setHideTokenInput(e.target.value)}
+            onKeyDown={handleHideTokenKeyDown}
+            placeholder="BTCUSDT, ETHUSDT…"
+            className="flex-1 min-w-0 px-2 py-1 text-xs rounded-lg bg-background border border-border text-textPrimary placeholder:text-textSecondary/50 focus:outline-none focus:border-accent/60"
+          />
+          <button
+            onClick={addHiddenTokens}
+            disabled={!hideTokenInput.trim()}
+            className="px-2 py-1 text-xs rounded-lg bg-red-500/20 text-red-400 hover:bg-red-500/30 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            Hide
+          </button>
+        </div>
+        <div className="mt-1.5 flex flex-wrap gap-1 min-h-[20px]">
+          {(filters.hiddenSymbols || []).length > 0 ? (
+            (filters.hiddenSymbols || []).map((sym) => (
+              <span
+                key={sym}
+                className="inline-flex items-center gap-0.5 px-2 py-0.5 text-[11px] font-medium rounded-full bg-red-500/15 text-red-400 border border-red-500/30"
+              >
+                {sym}
+                <button
+                  onClick={() => removeHiddenSymbol(sym)}
+                  className="ml-0.5 hover:text-textPrimary transition-colors"
+                  title="Stop hiding"
+                >
+                  <X size={10} />
+                </button>
+              </span>
+            ))
+          ) : (
+            <span className="text-[11px] text-textSecondary/60 italic">None hidden</span>
           )}
         </div>
       </div>

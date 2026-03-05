@@ -7,9 +7,10 @@ const DEFAULT_FILTERS = {
   markets: ['futures'],
   minVolume: 300000,
   side: 'Both',
-  symbols: [],       // empty = all symbols
-  minAge: 0,         // seconds — 0 = no minimum
-  maxDistFromMid: 10, // percent
+  symbols: [],          // empty = all symbols
+  hiddenSymbols: [],    // tokens to exclude from results
+  minAge: 0,            // seconds — 0 = no minimum
+  maxDistFromMid: 10,   // percent
   sort: 'volumeUSD',
   order: 'desc',
   limit: 500,
@@ -82,6 +83,11 @@ export const useDensityScreenerStore = create((set, get) => ({
       // Only add symbols param if user selected specific symbols
       if (filters.symbols.length > 0) {
         params.symbols = filters.symbols.join(',');
+      }
+      
+      // Add hidden symbols (exclude list)
+      if (filters.hiddenSymbols && filters.hiddenSymbols.length > 0) {
+        params.excludeSymbols = filters.hiddenSymbols.join(',');
       }
       
       const response = await api.get('/density-screener/walls', { 
