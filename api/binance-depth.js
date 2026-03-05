@@ -113,7 +113,7 @@ export default async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
 
   const market = (req.query.market || 'futures').toLowerCase();
-  const top = Math.min(Math.max(parseInt(req.query.top) || 30, 1), 60);
+  const top = Math.min(Math.max(parseInt(req.query.top) || 200, 1), 500);
   const limit = Math.min(Math.max(parseInt(req.query.limit) || 100, 5), 500);
   const symbolsParam = req.query.symbols; // comma-separated, e.g. "BTCUSDT,ETHUSDT"
 

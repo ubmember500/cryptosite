@@ -54,7 +54,7 @@ class BinanceProxyScanner {
       // Build params — pass cached symbols if available (skips ticker fetch)
       const params = {
         market: this.market,
-        top: 30,
+        top: 200,
         limit: 100,
       };
 
