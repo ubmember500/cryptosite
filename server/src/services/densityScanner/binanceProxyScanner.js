@@ -9,11 +9,12 @@
  * and their order books in one call. This scanner receives all the data,
  * passes each book through extractWalls(), and returns walls.
  *
- * Advantages:
- *   - Works regardless of server IP restrictions
- *   - One HTTP call per scan cycle (all books batched)
- *   - No WebSocket management, no reconnection, no ping/pong
- *   - Vercel function proven to reach Binance (used by chart klines)
+ * Symbol caching:
+ *   On first call, the Vercel function discovers top symbols by volume
+ *   (live ticker fetch with fallback). The returned symbol list is cached
+ *   and passed on subsequent calls via the `symbols` query param, which
+ *   skips the ticker fetch entirely — making it fast and reliable within
+ *   Vercel's 10s function timeout. Cache refreshes every 5 minutes.
  *
  * @module densityScanner/binanceProxyScanner
  */
@@ -21,9 +22,8 @@
 const axios = require('axios');
 const { extractWalls, normalizeSymbol } = require('./utils');
 
-// The Vercel-hosted client has the proxy function.
-// In production this is the live Vercel deployment.
 const DEFAULT_PROXY_URL = 'https://cryptosite2027.vercel.app';
+const SYMBOL_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 class BinanceProxyScanner {
   /**
@@ -32,6 +32,8 @@ class BinanceProxyScanner {
   constructor(market = 'futures') {
     this.market = market;
     this.proxyURL = process.env.VERCEL_PROXY_URL || DEFAULT_PROXY_URL;
+    this.cachedSymbols = null;
+    this.symbolsCachedAt = 0;
   }
 
   /**
@@ -46,26 +48,38 @@ class BinanceProxyScanner {
     radius = 1,
   } = {}) {
     const startTime = Date.now();
-    const label = `[BinanceProxy] ${this.market}`;
+    const label = `[BinanceProxy:${this.market}]`;
 
     try {
-      // One call to Vercel: fetches tickers + depth for top 40 symbols
+      // Build params — pass cached symbols if available (skips ticker fetch)
+      const params = {
+        market: this.market,
+        top: 30,
+        limit: 20,
+      };
+
+      const cacheExpired = Date.now() - this.symbolsCachedAt > SYMBOL_CACHE_TTL;
+
+      if (this.cachedSymbols && !cacheExpired) {
+        params.symbols = this.cachedSymbols.join(',');
+      }
+
       const response = await axios.get(`${this.proxyURL}/api/binance-depth`, {
-        params: {
-          market: this.market,
-          top: 40,
-          limit: 20,
-        },
-        timeout: 25000, // generous timeout: Vercel function itself has a budget
-        headers: {
-          'Accept': 'application/json',
-        },
+        params,
+        timeout: 15000,
+        headers: { Accept: 'application/json' },
       });
 
-      const { books, symbolCount } = response.data;
+      const { books, symbolCount, symbols, symbolSource } = response.data;
+
+      // Cache the symbol list returned by the Vercel function
+      if (symbols && symbols.length > 0) {
+        this.cachedSymbols = symbols;
+        this.symbolsCachedAt = Date.now();
+      }
 
       if (!books || symbolCount === 0) {
-        console.log(`${label}: proxy returned 0 books`);
+        console.log(`${label} proxy returned 0 books (source: ${symbolSource})`);
         return [];
       }
 
@@ -106,14 +120,14 @@ class BinanceProxyScanner {
 
       const elapsed = Date.now() - startTime;
       console.log(
-        `${label}: ✓ ${allWalls.length} walls from ${symbolCount} books in ${elapsed}ms`
+        `${label} ✓ ${allWalls.length} walls from ${symbolCount} books in ${elapsed}ms (${symbolSource})`
       );
 
       return allWalls;
     } catch (error) {
       const status = error.response?.status;
       const msg = error.response?.data?.error || error.message;
-      console.error(`${label}: proxy error — HTTP ${status || 'N/A'}: ${msg}`);
+      console.error(`${label} proxy error — HTTP ${status || 'N/A'}: ${msg}`);
       return [];
     }
   }
