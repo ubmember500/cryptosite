@@ -26,6 +26,7 @@ export const ROUTES = {
   RESET_PASSWORD: '/reset-password',
   PROFILE: '/profile',
   LISTINGS: '/listings',
+  FORMATIONS: '/formations',
 };
 
 export const ALERT_CONDITIONS = {

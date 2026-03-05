@@ -1,7 +1,7 @@
 import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { NavLink, Link } from 'react-router-dom';
-import { TrendingUp, User, LogOut } from 'lucide-react';
+import { TrendingUp, User, LogOut, LayoutGrid } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
 import { cn } from '../../utils/cn';
 
@@ -11,6 +11,7 @@ const Sidebar = () => {
 
   const navItems = [
     { path: '/account', labelKey: 'Account', icon: User, iconColor: '#60a5fa' },
+    { path: '/formations', labelKey: 'Formations', icon: LayoutGrid, iconColor: '#34d399' },
   ];
 
   return (
