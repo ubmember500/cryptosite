@@ -335,7 +335,7 @@ const BinanceMarketTable = ({ onTokenSelect, highlightToken }) => {
                 onMouseLeave={() => setHoveredRow(null)}
               >
                 <td
-                  className="px-2 py-3 w-10 align-middle relative"
+                  className="px-2 py-1 w-10 align-middle relative"
                   onClick={(e) => e.stopPropagation()}
                 >
                   <div ref={isPopoverOpen ? popoverRef : null} className="relative inline-block">
@@ -390,14 +390,14 @@ const BinanceMarketTable = ({ onTokenSelect, highlightToken }) => {
                     )}
                   </div>
                 </td>
-                <td className="px-1 py-3 whitespace-nowrap">
+                <td className="px-1 py-1 whitespace-nowrap">
                   <div className="text-textPrimary font-bold text-sm leading-tight">{token.symbol}</div>
-                  <div className="text-[11px] mt-0.5 text-textSecondary">{token.fullSymbol}</div>
+                  <div className="text-[11px] text-textSecondary">{token.fullSymbol}</div>
                 </td>
-                <td className="px-4 py-3 whitespace-nowrap text-right">
+                <td className="px-4 py-1 whitespace-nowrap text-right">
                   {formatPercent(token.priceChangePercent24h)}
                 </td>
-                <td className="px-4 py-3 whitespace-nowrap text-right">
+                <td className="px-4 py-1 whitespace-nowrap text-right">
                   {token.natr != null ? (
                     <span
                       className="font-semibold"
@@ -409,7 +409,7 @@ const BinanceMarketTable = ({ onTokenSelect, highlightToken }) => {
                     <span className="text-textSecondary opacity-40 text-xs">—</span>
                   )}
                 </td>
-                <td className="px-4 py-3 whitespace-nowrap text-right">
+                <td className="px-4 py-1 whitespace-nowrap text-right">
                   <span
                     className={cn(
                       (token.volume24h != null && Number(token.volume24h) >= VOLUME_HIGH_THRESHOLD)
