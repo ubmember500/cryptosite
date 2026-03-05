@@ -9,6 +9,7 @@
  * @module densityScanner
  */
 
+const { BinanceFuturesWsScanner } = require('./binanceFuturesWsScanner');
 const { BinanceDensityScanner } = require('./binanceDensityScanner');
 const { BybitFastScanner } = require('./bybitFastScanner');
 const { OkxFastScanner } = require('./okxFastScanner');
@@ -45,8 +46,11 @@ class DensityScannerService {
     // IMPORTANT: Create scanner instances ONCE and reuse them across scan cycles.
     // This preserves order-book caches and symbol-list caches between scans,
     // dramatically reducing API calls and avoiding rate limits (HTTP 418/429).
+    //
+    // Binance futures uses WebSocket (fstream.binance.com) — zero rate limits.
+    // REST fapi.binance.com gets HTTP 418 from US datacenter IPs.
     this.scanners = {
-      binance_futures: new BinanceDensityScanner('futures'),
+      binance_futures: new BinanceFuturesWsScanner(),
       binance_spot:    new BinanceDensityScanner('spot'),
       bybit_futures:   new BybitFastScanner('futures'),
       bybit_spot:      new BybitFastScanner('spot'),
