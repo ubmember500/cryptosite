@@ -114,7 +114,7 @@ export default async function handler(req, res) {
 
   const market = (req.query.market || 'futures').toLowerCase();
   const top = Math.min(Math.max(parseInt(req.query.top) || 30, 1), 60);
-  const limit = Math.min(Math.max(parseInt(req.query.limit) || 20, 5), 50);
+  const limit = Math.min(Math.max(parseInt(req.query.limit) || 100, 5), 500);
   const symbolsParam = req.query.symbols; // comma-separated, e.g. "BTCUSDT,ETHUSDT"
 
   if (market !== 'futures' && market !== 'spot') {

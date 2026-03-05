@@ -55,7 +55,7 @@ class BinanceProxyScanner {
       const params = {
         market: this.market,
         top: 30,
-        limit: 20,
+        limit: 100,
       };
 
       const cacheExpired = Date.now() - this.symbolsCachedAt > SYMBOL_CACHE_TTL;
