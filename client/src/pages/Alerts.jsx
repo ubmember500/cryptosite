@@ -97,31 +97,30 @@ const Alerts = () => {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="p-6 space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-textPrimary tracking-tight">{t('Alerts')}</h1>
-          <p className="text-textSecondary/80 mt-1 text-sm">{t('Create alerts in order: exchange → market → coin → target. Triggers on first hit since creation.')}</p>
+          <h1 className="text-2xl font-bold text-textPrimary">{t('Alerts')}</h1>
+          <p className="text-textSecondary mt-1">{t('Create alerts in order: exchange → market → coin → target. Triggers on first hit since creation.')}</p>
         </div>
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-3">
           {selectedIds.length > 0 && (
             <Button
               variant="danger"
-              size="sm"
               onClick={handleBulkDelete}
-              className="flex items-center gap-1.5"
+              className="flex items-center gap-2"
             >
-              <Trash2 size={16} />
+              <Trash2 size={18} />
               {t('Delete')} ({selectedIds.length})
             </Button>
           )}
           <Button
             variant="primary"
             onClick={handleCreateClick}
-            className="flex items-center gap-1.5"
+            className="flex items-center gap-2"
           >
-            <Plus size={16} />
+            <Plus size={18} />
             {t('Create Alert')}
           </Button>
         </div>

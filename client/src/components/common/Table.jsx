@@ -5,13 +5,13 @@ const Table = ({ columns, data, onRowClick, className }) => {
   return (
     <div className={cn("overflow-x-auto", className)}>
       <table className="w-full text-xs md:text-sm text-left text-textPrimary">
-        <thead className="text-xs uppercase bg-surfaceDark/40 border-b border-border/50 sticky top-0 z-10 backdrop-blur-sm">
+        <thead className="text-xs uppercase bg-surface border-b border-border sticky top-0 z-10">
           <tr>
             {columns.map((col) => (
               <th
                 key={col.key}
                 scope="col"
-                className="px-3 md:px-6 py-2.5 md:py-3 font-semibold text-textSecondary/80 tracking-wider cursor-pointer hover:text-textPrimary transition-colors duration-200 whitespace-nowrap"
+                className="px-3 md:px-6 py-2.5 md:py-3 font-medium text-textSecondary cursor-pointer hover:text-textPrimary transition-colors whitespace-nowrap"
                 onClick={() => col.sortable && console.log(`Sort by ${col.key}`)}
               >
                 {col.label}
@@ -19,12 +19,12 @@ const Table = ({ columns, data, onRowClick, className }) => {
             ))}
           </tr>
         </thead>
-        <tbody className="divide-y divide-border/30">
+        <tbody>
           {data.map((row, i) => (
             <tr
               key={i}
               className={cn(
-                "hover:bg-surfaceHover/40 transition-colors duration-150",
+                "border-b border-border hover:bg-surfaceHover/50 transition-colors",
                 onRowClick && "cursor-pointer"
               )}
               onClick={() => onRowClick && onRowClick(row)}

@@ -5,13 +5,13 @@ const Card = ({ children, header, footer, className, ...rest }) => {
   return (
     <div 
       className={cn(
-        "bg-surface/80 border border-border/50 rounded-xl shadow-lg shadow-black/5 overflow-hidden backdrop-blur-sm transition-all duration-200",
+        "bg-surface border border-border rounded-xl shadow-sm overflow-hidden",
         className
       )}
       {...rest}
     >
       {header && (
-        <div className="px-6 py-4 border-b border-border/50 bg-surfaceDark/20">
+        <div className="px-6 py-4 border-b border-border">
           {typeof header === 'string' ? (
             <h3 className="text-lg font-semibold text-textPrimary">{header}</h3>
           ) : (
@@ -23,7 +23,7 @@ const Card = ({ children, header, footer, className, ...rest }) => {
         {children}
       </div>
       {footer && (
-        <div className="px-6 py-4 bg-surfaceDark/30 border-t border-border/50">
+        <div className="px-6 py-4 bg-surfaceHover/30 border-t border-border">
           {footer}
         </div>
       )}

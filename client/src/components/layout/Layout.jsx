@@ -13,11 +13,8 @@ const Layout = () => {
 
   if (loading) {
       return (
-        <div className="flex min-h-[100dvh] items-center justify-center bg-background text-textSecondary">
-              <div className="flex flex-col items-center gap-3">
-                <div className="w-8 h-8 animate-spin rounded-full border-2 border-border border-t-accent" />
-                <span className="text-sm">{t('Loading...')}</span>
-              </div>
+        <div className="flex min-h-[100dvh] items-center justify-center bg-background text-textPrimary">
+              {t('Loading...')}
           </div>
       );
   }

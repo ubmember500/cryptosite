@@ -74,32 +74,28 @@ const Login = () => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background px-4 relative overflow-hidden">
-      {/* Decorative gradient orbs */}
-      <div className="absolute top-[-20%] left-[-10%] w-[500px] h-[500px] rounded-full bg-accent/[0.07] blur-[100px] animate-float" />
-      <div className="absolute bottom-[-20%] right-[-10%] w-[400px] h-[400px] rounded-full bg-sky-500/[0.05] blur-[100px] animate-float" style={{ animationDelay: '-3s' }} />
-
-      <div className="w-full max-w-md relative z-10">
-        <div className="bg-surface/80 border border-border/40 rounded-2xl shadow-2xl shadow-black/20 p-8 backdrop-blur-xl">
+    <div className="min-h-screen flex items-center justify-center bg-background px-4">
+      <div className="w-full max-w-md">
+        <div className="bg-surface border border-border rounded-xl shadow-xl p-8">
           <div className="text-center mb-8">
-            <div className="mb-3 flex items-center justify-center gap-2.5">
-              <div className="bg-accent/10 p-2.5 rounded-xl border border-accent/20 shadow-accent-glow">
+            <div className="mb-2 flex items-center justify-center gap-2.5">
+              <div className="bg-accent/10 p-1.5 rounded-lg border border-accent/20">
                 <TrendingUp className="h-6 w-6 text-accent" />
               </div>
-              <h1 className="text-3xl font-bold text-gradient-brand">
+              <h1 className="text-3xl font-bold bg-gradient-to-r from-sky-400 via-cyan-300 to-teal-400 bg-clip-text text-transparent">
                 CryptoAlerts
               </h1>
             </div>
-            <p className="text-textSecondary text-sm">Sign in to your account</p>
+            <p className="text-textSecondary">Sign in to your account</p>
           </div>
 
           {error && (
-            <div className="mb-4 p-3 bg-danger/10 border border-danger/20 rounded-xl text-danger text-sm">
+            <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-sm">
               {error}
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-5">
+          <form onSubmit={handleSubmit} className="space-y-4">
             <Input
               label="Email"
               type="email"
@@ -121,7 +117,7 @@ const Login = () => {
             />
 
             <div className="text-right">
-              <Link to={ROUTES.FORGOT_PASSWORD} className="text-sm text-accent hover:text-accent/80 transition-colors">
+              <Link to={ROUTES.FORGOT_PASSWORD} className="text-sm text-blue-400 hover:text-blue-300">
                 Forgot password?
               </Link>
             </div>
@@ -129,20 +125,20 @@ const Login = () => {
             <Button
               type="submit"
               variant="primary"
-              className="w-full h-11"
+              className="w-full"
               loading={loading}
             >
               Sign In
             </Button>
           </form>
 
-          <div className="mt-6">
+          <div className="mt-5">
             <div className="relative">
               <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-border/40" />
+                <div className="w-full border-t border-border" />
               </div>
               <div className="relative flex justify-center text-xs">
-                <span className="bg-surface/80 px-3 text-textSecondary">or continue with</span>
+                <span className="bg-surface px-3 text-textSecondary">or continue with</span>
               </div>
             </div>
             <div className="mt-4 flex justify-center">
@@ -161,7 +157,7 @@ const Login = () => {
           <div className="mt-6 text-center">
             <p className="text-textSecondary text-sm">
               Don't have an account?{' '}
-              <Link to={ROUTES.REGISTER} className="text-accent hover:text-accent/80 font-medium transition-colors">
+              <Link to={ROUTES.REGISTER} className="text-blue-400 hover:text-blue-300">
                 Sign up
               </Link>
             </p>

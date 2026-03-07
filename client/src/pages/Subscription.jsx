@@ -128,30 +128,30 @@ const Subscription = () => {
   }, [payment?.pay_address]);
 
   const FeatureItem = ({ text, tooltip }) => (
-    <div className="flex items-center py-2.5 border-b border-border/30 last:border-b-0">
-      <div className="flex items-center gap-2.5">
-        <CheckCircle2 size={16} className="text-emerald-400 shrink-0" />
-        <span className="text-textPrimary text-sm">{t(text)}</span>
-        {tooltip && <Info size={13} className="text-textSecondary/60" title={t(tooltip)} />}
+    <div className="flex items-center py-2 border-b border-border last:border-b-0">
+      <div className="flex items-center gap-2">
+        <CheckCircle2 size={18} className="text-emerald-500" />
+        <span className="text-textPrimary">{t(text)}</span>
+        {tooltip && <Info size={14} className="text-textSecondary" title={t(tooltip)} />}
       </div>
     </div>
   );
 
   return (
-    <div className="space-y-8">
+    <div className="p-6 space-y-8">
       {/* Top Navigation */}
-      <div className="flex items-center justify-between border-b border-border/40 pb-4">
+      <div className="flex items-center justify-between border-b border-border pb-4">
         <div className="flex items-center space-x-6">
-          <button className="text-textPrimary font-medium border-b-2 border-accent pb-2 transition-colors">{t('My plan')}</button>
-          <button className="text-textSecondary hover:text-textPrimary pb-2 transition-colors">{t('Payment history')}</button>
-          <button className="text-accent hover:text-accent/80 pb-2 transition-colors">{t('Get Pro subscription')}</button>
+          <button className="text-textPrimary font-medium border-b-2 border-accent pb-2">{t('My plan')}</button>
+          <button className="text-textSecondary hover:text-textPrimary pb-2">{t('Payment history')}</button>
+          <button className="text-accent hover:text-accent/80 pb-2">{t('Get Pro subscription')}</button>
         </div>
-        <button className="text-accent hover:text-accent/80 flex items-center gap-2 text-sm font-medium transition-colors">{t('Activate promocode')}</button>
+        <button className="text-accent hover:text-accent/80 flex items-center gap-2">{t('Activate promocode')}</button>
       </div>
 
       {/* Free Notice Banner */}
-      <div className="bg-amber-500/8 border border-amber-500/20 rounded-xl px-6 py-4 text-center backdrop-blur-sm">
-        <p className="text-amber-400 font-medium text-sm">
+      <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg px-6 py-4 text-center">
+        <p className="text-amber-400 font-medium text-base">
           {t('subscription_free_notice')}
         </p>
       </div>
@@ -159,25 +159,25 @@ const Subscription = () => {
       {/* Pricing Tiers */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Free Plan Card */}
-        <div className="bg-surface/70 p-6 rounded-2xl shadow-lg border border-border/40 flex flex-col backdrop-blur-sm transition-all duration-300 hover:border-border/60">
+        <div className="bg-surface p-6 rounded-lg shadow-lg border border-border flex flex-col">
           <div className="text-center mb-6">
             <h2 className="text-2xl font-bold text-textPrimary mb-2">{t('Free')}</h2>
-            <p className="text-textSecondary/80 text-sm mb-4">
+            <p className="text-textSecondary text-sm mb-4">
               {t('Want to try the screener before buying? Request trial access for 3 days!')}
             </p>
-            <p className="text-4xl font-bold text-textPrimary mb-4">
-              $0<span className="text-base text-textSecondary font-normal"> / {t('month')}</span>
+            <p className="text-4xl font-bold text-textPrimary mb-2">
+              $0<span className="text-lg text-textSecondary"> / {t('month')}</span>
             </p>
             <a
               href="https://t.me/Fahey_contrary"
               target="_blank"
               rel="noopener noreferrer"
-              className="w-full bg-blue-600 hover:bg-blue-500 text-white font-medium py-3 rounded-xl transition-all duration-200 inline-block text-center hover:shadow-lg"
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 rounded-md transition-colors inline-block text-center"
             >
               {t('YOUR VERSION')}
             </a>
           </div>
-          <div className="flex-1 space-y-0">
+          <div className="flex-1 space-y-1">
             <FeatureItem text="Popular" available={true} />
             <FeatureItem text="All exchanges and markets" available={false} />
             <FeatureItem text="Alerts" available={false} />
@@ -198,30 +198,24 @@ const Subscription = () => {
           </div>
         </div>
 
-        {/* Pro Plan Card — highlighted */}
-        <div className="relative bg-surface/70 p-6 rounded-2xl shadow-xl border border-accent/30 flex flex-col backdrop-blur-sm transition-all duration-300 hover:border-accent/50 hover:shadow-accent-glow">
-          {/* Popular badge */}
-          <div className="absolute -top-3 left-1/2 -translate-x-1/2">
-            <span className="bg-accent text-white text-xs font-semibold px-4 py-1 rounded-full shadow-lg">
-              {t('RECOMMENDED')}
-            </span>
-          </div>
-          <div className="text-center mb-6 pt-2">
+        {/* Pro Plan Card */}
+        <div className="bg-surface p-6 rounded-lg shadow-lg border border-border flex flex-col">
+          <div className="text-center mb-6">
             <h2 className="text-2xl font-bold text-textPrimary mb-2">{t('Pro')}</h2>
-            <p className="text-textSecondary/80 text-sm mb-4">
+            <p className="text-textSecondary text-sm mb-4">
               {t('Go for full Pro access - up to 14$ or through trading, enough the required commission!')}
             </p>
-            <p className="text-4xl font-bold text-accent mb-4">
-              $14<span className="text-base text-textSecondary font-normal"> / {t('month')}</span>
+            <p className="text-4xl font-bold text-textPrimary mb-2">
+              $14<span className="text-lg text-textSecondary"> / {t('month')}</span>
             </p>
             <button
               onClick={() => handleSubscribe('Pro')}
-              className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-3 rounded-xl transition-all duration-200 hover:shadow-lg active:scale-[0.98]"
+              className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-3 rounded-md transition-colors"
             >
               {t('Pro')}
             </button>
           </div>
-          <div className="flex-1 space-y-0">
+          <div className="flex-1 space-y-1">
             <FeatureItem text="Popular" available={true} />
             <FeatureItem text="All exchanges and markets" available={true} />
             <FeatureItem text="Alerts" available={true} />

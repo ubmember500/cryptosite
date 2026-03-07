@@ -61,13 +61,13 @@ const Account = () => {
     : null;
 
   return (
-    <div className="space-y-6">
+    <div className="p-6 space-y-6">
       {/* Welcome Section */}
       <div>
-        <h1 className="text-2xl font-bold text-textPrimary tracking-tight">
+        <h1 className="text-2xl font-bold text-textPrimary">
           {t('Welcome back, {{name}}!', { name: user?.username || t('User') })}
         </h1>
-        <p className="text-textSecondary/80 mt-1 text-sm">{t("Here's your account overview.")}</p>
+        <p className="text-textSecondary mt-1">{t("Here's your account overview.")}</p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -75,40 +75,32 @@ const Account = () => {
         <Card header={t('Account information')}>
           <div className="space-y-4">
             <div className="flex items-center gap-3">
-              <div className="bg-blue-500/10 p-1.5 rounded-lg">
-                <User className="h-4 w-4 text-blue-400 flex-shrink-0" />
-              </div>
+              <User className="h-5 w-5 text-textSecondary flex-shrink-0" />
               <div>
-                <p className="text-xs text-textSecondary/70 uppercase tracking-wider">{t('Username')}</p>
+                <p className="text-xs text-textSecondary uppercase tracking-wide">{t('Username')}</p>
                 <p className="text-textPrimary font-medium">{user?.username || '—'}</p>
               </div>
             </div>
             <div className="flex items-center gap-3">
-              <div className="bg-cyan-500/10 p-1.5 rounded-lg">
-                <Mail className="h-4 w-4 text-cyan-400 flex-shrink-0" />
-              </div>
+              <Mail className="h-5 w-5 text-textSecondary flex-shrink-0" />
               <div>
-                <p className="text-xs text-textSecondary/70 uppercase tracking-wider">{t('Email')}</p>
+                <p className="text-xs text-textSecondary uppercase tracking-wide">{t('Email')}</p>
                 <p className="text-textPrimary font-medium">{user?.email || '—'}</p>
               </div>
             </div>
             {createdAt && (
               <div className="flex items-center gap-3">
-                <div className="bg-purple-500/10 p-1.5 rounded-lg">
-                  <Calendar className="h-4 w-4 text-purple-400 flex-shrink-0" />
-                </div>
+                <Calendar className="h-5 w-5 text-textSecondary flex-shrink-0" />
                 <div>
-                  <p className="text-xs text-textSecondary/70 uppercase tracking-wider">{t('Member since')}</p>
+                  <p className="text-xs text-textSecondary uppercase tracking-wide">{t('Member since')}</p>
                   <p className="text-textPrimary font-medium">{createdAt}</p>
                 </div>
               </div>
             )}
             <div className="flex items-center gap-3">
-              <div className="bg-pink-500/10 p-1.5 rounded-lg">
-                <CreditCard className="h-4 w-4 text-pink-400 flex-shrink-0" />
-              </div>
+              <CreditCard className="h-5 w-5 text-textSecondary flex-shrink-0" />
               <div>
-                <p className="text-xs text-textSecondary/70 uppercase tracking-wider">{t('Subscription')}</p>
+                <p className="text-xs text-textSecondary uppercase tracking-wide">{t('Subscription')}</p>
                 <p className="text-textPrimary font-medium">{subscriptionLabel}</p>
               </div>
             </div>
@@ -117,42 +109,38 @@ const Account = () => {
 
         {/* Quick Stats Card */}
         <Card header={t('Quick stats')}>
-          <div className="space-y-3">
-            <div className="flex items-center justify-between p-4 bg-surfaceHover/40 rounded-xl border border-border/30 transition-colors hover:bg-surfaceHover/60">
+          <div className="space-y-4">
+            <div className="flex items-center justify-between p-4 bg-surfaceHover rounded-lg">
               <div className="flex items-center gap-3">
-                <div className="bg-amber-500/10 p-1.5 rounded-lg">
-                  <Bell className="h-4 w-4" style={{ color: '#fbbf24' }} />
-                </div>
-                <span className="text-textPrimary text-sm">{t('Active alerts')}</span>
+                <Bell className="h-5 w-5" style={{ color: '#fbbf24' }} />
+                <span className="text-textPrimary">{t('Active alerts')}</span>
               </div>
-              <span className="text-xl font-bold text-textPrimary">{activeAlertsCount}</span>
+              <span className="text-xl font-semibold text-textPrimary">{activeAlertsCount}</span>
             </div>
-            <div className="flex items-center justify-between p-4 bg-surfaceHover/40 rounded-xl border border-border/30 transition-colors hover:bg-surfaceHover/60">
+            <div className="flex items-center justify-between p-4 bg-surfaceHover rounded-lg">
               <div className="flex items-center gap-3">
-                <div className="bg-violet-500/10 p-1.5 rounded-lg">
-                  <Star className="h-4 w-4" style={{ color: '#a78bfa' }} />
-                </div>
-                <span className="text-textPrimary text-sm">{t('Watchlist items')}</span>
+                <Star className="h-5 w-5" style={{ color: '#a78bfa' }} />
+                <span className="text-textPrimary">{t('Watchlist items')}</span>
               </div>
-              <span className="text-xl font-bold text-textPrimary">{watchlistCount}</span>
+              <span className="text-xl font-semibold text-textPrimary">{watchlistCount}</span>
             </div>
           </div>
-          <div className="mt-4 pt-4 border-t border-border/40 flex flex-col sm:flex-row gap-4">
+          <div className="mt-4 pt-4 border-t border-border flex flex-col sm:flex-row gap-4">
             <Link
               to={ROUTES.ALERTS}
-              className="text-sm text-accent hover:text-accent/80 transition-colors font-medium"
+              className="text-sm text-accent hover:text-accent/80 transition-colors"
             >
               {t('Manage alerts')}
             </Link>
             <Link
               to={ROUTES.MARKET}
-              className="text-sm text-accent hover:text-accent/80 transition-colors font-medium"
+              className="text-sm text-accent hover:text-accent/80 transition-colors"
             >
               {t('Market')}
             </Link>
             <Link
               to={ROUTES.FORMATIONS}
-              className="text-sm text-accent hover:text-accent/80 transition-colors font-medium"
+              className="text-sm text-accent hover:text-accent/80 transition-colors"
             >
               {t('Formations')}
             </Link>

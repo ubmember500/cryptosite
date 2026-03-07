@@ -8,10 +8,10 @@ const ThemeCard = ({ theme, isActive, onSelect, styleLabel, categoryLabel }) => 
       type="button"
       onClick={() => onSelect(theme.id)}
       className={cn(
-        'w-full rounded-xl border text-left transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-accent/50 focus:ring-offset-1 focus:ring-offset-background',
+        'w-full rounded-xl border text-left transition-all focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2 focus:ring-offset-background',
         isActive
-          ? 'border-accent/60 bg-surface shadow-accent-glow'
-          : 'border-border/40 bg-surface/70 hover:bg-surfaceHover/50 hover:border-border/70'
+          ? 'border-accent bg-surface shadow-[0_0_0_1px_var(--color-accent)]'
+          : 'border-border bg-surface hover:bg-surfaceHover'
       )}
     >
       <div className="p-3">
