@@ -54,6 +54,10 @@ export const useDensityScreenerStore = create((set, get) => ({
   pollIntervalId: null,
   isFetching: false,
 
+  // ─── Token settings (per-user, per-token, per-exchange+market) ──
+  tokenSettings: [],       // [{ id, ticker, exchange, market, minWallSize }, ...]
+  tokenSettingsLoaded: false,
+
   // ─── Actions: Data fetching ──────────────────────────────
 
   /**
@@ -217,6 +221,98 @@ export const useDensityScreenerStore = create((set, get) => ({
     try {
       localStorage.setItem(PRESETS_STORAGE_KEY, JSON.stringify(presets));
     } catch { /* ignore */ }
+  },
+
+  // ─── Actions: Token settings (per-user, DB-backed) ──────
+
+  /**
+   * Fetch all token settings for the current user from the API.
+   */
+  fetchTokenSettings: async () => {
+    try {
+      const response = await api.get('/density-screener/token-settings', { timeout: 10000 });
+      set({ tokenSettings: response.data.settings || [], tokenSettingsLoaded: true });
+    } catch (error) {
+      console.error('[DensityStore] Failed to fetch token settings:', error.message);
+      set({ tokenSettingsLoaded: true }); // mark loaded even on error to avoid re-fetches
+    }
+  },
+
+  /**
+   * Create or update a single token setting.
+   * @param {{ ticker: string, exchange: string, market: string, minWallSize: number }} setting
+   */
+  upsertTokenSetting: async (setting) => {
+    try {
+      const response = await api.put('/density-screener/token-settings', setting);
+      const saved = response.data.setting;
+      set((state) => {
+        const idx = state.tokenSettings.findIndex(
+          (s) => s.ticker === saved.ticker && s.exchange === saved.exchange && s.market === saved.market,
+        );
+        const next = [...state.tokenSettings];
+        if (idx >= 0) {
+          next[idx] = saved;
+        } else {
+          next.push(saved);
+        }
+        return { tokenSettings: next };
+      });
+      return saved;
+    } catch (error) {
+      console.error('[DensityStore] Failed to upsert token setting:', error.message);
+      throw error;
+    }
+  },
+
+  /**
+   * Batch-upsert multiple token settings.
+   * @param {Array<{ ticker: string, exchange: string, market: string, minWallSize: number }>} settings
+   */
+  batchUpsertTokenSettings: async (settings) => {
+    try {
+      const response = await api.put('/density-screener/token-settings/batch', { settings });
+      const saved = response.data.settings || [];
+      set((state) => {
+        const map = new Map(
+          state.tokenSettings.map((s) => [`${s.ticker}|${s.exchange}|${s.market}`, s]),
+        );
+        saved.forEach((s) => map.set(`${s.ticker}|${s.exchange}|${s.market}`, s));
+        return { tokenSettings: Array.from(map.values()) };
+      });
+      return saved;
+    } catch (error) {
+      console.error('[DensityStore] Failed to batch-upsert token settings:', error.message);
+      throw error;
+    }
+  },
+
+  /**
+   * Delete a single token setting by ID.
+   */
+  deleteTokenSetting: async (id) => {
+    try {
+      await api.delete(`/density-screener/token-settings/${id}`);
+      set((state) => ({
+        tokenSettings: state.tokenSettings.filter((s) => s.id !== id),
+      }));
+    } catch (error) {
+      console.error('[DensityStore] Failed to delete token setting:', error.message);
+      throw error;
+    }
+  },
+
+  /**
+   * Reset (delete) all token settings for the current user.
+   */
+  resetTokenSettings: async () => {
+    try {
+      await api.delete('/density-screener/token-settings/reset');
+      set({ tokenSettings: [] });
+    } catch (error) {
+      console.error('[DensityStore] Failed to reset token settings:', error.message);
+      throw error;
+    }
   },
 
   // ─── Actions: Auto-polling ───────────────────────────────

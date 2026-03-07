@@ -519,23 +519,179 @@ export default function FilterPanel() {
 }
 
 // ─── Individual Settings Modal ────────────────────────────────────────────────
-// Placeholder — will be fully implemented with DB-backed per-token settings in subsequent steps.
+
+const EXCHANGES_MARKETS = [
+  { exchange: 'binance', market: 'futures', label: 'Binance Futures', color: 'text-yellow-400' },
+  { exchange: 'binance', market: 'spot',    label: 'Binance Spot',    color: 'text-yellow-400' },
+  { exchange: 'bybit',   market: 'futures', label: 'Bybit Futures',   color: 'text-orange-400' },
+  { exchange: 'bybit',   market: 'spot',    label: 'Bybit Spot',      color: 'text-orange-400' },
+  { exchange: 'okx',     market: 'futures', label: 'OKX Futures',     color: 'text-blue-400' },
+  { exchange: 'okx',     market: 'spot',    label: 'OKX Spot',        color: 'text-blue-400' },
+];
+
+const PER_PAGE = 20;
+
+function formatWallSize(val) {
+  if (!val && val !== 0) return '-';
+  if (val >= 1_000_000) return `${(val / 1_000_000).toFixed(val % 1_000_000 === 0 ? 0 : 2)}M`;
+  if (val >= 1_000) return `${(val / 1_000).toFixed(val % 1_000 === 0 ? 0 : 1)}K`;
+  return String(val);
+}
+
+function parseWallInput(raw) {
+  if (!raw || !raw.trim()) return null;
+  let s = raw.trim().toUpperCase().replace(/[$,\s]/g, '');
+  let multiplier = 1;
+  if (s.endsWith('M')) { multiplier = 1_000_000; s = s.slice(0, -1); }
+  else if (s.endsWith('K')) { multiplier = 1_000; s = s.slice(0, -1); }
+  const num = parseFloat(s);
+  if (isNaN(num) || num < 0) return null;
+  return Math.round(num * multiplier);
+}
+
+function EditableCell({ value, color, onSave }) {
+  const [editing, setEditing] = React.useState(false);
+  const [draft, setDraft] = React.useState('');
+  const inputRef = React.useRef(null);
+
+  const startEdit = () => {
+    setDraft(value ? formatWallSize(value) : '');
+    setEditing(true);
+  };
+
+  React.useEffect(() => {
+    if (editing && inputRef.current) inputRef.current.focus();
+  }, [editing]);
+
+  const commit = () => {
+    setEditing(false);
+    const parsed = parseWallInput(draft);
+    if (parsed !== null && parsed !== value) {
+      onSave(parsed);
+    }
+  };
+
+  if (editing) {
+    return (
+      <input
+        ref={inputRef}
+        type="text"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') commit();
+          if (e.key === 'Escape') setEditing(false);
+        }}
+        className="w-full px-1.5 py-0.5 text-xs rounded bg-background border border-accent/60 text-textPrimary focus:outline-none text-center"
+      />
+    );
+  }
+
+  return (
+    <button
+      onClick={startEdit}
+      className={`w-full text-center text-xs cursor-pointer hover:underline ${value ? `${color} font-medium` : 'text-textSecondary/40'}`}
+    >
+      {value ? formatWallSize(value) : '-'}
+    </button>
+  );
+}
 
 function IndividualSettingsModal({ onClose }) {
   const [activeTab, setActiveTab] = React.useState('individual');
   const [search, setSearch] = React.useState('');
   const [page, setPage] = React.useState(1);
+  const [onlyChanged, setOnlyChanged] = React.useState(false);
 
-  // Sample tokens for the preview structure
-  const PREVIEW_TOKENS = [
-    { ticker: '4', binanceFut: '350K', binanceSpot: '-', bybitFut: '450K', bybitSpot: '-', okxFut: '-', okxSpot: '-' },
-    { ticker: 'BTC', binanceFut: '50M', binanceSpot: '50M', bybitFut: '50M', bybitSpot: '50M', okxFut: '50M', okxSpot: '50M' },
-    { ticker: 'ETH', binanceFut: '50M', binanceSpot: '50M', bybitFut: '50M', bybitSpot: '50M', okxFut: '50M', okxSpot: '50M' },
-    { ticker: 'SOL', binanceFut: '35M', binanceSpot: '24.45M', bybitFut: '35M', bybitSpot: '50M', okxFut: '50M', okxSpot: '50M' },
-    { ticker: 'XRP', binanceFut: '7M', binanceSpot: '3.5M', bybitFut: '450K', bybitSpot: '300K', okxFut: '450K', okxSpot: '300K' },
-  ];
+  const {
+    symbols,
+    tokenSettings,
+    tokenSettingsLoaded,
+    fetchTokenSettings,
+    upsertTokenSetting,
+    resetTokenSettings,
+  } = useDensityScreenerStore();
 
-  const totalPages = 5;
+  // Fetch token settings on mount
+  React.useEffect(() => {
+    if (!tokenSettingsLoaded) fetchTokenSettings();
+  }, [tokenSettingsLoaded, fetchTokenSettings]);
+
+  // Build unique tickers from all exchange symbol lists
+  const allTickers = React.useMemo(() => {
+    const set = new Set();
+    Object.values(symbols).forEach((arr) => {
+      if (Array.isArray(arr)) {
+        arr.forEach((sym) => {
+          // Strip USDT / USDC / USD suffix to get base ticker
+          const base = sym.replace(/(USDT|USDC|USD)$/i, '');
+          if (base) set.add(base);
+        });
+      }
+    });
+    // Also include tickers from existing settings (in case symbols haven't loaded yet)
+    tokenSettings.forEach((s) => set.add(s.ticker));
+    return Array.from(set).sort();
+  }, [symbols, tokenSettings]);
+
+  // Build a lookup map: "TICKER|exchange|market" → minWallSize
+  const settingsMap = React.useMemo(() => {
+    const map = new Map();
+    tokenSettings.forEach((s) => {
+      map.set(`${s.ticker}|${s.exchange}|${s.market}`, s.minWallSize);
+    });
+    return map;
+  }, [tokenSettings]);
+
+  // Filter tickers
+  const filteredTickers = React.useMemo(() => {
+    let list = allTickers;
+
+    if (search.trim()) {
+      const q = search.trim().toUpperCase();
+      list = list.filter((t) => t.includes(q));
+    }
+
+    if (onlyChanged) {
+      list = list.filter((t) =>
+        EXCHANGES_MARKETS.some((em) => settingsMap.has(`${t}|${em.exchange}|${em.market}`)),
+      );
+    }
+
+    return list;
+  }, [allTickers, search, onlyChanged, settingsMap]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredTickers.length / PER_PAGE));
+  const safePage = Math.min(page, totalPages);
+  const pageTickers = filteredTickers.slice((safePage - 1) * PER_PAGE, safePage * PER_PAGE);
+
+  // When search or filter changes, reset to page 1
+  React.useEffect(() => { setPage(1); }, [search, onlyChanged]);
+
+  const handleCellSave = async (ticker, exchange, market, minWallSize) => {
+    try {
+      await upsertTokenSetting({ ticker, exchange, market, minWallSize });
+    } catch { /* store already logs */ }
+  };
+
+  const handleReset = async () => {
+    if (!window.confirm('Reset all individual token settings to defaults?')) return;
+    try {
+      await resetTokenSettings();
+    } catch { /* store already logs */ }
+  };
+
+  // Pagination range helper
+  const pageButtons = React.useMemo(() => {
+    const maxButtons = 7;
+    if (totalPages <= maxButtons) return Array.from({ length: totalPages }, (_, i) => i + 1);
+    const half = Math.floor(maxButtons / 2);
+    let start = Math.max(1, safePage - half);
+    let end = start + maxButtons - 1;
+    if (end > totalPages) { end = totalPages; start = Math.max(1, end - maxButtons + 1); }
+    return Array.from({ length: end - start + 1 }, (_, i) => start + i);
+  }, [totalPages, safePage]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
@@ -547,7 +703,7 @@ function IndividualSettingsModal({ onClose }) {
         <div className="flex items-center justify-between px-6 py-4 border-b border-border shrink-0">
           <h2 className="text-accent text-lg font-bold tracking-wide uppercase">Settings</h2>
           <div className="flex items-center gap-2">
-            <button className="p-1.5 rounded-lg text-textSecondary hover:text-textPrimary hover:bg-surfaceHover transition-colors" title="Reset all">
+            <button onClick={handleReset} className="p-1.5 rounded-lg text-textSecondary hover:text-red-400 hover:bg-surfaceHover transition-colors" title="Reset all individual settings">
               <RotateCcw size={16} />
             </button>
             <button
@@ -603,39 +759,54 @@ function IndividualSettingsModal({ onClose }) {
                   type="text"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search"
+                  placeholder="Search ticker…"
                   className="flex-1 px-3 py-2 text-sm rounded-lg bg-background border border-border text-textPrimary placeholder:text-textSecondary/50 focus:outline-none focus:border-accent/60"
                 />
-                <label className="flex items-center gap-2 text-sm text-textSecondary cursor-pointer select-none">
-                  <input type="checkbox" className="rounded border-border bg-background text-accent focus:ring-accent/50" />
+                <label className="flex items-center gap-2 text-sm text-textSecondary cursor-pointer select-none whitespace-nowrap">
+                  <input
+                    type="checkbox"
+                    checked={onlyChanged}
+                    onChange={(e) => setOnlyChanged(e.target.checked)}
+                    className="rounded border-border bg-background text-accent focus:ring-accent/50"
+                  />
                   Only changed
                 </label>
               </div>
 
               {/* Table */}
-              <div className="overflow-x-auto rounded-lg border border-red-500/30">
+              <div className="overflow-x-auto rounded-lg border border-border">
                 <table className="w-full text-sm">
                   <thead>
-                    <tr className="bg-red-500/10 border-b border-red-500/20">
-                      <th className="px-4 py-2.5 text-left text-xs font-semibold text-accent">Ticker</th>
-                      <th className="px-3 py-2.5 text-left text-xs font-semibold text-accent">Binance Futures</th>
-                      <th className="px-3 py-2.5 text-left text-xs font-semibold text-accent">Binance Spot</th>
-                      <th className="px-3 py-2.5 text-left text-xs font-semibold text-accent">Bybit Futures</th>
-                      <th className="px-3 py-2.5 text-left text-xs font-semibold text-accent">Bybit Spot</th>
-                      <th className="px-3 py-2.5 text-left text-xs font-semibold text-accent">OKX Futures</th>
-                      <th className="px-3 py-2.5 text-left text-xs font-semibold text-accent">OKX Spot</th>
+                    <tr className="bg-surfaceHover/50 border-b border-border">
+                      <th className="px-4 py-2.5 text-left text-xs font-semibold text-accent sticky left-0 bg-surfaceHover/50">Ticker</th>
+                      {EXCHANGES_MARKETS.map((em) => (
+                        <th key={`${em.exchange}_${em.market}`} className="px-3 py-2.5 text-center text-xs font-semibold text-accent whitespace-nowrap">
+                          {em.label}
+                        </th>
+                      ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {PREVIEW_TOKENS.filter(t => !search || t.ticker.toLowerCase().includes(search.toLowerCase())).map((token, i) => (
-                      <tr key={token.ticker} className={`border-b border-border/50 ${i % 2 === 0 ? 'bg-surface' : 'bg-surfaceHover/30'} hover:bg-surfaceHover/60 transition-colors`}>
-                        <td className="px-4 py-2.5 text-textSecondary font-medium">{token.ticker}</td>
-                        <td className="px-3 py-2.5"><span className={token.binanceFut !== '-' ? 'text-yellow-400 font-medium' : 'text-textSecondary/40'}>{token.binanceFut}</span></td>
-                        <td className="px-3 py-2.5"><span className={token.binanceSpot !== '-' ? 'text-yellow-400 font-medium' : 'text-textSecondary/40'}>{token.binanceSpot}</span></td>
-                        <td className="px-3 py-2.5"><span className={token.bybitFut !== '-' ? 'text-orange-400 font-medium' : 'text-textSecondary/40'}>{token.bybitFut}</span></td>
-                        <td className="px-3 py-2.5"><span className={token.bybitSpot !== '-' ? 'text-orange-400 font-medium' : 'text-textSecondary/40'}>{token.bybitSpot}</span></td>
-                        <td className="px-3 py-2.5"><span className={token.okxFut !== '-' ? 'text-blue-400 font-medium' : 'text-textSecondary/40'}>{token.okxFut}</span></td>
-                        <td className="px-3 py-2.5"><span className={token.okxSpot !== '-' ? 'text-blue-400 font-medium' : 'text-textSecondary/40'}>{token.okxSpot}</span></td>
+                    {!tokenSettingsLoaded ? (
+                      <tr><td colSpan={7} className="text-center py-8 text-textSecondary text-sm">Loading…</td></tr>
+                    ) : pageTickers.length === 0 ? (
+                      <tr><td colSpan={7} className="text-center py-8 text-textSecondary text-sm">No tickers found</td></tr>
+                    ) : pageTickers.map((ticker, i) => (
+                      <tr key={ticker} className={`border-b border-border/50 ${i % 2 === 0 ? 'bg-surface' : 'bg-surfaceHover/30'} hover:bg-surfaceHover/60 transition-colors`}>
+                        <td className="px-4 py-2 text-textSecondary font-medium text-xs sticky left-0 bg-inherit">{ticker}</td>
+                        {EXCHANGES_MARKETS.map((em) => {
+                          const key = `${ticker}|${em.exchange}|${em.market}`;
+                          const val = settingsMap.get(key) ?? null;
+                          return (
+                            <td key={`${em.exchange}_${em.market}`} className="px-3 py-1.5">
+                              <EditableCell
+                                value={val}
+                                color={em.color}
+                                onSave={(newVal) => handleCellSave(ticker, em.exchange, em.market, newVal)}
+                              />
+                            </td>
+                          );
+                        })}
                       </tr>
                     ))}
                   </tbody>
@@ -643,25 +814,31 @@ function IndividualSettingsModal({ onClose }) {
               </div>
 
               {/* Pagination */}
-              <div className="flex items-center justify-center gap-1 mt-4">
-                <button onClick={() => setPage(1)} disabled={page === 1} className="px-2 py-1 text-xs rounded border border-border text-textSecondary hover:text-textPrimary hover:bg-surfaceHover disabled:opacity-30 transition-colors">&laquo;</button>
-                <button onClick={() => setPage(Math.max(1, page - 1))} disabled={page === 1} className="px-2 py-1 text-xs rounded border border-border text-textSecondary hover:text-textPrimary hover:bg-surfaceHover disabled:opacity-30 transition-colors">&lsaquo;</button>
-                {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
-                  <button
-                    key={p}
-                    onClick={() => setPage(p)}
-                    className={`px-2.5 py-1 text-xs rounded border transition-colors ${
-                      p === page
-                        ? 'bg-accent/20 border-accent/50 text-accent font-semibold'
-                        : 'border-border text-textSecondary hover:text-textPrimary hover:bg-surfaceHover'
-                    }`}
-                  >
-                    {p}
-                  </button>
-                ))}
-                <button onClick={() => setPage(Math.min(totalPages, page + 1))} disabled={page === totalPages} className="px-2 py-1 text-xs rounded border border-border text-textSecondary hover:text-textPrimary hover:bg-surfaceHover disabled:opacity-30 transition-colors">&rsaquo;</button>
-                <button onClick={() => setPage(totalPages)} disabled={page === totalPages} className="px-2 py-1 text-xs rounded border border-border text-textSecondary hover:text-textPrimary hover:bg-surfaceHover disabled:opacity-30 transition-colors">&raquo;</button>
-              </div>
+              {totalPages > 1 && (
+                <div className="flex items-center justify-center gap-1 mt-4">
+                  <button onClick={() => setPage(1)} disabled={safePage === 1} className="px-2 py-1 text-xs rounded border border-border text-textSecondary hover:text-textPrimary hover:bg-surfaceHover disabled:opacity-30 transition-colors">&laquo;</button>
+                  <button onClick={() => setPage(Math.max(1, safePage - 1))} disabled={safePage === 1} className="px-2 py-1 text-xs rounded border border-border text-textSecondary hover:text-textPrimary hover:bg-surfaceHover disabled:opacity-30 transition-colors">&lsaquo;</button>
+                  {pageButtons.map((p) => (
+                    <button
+                      key={p}
+                      onClick={() => setPage(p)}
+                      className={`px-2.5 py-1 text-xs rounded border transition-colors ${
+                        p === safePage
+                          ? 'bg-accent/20 border-accent/50 text-accent font-semibold'
+                          : 'border-border text-textSecondary hover:text-textPrimary hover:bg-surfaceHover'
+                      }`}
+                    >
+                      {p}
+                    </button>
+                  ))}
+                  <button onClick={() => setPage(Math.min(totalPages, safePage + 1))} disabled={safePage === totalPages} className="px-2 py-1 text-xs rounded border border-border text-textSecondary hover:text-textPrimary hover:bg-surfaceHover disabled:opacity-30 transition-colors">&rsaquo;</button>
+                  <button onClick={() => setPage(totalPages)} disabled={safePage === totalPages} className="px-2 py-1 text-xs rounded border border-border text-textSecondary hover:text-textPrimary hover:bg-surfaceHover disabled:opacity-30 transition-colors">&raquo;</button>
+                </div>
+              )}
+
+              <p className="text-textSecondary/60 text-[11px] mt-3 text-center">
+                Click any cell to set a custom min wall size. Enter values like 500K, 1.5M, 50000.
+              </p>
             </div>
           )}
         </div>
