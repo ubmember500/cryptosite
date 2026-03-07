@@ -88,21 +88,21 @@ function WallRow({ wall }) {
 
   return (
     <div className={cn(
-      'flex items-center gap-1 px-1.5 py-[3px] text-[11px] leading-tight rounded transition-colors hover:bg-surfaceHover/50',
-      isBid ? 'border-l-2 border-l-green-500/60' : 'border-l-2 border-l-red-500/60',
+      'flex items-center gap-1.5 px-2 py-1 text-xs leading-snug rounded transition-colors hover:bg-surfaceHover/50',
+      isBid ? 'border-l-[3px] border-l-green-500/70' : 'border-l-[3px] border-l-red-500/70',
     )}>
       {/* Exchange + market badge */}
-      <span className={cn('px-1 py-px rounded text-[8px] font-bold border shrink-0 uppercase leading-none', badge.color)}>
+      <span className={cn('px-1 py-0.5 rounded text-[9px] font-bold border shrink-0 uppercase leading-none', badge.color)}>
         {badge.abbr} {marketLabel}
       </span>
 
       {/* Price */}
-      <span className="font-mono text-textSecondary shrink-0 text-[10px]">${formatPrice(wall.price)}</span>
+      <span className="font-mono text-textSecondary shrink-0 text-[11px]">${formatPrice(wall.price)}</span>
 
       {/* % from mid */}
       {pct != null && (
         <span className={cn(
-          'text-[9px] shrink-0',
+          'text-[10px] shrink-0',
           Math.abs(pct) <= 1 ? 'text-green-400' : Math.abs(pct) <= 3 ? 'text-yellow-400' : 'text-textSecondary/50',
         )}>
           {Math.abs(pct).toFixed(1)}%
@@ -114,7 +114,7 @@ function WallRow({ wall }) {
 
       {/* Volume */}
       <span className={cn(
-        'font-semibold shrink-0 text-[11px]',
+        'font-semibold shrink-0 text-xs',
         wall.volumeUSD >= 5_000_000 ? 'text-yellow-400' :
         wall.volumeUSD >= 1_000_000 ? 'text-textPrimary' : 'text-textSecondary',
       )}>
@@ -122,10 +122,10 @@ function WallRow({ wall }) {
       </span>
 
       {/* Age */}
-      <span className="text-textSecondary/50 shrink-0 text-[9px] w-7 text-right">
+      <span className="text-textSecondary/60 shrink-0 text-[10px] w-8 text-right">
         {formatAge(wall.wallAgeMs)}
         {isFresh && (
-          <span className="inline-block ml-px w-1 h-1 rounded-full bg-green-500 align-middle" />
+          <span className="inline-block ml-0.5 w-1.5 h-1.5 rounded-full bg-green-500 align-middle" />
         )}
       </span>
 
@@ -138,7 +138,7 @@ function WallRow({ wall }) {
           className="text-accent/40 hover:text-accent transition-colors shrink-0 hidden sm:inline"
           title={`Open on ${wall.exchange}`}
         >
-          <ExternalLink size={9} />
+          <ExternalLink size={11} />
         </a>
       )}
     </div>
@@ -162,16 +162,16 @@ function TokenCard({ symbol, walls, totalVolume }) {
   return (
     <div className="bg-surface border border-border rounded-lg overflow-hidden flex flex-col">
       {/* Card header */}
-      <div className="flex items-center justify-between px-2.5 py-1.5 bg-surfaceHover/40 border-b border-border">
-        <div className="flex items-center gap-1.5 min-w-0">
-          <span className="text-xs font-bold text-textPrimary truncate">{baseSymbol}</span>
-          <span className="text-[9px] text-textSecondary">{walls.length}</span>
+      <div className="flex items-center justify-between px-3 py-2 bg-surfaceHover/40 border-b border-border">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-sm font-bold text-textPrimary truncate">{baseSymbol}</span>
+          <span className="text-[10px] text-textSecondary">{walls.length}</span>
         </div>
-        <span className="text-[11px] font-semibold text-accent shrink-0">{formatUSD(totalVolume)}</span>
+        <span className="text-xs font-semibold text-accent shrink-0">{formatUSD(totalVolume)}</span>
       </div>
 
       {/* Walls list */}
-      <div className="flex-1 flex flex-col gap-0 p-0.5">
+      <div className="flex-1 flex flex-col gap-0 p-1">
         {sortedWalls.map((wall, i) => (
           <WallRow
             key={`${wall.exchange}-${wall.market}-${wall.side}-${wall.price}-${i}`}
@@ -257,8 +257,8 @@ const DensityCardGrid = () => {
     <div className="space-y-3">
       {/* Toolbar */}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3 text-xs text-textSecondary">
-          <span className="font-medium text-textPrimary">
+        <div className="flex items-center gap-3 text-sm text-textSecondary">
+          <span className="font-semibold text-textPrimary">
             {walls.length} {t('walls')} · {groups.length} {t('tokens')}
           </span>
 

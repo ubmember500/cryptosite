@@ -531,6 +531,34 @@ const EXCHANGES_MARKETS = [
 
 const PER_PAGE = 20;
 
+// Approximate market cap ranking for default sort order (top ~80+ coins).
+// Tickers not in this list get rank 999 and sort alphabetically after.
+const MCAP_RANK = {
+  BTC: 1, ETH: 2, USDT: 3, BNB: 4, SOL: 5, XRP: 6, USDC: 7, DOGE: 8, ADA: 9, TRX: 10,
+  AVAX: 11, LINK: 12, TON: 13, SHIB: 14, SUI: 15, XLM: 16, DOT: 17, HBAR: 18, BCH: 19, LTC: 20,
+  UNI: 21, NEAR: 22, APT: 23, PEPE: 24, ICP: 25, AAVE: 26, ETC: 27, RENDER: 28, FET: 29, MNT: 30,
+  FIL: 31, CRO: 32, STX: 33, IMX: 34, ARB: 35, ATOM: 36, OP: 37, TAO: 38, VET: 39, MKR: 40,
+  GRT: 41, INJ: 42, THETA: 43, FTM: 44, ALGO: 45, SEI: 46, JASMY: 47, ONDO: 48, LDO: 49, PYTH: 50,
+  TIA: 51, BONK: 52, FLOKI: 53, WIF: 54, JUP: 55, PENDLE: 56, RUNE: 57, ENS: 58, W: 59, ENA: 60,
+  DYDX: 61, WOO: 62, BLUR: 63, MINA: 64, FLOW: 65, AXS: 66, SAND: 67, MANA: 68, GALA: 69, APE: 70,
+  SNX: 71, '1INCH': 72, COMP: 73, CRV: 74, SUSHI: 75, YFI: 76, BAL: 77, ZRX: 78, KAVA: 79, CELO: 80,
+  '1000PEPE': 24, '1000SHIB': 14, '1000BONK': 52, '1000FLOKI': 53, '1000SATS': 81,
+  ORDI: 82, XAG: 83, XAU: 84, HYPE: 85, '1000CAT': 86,
+};
+
+// Suggested default sizes (USD) by market-cap tier — shown as dim placeholder so users
+// immediately understand "this is a $ wall size I can customize".
+function getSuggestedSize(ticker) {
+  const rank = MCAP_RANK[ticker] ?? 999;
+  if (rank <= 2)  return 50_000_000;  // BTC / ETH → $50M
+  if (rank <= 5)  return 10_000_000;  // Top 5 → $10M
+  if (rank <= 10) return 5_000_000;   // Top 10 → $5M
+  if (rank <= 20) return 2_000_000;   // Top 20 → $2M
+  if (rank <= 50) return 1_000_000;   // Top 50 → $1M
+  if (rank <= 100) return 500_000;    // Top 100 → $500K
+  return 300_000;                     // Others → $300K
+}
+
 function formatWallSize(val) {
   if (!val && val !== 0) return '-';
   if (val >= 1_000_000) return `${(val / 1_000_000).toFixed(val % 1_000_000 === 0 ? 0 : 2)}M`;
@@ -549,7 +577,7 @@ function parseWallInput(raw) {
   return Math.round(num * multiplier);
 }
 
-function EditableCell({ value, color, onSave }) {
+function EditableCell({ value, color, onSave, placeholder }) {
   const [editing, setEditing] = React.useState(false);
   const [draft, setDraft] = React.useState('');
   const inputRef = React.useRef(null);
@@ -583,7 +611,8 @@ function EditableCell({ value, color, onSave }) {
           if (e.key === 'Enter') commit();
           if (e.key === 'Escape') setEditing(false);
         }}
-        className="w-full px-1.5 py-0.5 text-xs rounded bg-background border border-accent/60 text-textPrimary focus:outline-none text-center"
+        placeholder={placeholder ? formatWallSize(placeholder) : ''}
+        className="w-full px-2 py-1 text-sm rounded bg-background border border-accent/60 text-textPrimary focus:outline-none text-center"
       />
     );
   }
@@ -591,9 +620,10 @@ function EditableCell({ value, color, onSave }) {
   return (
     <button
       onClick={startEdit}
-      className={`w-full text-center text-xs cursor-pointer hover:underline ${value ? `${color} font-medium` : 'text-textSecondary/40'}`}
+      className={`w-full text-center text-sm cursor-pointer hover:underline ${value ? `${color} font-medium` : 'text-textSecondary/20'}`}
+      title="Click to set min wall size"
     >
-      {value ? formatWallSize(value) : '-'}
+      {value ? formatWallSize(value) : (placeholder ? formatWallSize(placeholder) : '-')}
     </button>
   );
 }
@@ -632,7 +662,13 @@ function IndividualSettingsModal({ onClose }) {
     });
     // Also include tickers from existing settings (in case symbols haven't loaded yet)
     tokenSettings.forEach((s) => set.add(s.ticker));
-    return Array.from(set).sort();
+    // Sort by market cap rank (highest first), then alphabetical for unknowns
+    return Array.from(set).sort((a, b) => {
+      const ra = MCAP_RANK[a] ?? 999;
+      const rb = MCAP_RANK[b] ?? 999;
+      if (ra !== rb) return ra - rb;
+      return a.localeCompare(b);
+    });
   }, [symbols, tokenSettings]);
 
   // Build a lookup map: "TICKER|exchange|market" → minWallSize
@@ -696,7 +732,7 @@ function IndividualSettingsModal({ onClose }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
       <div
-        className="bg-surface border border-border rounded-2xl shadow-2xl w-full max-w-[900px] mx-4 max-h-[85vh] overflow-hidden flex flex-col"
+        className="bg-surface border border-border rounded-2xl shadow-2xl w-full max-w-[960px] mx-4 max-h-[85vh] overflow-hidden flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -719,7 +755,7 @@ function IndividualSettingsModal({ onClose }) {
         <div className="flex border-b border-border shrink-0">
           <button
             onClick={() => setActiveTab('main')}
-            className={`flex-1 px-4 py-3 text-sm font-medium transition-colors border-b-2 ${
+            className={`flex-1 px-4 py-3.5 text-sm font-semibold transition-colors border-b-2 ${
               activeTab === 'main'
                 ? 'text-accent border-accent'
                 : 'text-textSecondary border-transparent hover:text-textPrimary'
@@ -732,7 +768,7 @@ function IndividualSettingsModal({ onClose }) {
           </button>
           <button
             onClick={() => setActiveTab('individual')}
-            className={`flex-1 px-4 py-3 text-sm font-medium transition-colors border-b-2 ${
+            className={`flex-1 px-4 py-3.5 text-sm font-semibold transition-colors border-b-2 ${
               activeTab === 'individual'
                 ? 'text-accent border-accent'
                 : 'text-textSecondary border-transparent hover:text-textPrimary'
@@ -775,12 +811,12 @@ function IndividualSettingsModal({ onClose }) {
 
               {/* Table */}
               <div className="overflow-x-auto rounded-lg border border-border">
-                <table className="w-full text-sm">
+                <table className="w-full">
                   <thead>
                     <tr className="bg-surfaceHover/50 border-b border-border">
-                      <th className="px-4 py-2.5 text-left text-xs font-semibold text-accent sticky left-0 bg-surfaceHover/50">Ticker</th>
+                      <th className="px-4 py-3 text-left text-sm font-semibold text-accent sticky left-0 bg-surfaceHover/50">Ticker</th>
                       {EXCHANGES_MARKETS.map((em) => (
-                        <th key={`${em.exchange}_${em.market}`} className="px-3 py-2.5 text-center text-xs font-semibold text-accent whitespace-nowrap">
+                        <th key={`${em.exchange}_${em.market}`} className="px-3 py-3 text-center text-xs font-semibold text-accent whitespace-nowrap">
                           {em.label}
                         </th>
                       ))}
@@ -791,38 +827,42 @@ function IndividualSettingsModal({ onClose }) {
                       <tr><td colSpan={7} className="text-center py-8 text-textSecondary text-sm">Loading…</td></tr>
                     ) : pageTickers.length === 0 ? (
                       <tr><td colSpan={7} className="text-center py-8 text-textSecondary text-sm">No tickers found</td></tr>
-                    ) : pageTickers.map((ticker, i) => (
-                      <tr key={ticker} className={`border-b border-border/50 ${i % 2 === 0 ? 'bg-surface' : 'bg-surfaceHover/30'} hover:bg-surfaceHover/60 transition-colors`}>
-                        <td className="px-4 py-2 text-textSecondary font-medium text-xs sticky left-0 bg-inherit">{ticker}</td>
-                        {EXCHANGES_MARKETS.map((em) => {
-                          const key = `${ticker}|${em.exchange}|${em.market}`;
-                          const val = settingsMap.get(key) ?? null;
-                          return (
-                            <td key={`${em.exchange}_${em.market}`} className="px-3 py-1.5">
-                              <EditableCell
-                                value={val}
-                                color={em.color}
-                                onSave={(newVal) => handleCellSave(ticker, em.exchange, em.market, newVal)}
-                              />
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    ))}
+                    ) : pageTickers.map((ticker, i) => {
+                      const suggested = getSuggestedSize(ticker);
+                      return (
+                        <tr key={ticker} className={`border-b border-border/50 ${i % 2 === 0 ? 'bg-surface' : 'bg-surfaceHover/30'} hover:bg-surfaceHover/60 transition-colors`}>
+                          <td className="px-4 py-2.5 text-textPrimary font-semibold text-sm sticky left-0 bg-inherit">{ticker}</td>
+                          {EXCHANGES_MARKETS.map((em) => {
+                            const key = `${ticker}|${em.exchange}|${em.market}`;
+                            const val = settingsMap.get(key) ?? null;
+                            return (
+                              <td key={`${em.exchange}_${em.market}`} className="px-3 py-2">
+                                <EditableCell
+                                  value={val}
+                                  color={em.color}
+                                  placeholder={suggested}
+                                  onSave={(newVal) => handleCellSave(ticker, em.exchange, em.market, newVal)}
+                                />
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
 
               {/* Pagination */}
               {totalPages > 1 && (
-                <div className="flex items-center justify-center gap-1 mt-4">
-                  <button onClick={() => setPage(1)} disabled={safePage === 1} className="px-2 py-1 text-xs rounded border border-border text-textSecondary hover:text-textPrimary hover:bg-surfaceHover disabled:opacity-30 transition-colors">&laquo;</button>
-                  <button onClick={() => setPage(Math.max(1, safePage - 1))} disabled={safePage === 1} className="px-2 py-1 text-xs rounded border border-border text-textSecondary hover:text-textPrimary hover:bg-surfaceHover disabled:opacity-30 transition-colors">&lsaquo;</button>
+                <div className="flex items-center justify-center gap-1.5 mt-4">
+                  <button onClick={() => setPage(1)} disabled={safePage === 1} className="px-2.5 py-1.5 text-sm rounded border border-border text-textSecondary hover:text-textPrimary hover:bg-surfaceHover disabled:opacity-30 transition-colors">&laquo;</button>
+                  <button onClick={() => setPage(Math.max(1, safePage - 1))} disabled={safePage === 1} className="px-2.5 py-1.5 text-sm rounded border border-border text-textSecondary hover:text-textPrimary hover:bg-surfaceHover disabled:opacity-30 transition-colors">&lsaquo;</button>
                   {pageButtons.map((p) => (
                     <button
                       key={p}
                       onClick={() => setPage(p)}
-                      className={`px-2.5 py-1 text-xs rounded border transition-colors ${
+                      className={`px-3 py-1.5 text-sm rounded border transition-colors ${
                         p === safePage
                           ? 'bg-accent/20 border-accent/50 text-accent font-semibold'
                           : 'border-border text-textSecondary hover:text-textPrimary hover:bg-surfaceHover'
@@ -831,13 +871,13 @@ function IndividualSettingsModal({ onClose }) {
                       {p}
                     </button>
                   ))}
-                  <button onClick={() => setPage(Math.min(totalPages, safePage + 1))} disabled={safePage === totalPages} className="px-2 py-1 text-xs rounded border border-border text-textSecondary hover:text-textPrimary hover:bg-surfaceHover disabled:opacity-30 transition-colors">&rsaquo;</button>
-                  <button onClick={() => setPage(totalPages)} disabled={safePage === totalPages} className="px-2 py-1 text-xs rounded border border-border text-textSecondary hover:text-textPrimary hover:bg-surfaceHover disabled:opacity-30 transition-colors">&raquo;</button>
+                  <button onClick={() => setPage(Math.min(totalPages, safePage + 1))} disabled={safePage === totalPages} className="px-2.5 py-1.5 text-sm rounded border border-border text-textSecondary hover:text-textPrimary hover:bg-surfaceHover disabled:opacity-30 transition-colors">&rsaquo;</button>
+                  <button onClick={() => setPage(totalPages)} disabled={safePage === totalPages} className="px-2.5 py-1.5 text-sm rounded border border-border text-textSecondary hover:text-textPrimary hover:bg-surfaceHover disabled:opacity-30 transition-colors">&raquo;</button>
                 </div>
               )}
 
-              <p className="text-textSecondary/60 text-[11px] mt-3 text-center">
-                Click any cell to set a custom min wall size. Enter values like 500K, 1.5M, 50000.
+              <p className="text-textSecondary/60 text-xs mt-3 text-center">
+                Set the <span className="text-accent">minimum wall size</span> (in USD) per token per exchange. Dim values are suggested defaults — click any cell to customize.
               </p>
             </div>
           )}
