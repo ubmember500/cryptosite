@@ -29,11 +29,13 @@ const MARKET_CONFIG = {
     wsURL: 'wss://stream.bybit.com/v5/public/linear',
     category: 'linear',
     label: 'BybitWS:futures',
+    bookDepth: 200,         // orderbook.200 — 200 levels per side for deep wall detection
   },
   spot: {
     wsURL: 'wss://stream.bybit.com/v5/public/spot',
     category: 'spot',
     label: 'BybitWS:spot',
+    bookDepth: 50,          // orderbook.50 — spot only supports 50-level books
   },
 };
 
@@ -242,10 +244,13 @@ class BybitWsScanner {
   }
 
   /**
-   * Subscribe to orderbook.50 for all symbols, in batches of 10.
+   * Subscribe to orderbook streams for all symbols, in batches of 10.
+   * Futures uses orderbook.200 (200 levels) for deep wall detection.
+   * Spot uses orderbook.50 (max supported by Bybit spot WS).
    */
   _subscribeAll() {
-    const topics = this.symbols.map(s => `orderbook.50.${s}`);
+    const depth = this.cfg.bookDepth || 50;
+    const topics = this.symbols.map(s => `orderbook.${depth}.${s}`);
 
     for (let i = 0; i < topics.length; i += SUBSCRIBE_BATCH) {
       const batch = topics.slice(i, i + SUBSCRIBE_BATCH);
@@ -265,7 +270,7 @@ class BybitWsScanner {
    * Process an order book WebSocket message (snapshot or delta).
    */
   _handleOrderBookMessage(msg) {
-    // topic: "orderbook.50.BTCUSDT"
+    // topic: "orderbook.{depth}.BTCUSDT" (e.g. orderbook.200.BTCUSDT or orderbook.50.BTCUSDT)
     const parts = msg.topic.split('.');
     const symbol = parts[2];
     if (!symbol) return;

@@ -86,7 +86,7 @@ class OkxFastScanner {
    * OKX levels are 4-element arrays: [price, size, deprecated, numOrders]
    * We only use the first two elements.
    */
-  async fetchOrderBook(instId, limit = 50) {
+  async fetchOrderBook(instId, limit = 400) {
     const cacheKey = `${instId}_${limit}`;
     const cached = this.orderBookCache.get(cacheKey);
 

@@ -5,15 +5,15 @@ import api from '../services/api';
 const DEFAULT_FILTERS = {
   exchanges: ['binance', 'bybit', 'okx'],
   markets: ['futures'],
-  minVolume: 300000,
+  minVolume: 100000,    // $100K — lower default to surface more walls (matches stakan.live coverage)
   side: 'Both',
   symbols: [],          // empty = all symbols
   hiddenSymbols: [],    // tokens to exclude from results
   minAge: 0,            // seconds — 0 = no minimum
-  maxDistFromMid: 10,   // percent
+  maxDistFromMid: 15,   // percent — wider default shows walls further from spread
   sort: 'volumeUSD',
   order: 'desc',
-  limit: 500,
+  limit: 1000,          // higher limit to accommodate deeper scanning results
 };
 
 const PRESETS_STORAGE_KEY = 'density-screener-presets';

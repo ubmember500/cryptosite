@@ -15,9 +15,9 @@ const { OkxFastScanner } = require('./okxFastScanner');
 const { WallTracker } = require('./wallTracker');
 
 // Default scan settings (server-wide, not per-user)
-const DEFAULT_DEPTH = 5;            // 5% from mid
+const DEFAULT_DEPTH = 10;           // 10% from mid — wider scan catches walls that stakan.live shows at 5-10% from spread
 const DEFAULT_MIN_WALL_SIZE = 50000; // $50K minimum — low threshold, filtering is done per-user request
-const DEFAULT_RADIUS = 20;          // group levels within 1% of each other — captures distributed liquidity zones like ASTER
+const DEFAULT_RADIUS = 10;          // group levels within 0.5% of each other — tighter grouping preserves distinct nearby walls
 
 // How often each exchange rescans (milliseconds)
 const SCAN_INTERVALS = {
