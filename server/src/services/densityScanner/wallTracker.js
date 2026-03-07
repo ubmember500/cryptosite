@@ -274,8 +274,15 @@ class WallTracker {
 
   /**
    * Restore wall state from the database on startup.
-   * Walls that are older than STALE_WALL_TTL_MS are discarded.
-   * Wall ages are preserved — firstSeenAt timestamps are restored.
+   *
+   * Critical for wall age accuracy: we restore ALL walls from the snapshot
+   * and set their lastSeenAt = now so they survive until the next scan
+   * cycle can re-confirm them. The original firstSeenAt is preserved,
+   * so wall age (how long the density has been present) accumulates
+   * correctly across server restarts and deploys.
+   *
+   * Walls that no longer exist in the order book will naturally expire
+   * after STALE_WALL_TTL_MS once scanning resumes and fails to re-confirm them.
    */
   async restoreFromDB() {
     let prisma;
@@ -310,9 +317,11 @@ class WallTracker {
       const now = Date.now();
       const ageOfSnapshot = now - savedAt;
 
-      // If the snapshot is extremely old (>1 hour), ignore it
-      if (ageOfSnapshot > 60 * 60 * 1000) {
-        console.log('[WallTracker] Saved state is >1h old, ignoring');
+      // Accept snapshots up to 24 hours old — wall ages are valuable data.
+      // Walls that no longer exist will be cleaned up by STALE_WALL_TTL_MS
+      // after the next scan cycle fails to re-confirm them.
+      if (ageOfSnapshot > 24 * 60 * 60 * 1000) {
+        console.log('[WallTracker] Saved state is >24h old, ignoring');
         return;
       }
 
@@ -324,21 +333,21 @@ class WallTracker {
       }
 
       let restored = 0;
-      let skipped = 0;
 
       for (const [key, record] of entries) {
-        // Skip walls that haven't been seen in STALE_WALL_TTL_MS
-        if (now - record.lastSeenAt > STALE_WALL_TTL_MS) {
-          skipped++;
-          continue;
-        }
+        // Preserve the original firstSeenAt (real wall age) but set
+        // lastSeenAt = now so restored walls get a grace period to be
+        // re-confirmed by the next scan cycle. Without this, all walls
+        // would immediately be evicted as "stale" since lastSeenAt
+        // is from before the restart.
+        record.lastSeenAt = now;
         this.activeWalls.set(key, record);
         restored++;
       }
 
       console.log(
         `[WallTracker] Restored ${restored} walls from DB ` +
-        `(${skipped} stale, snapshot age: ${Math.round(ageOfSnapshot / 1000)}s)`
+        `(snapshot age: ${Math.round(ageOfSnapshot / 1000)}s)`
       );
     } catch (err) {
       console.error('[WallTracker] Restore from DB failed:', err.message);

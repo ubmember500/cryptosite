@@ -20,7 +20,7 @@ const densityScannerService = require('../services/densityScanner');
  *   symbols     — comma-separated symbol filter, e.g. BTCUSDT,ETHUSDT (optional — all if empty)
  *   excludeSymbols — comma-separated symbols to HIDE, e.g. BTCUSDT,ETHUSDT (optional)
  *   minAge      — minimum wall age in seconds (default: 0)
- *   maxDistFromMid — maximum |percentFromMid| (default: 20)
+ *   maxDistFromMid — maximum |percentFromMid| (default: 10)
  *   depth       — not used for filtering (scanning uses server default), but kept for compatibility
  *   sort        — field to sort by: volumeUSD, wallAgeMs, percentFromMid (default: volumeUSD)
  *   order       — asc or desc (default: desc)
@@ -55,7 +55,7 @@ async function getWalls(req, res, next) {
     const minAgeSeconds = parseInt(req.query.minAge) || 0;
     const minAgeMs = minAgeSeconds * 1000;
     
-    const maxDistFromMid = parseFloat(req.query.maxDistFromMid) || 20;
+    const maxDistFromMid = parseFloat(req.query.maxDistFromMid) || 10;
     
     const sortField = req.query.sort || 'volumeUSD';
     const sortOrder = (req.query.order || 'desc').toLowerCase();

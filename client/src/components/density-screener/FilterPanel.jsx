@@ -447,9 +447,9 @@ export default function FilterPanel() {
           <input
             type="range"
             min={0.5}
-            max={20}
+            max={10}
             step={0.5}
-            value={filters.maxDistFromMid || 15}
+            value={filters.maxDistFromMid || 10}
             onChange={(e) => handleFilterChange('maxDistFromMid', parseFloat(e.target.value))}
             className="flex-1 h-1.5 rounded-full appearance-none bg-surfaceHover accent-accent cursor-pointer
               [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-thumb]:h-3.5
@@ -457,7 +457,7 @@ export default function FilterPanel() {
               [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer"
           />
           <span className="text-xs font-mono text-textPrimary min-w-[3rem] text-right">
-            {(filters.maxDistFromMid || 15).toFixed(1)}%
+            {(filters.maxDistFromMid || 10).toFixed(1)}%
           </span>
         </div>
       </div>

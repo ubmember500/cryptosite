@@ -10,7 +10,7 @@ const DEFAULT_FILTERS = {
   symbols: [],          // empty = all symbols
   hiddenSymbols: [],    // tokens to exclude from results
   minAge: 0,            // seconds — 0 = no minimum
-  maxDistFromMid: 15,   // percent — wider default shows walls further from spread
+  maxDistFromMid: 10,   // percent
   sort: 'volumeUSD',
   order: 'desc',
   limit: 1000,          // higher limit to accommodate deeper scanning results
