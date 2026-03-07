@@ -189,7 +189,7 @@ export default function FilterPanel() {
   };
 
   const panelContent = (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-2.5">
       {/* Exchange selector */}
       <div>
         <SectionLabel>Exchange</SectionLabel>
@@ -502,10 +502,10 @@ export default function FilterPanel() {
       )}
 
       {/* Desktop sidebar */}
-      <div className="hidden md:block bg-surface rounded-xl border border-border p-4">
-        <div className="flex items-center gap-1.5 mb-3">
-          <SlidersHorizontal size={14} className="text-accent" />
-          <span className="text-sm font-semibold text-textPrimary">Filters</span>
+      <div className="hidden md:block bg-surface rounded-xl border border-border p-3">
+        <div className="flex items-center gap-1.5 mb-2.5">
+          <SlidersHorizontal size={13} className="text-accent" />
+          <span className="text-xs font-semibold text-textPrimary uppercase tracking-wide">Filters</span>
         </div>
         {panelContent}
       </div>

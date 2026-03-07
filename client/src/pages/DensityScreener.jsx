@@ -22,32 +22,23 @@ const DensityScreener = () => {
   }, [fetchSymbols, startPolling, stopPolling]);
 
   return (
-    <div className="min-h-[100dvh] bg-background app-page md:px-6 md:py-6">
-      <div className="mx-auto w-full max-w-[1700px]">
+    <div className="min-h-[100dvh] bg-background app-page md:px-4 md:py-4">
+      <div className="mx-auto w-full max-w-[1800px]">
         {/* Header */}
-        <div className="mb-4 px-4 md:px-0">
-          <h1 className="text-textPrimary text-xl md:text-2xl font-bold">
+        <div className="mb-3 px-4 md:px-0 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <h1 className="text-textPrimary text-lg md:text-xl font-bold">
             Density Screener
           </h1>
-          <p className="text-textSecondary text-sm mt-1">
-            Find large order book walls across Binance, Bybit, and OKX.
-            Customize filters to discover significant bid/ask density levels.
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-500/20 text-yellow-300 font-bold uppercase">Beta</span>
+          <p className="text-textSecondary text-xs basis-full md:basis-auto">
+            Order book walls across Binance, Bybit &amp; OKX
           </p>
         </div>
 
-        {/* Beta banner */}
-        <div className="mx-4 md:mx-0 mb-4 px-4 py-2.5 rounded-lg bg-yellow-500/10 border border-yellow-500/30">
-          <p className="text-yellow-400 text-xs font-medium">
-            <span className="inline-block px-1.5 py-0.5 rounded bg-yellow-500/20 text-yellow-300 text-[10px] font-bold uppercase mr-2">Beta</span>
-            This feature is in beta. Wall detection accuracy and coverage are being actively improved.
-            If you don&apos;t see expected walls, try adjusting &quot;Min Wall Age&quot; to &quot;Any&quot; and &quot;Max Distance&quot; to 5%+.
-          </p>
-        </div>
-
-        {/* Main layout: sidebar + table */}
-        <div className="flex flex-col md:flex-row gap-4 px-4 md:px-0">
+        {/* Main layout: sidebar + card grid */}
+        <div className="flex flex-col md:flex-row gap-3 px-4 md:px-0">
           {/* Filter sidebar */}
-          <div className="md:w-[260px] md:min-w-[260px] md:shrink-0">
+          <div className="md:w-[240px] md:min-w-[240px] md:shrink-0">
             <FilterPanel />
           </div>
 
