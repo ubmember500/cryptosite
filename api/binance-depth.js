@@ -46,6 +46,7 @@ const FALLBACK_FUTURES = [
   'ENAUSDT','PENDLEUSDT','RUNEUSDT','LDOUSDT','HBARUSDT','VETUSDT','ALGOUSDT',
   'XLMUSDT','ATOMUSDT','FTMUSDT','WIFUSDT','XAGUSDT','ASTERUSDT','HOMEUSDT',
   'XMRUSDT','BONKUSDT','GALAUSDT','SANDUSDT','MANAUSDT','AXSUSDT','APEUSDT',
+  'ZECUSDT','ETCUSDT','XAUUSDT','HYPEUSDT','COMPUSDT','CRVUSDT','DYDXUSDT',
 ];
 
 const FALLBACK_SPOT = [
@@ -57,6 +58,7 @@ const FALLBACK_SPOT = [
   'GRTUSDT','THETAUSDT','IMXUSDT','SNXUSDT','MATICUSDT','TONUSDT','KASUSDT',
   'ENAUSDT','PENDLEUSDT','RUNEUSDT','LDOUSDT','HBARUSDT','VETUSDT','ALGOUSDT',
   'XLMUSDT','ATOMUSDT','FTMUSDT','WIFUSDT','BONKUSDT','GALAUSDT','SANDUSDT',
+  'ZECUSDT','ETCUSDT','XAUUSDT','HYPEUSDT','COMPUSDT','CRVUSDT','DYDXUSDT',
 ];
 
 /**
@@ -194,17 +196,22 @@ export default async function handler(req, res) {
     return res.status(200).json({ market, books: {}, symbols: [], symbolCount: 0, ts: Date.now() });
   }
 
-  // Fetch all order books in parallel
+  // Fetch all order books in sub-batches of 30 to avoid overwhelming
+  // Binance and causing silent drops under load
   const books = {};
+  const SUB_BATCH = 30;
 
-  await Promise.allSettled(
-    symbols.map(async (symbol) => {
-      const data = await fetchJSON(bases, `/depth?symbol=${symbol}&limit=${limit}`, 5000, errors);
-      if (data && (data.bids || data.asks)) {
-        books[symbol] = { bids: data.bids || [], asks: data.asks || [] };
-      }
-    })
-  );
+  for (let i = 0; i < symbols.length; i += SUB_BATCH) {
+    const batch = symbols.slice(i, i + SUB_BATCH);
+    await Promise.allSettled(
+      batch.map(async (symbol) => {
+        const data = await fetchJSON(bases, `/depth?symbol=${symbol}&limit=${limit}`, 5000, errors);
+        if (data && (data.bids || data.asks)) {
+          books[symbol] = { bids: data.bids || [], asks: data.asks || [] };
+        }
+      })
+    );
+  }
 
   const elapsed = Date.now() - startTime;
 

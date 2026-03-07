@@ -558,7 +558,8 @@ const STABLECOINS = new Set([
 // Exact values from the reference settings (stakan.live).
 // Key format: "TICKER|exchange|market" → USD value.
 // Only tokens with explicit defaults are listed; others show "-".
-const TOKEN_DEFAULTS = {
+// Exported for use in DensityCardGrid filtering (per-exchange granularity).
+export const TOKEN_DEFAULTS = {
   // ── 4 ──
   '4|binance|futures': 350_000,
   '4|bybit|futures':   450_000,

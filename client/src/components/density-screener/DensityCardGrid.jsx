@@ -4,6 +4,7 @@ import { useDensityScreenerStore } from '../../store/densityScreenerStore';
 import { cn } from '../../utils/cn';
 import { Download, ExternalLink, Loader2 } from 'lucide-react';
 import TOKEN_THRESHOLDS from '../../config/tokenThresholds';
+import { TOKEN_DEFAULTS } from './FilterPanel';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -263,9 +264,13 @@ const DensityCardGrid = () => {
       if (isStablecoin(wall.symbol)) continue; // skip stablecoins
 
       // ── Per-token minimum threshold filtering ──
+      // Priority: user DB settings → TOKEN_DEFAULTS (per-exchange/market) → TOKEN_THRESHOLDS (flat)
       const baseTicker = wall.symbol.replace(/(USDT|USDC|USD)$/i, '');
       const userKey = `${baseTicker}|${wall.exchange}|${wall.market}`;
-      const minSize = userThresholds.get(userKey) ?? TOKEN_THRESHOLDS[baseTicker] ?? 0;
+      const minSize = userThresholds.get(userKey)
+        ?? TOKEN_DEFAULTS[userKey]          // per-exchange/market granularity
+        ?? TOKEN_THRESHOLDS[baseTicker]      // flat per-token fallback
+        ?? 0;
       if (minSize > 0 && (wall.volumeUSD || 0) < minSize) continue; // below threshold
 
       const key = wall.symbol;

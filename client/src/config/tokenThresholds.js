@@ -3,115 +3,120 @@
 // This prevents "density spam" on high-cap tokens with extremely liquid order
 // books — only genuinely large walls are shown.
 //
-// Rationale: BTC's order book routinely has $5-10M levels that are noise, while
-// for a small-cap token $500K can be a meaningful wall.  These defaults reflect
-// typical order-book depth and are designed so only **above-average** walls for
-// each token appear in the density screener.
+// These are the **generic fallback** thresholds — applied when neither the user
+// has a saved Individual Setting nor a TOKEN_DEFAULTS per-exchange entry exists.
 //
-// Users can override any of these via Individual Settings (per-user DB records).
+// VALUES ARE CALIBRATED conservatively so legitimate walls are NOT hidden:
+//   - Real BTC walls on Binance futures are typically $3-20M
+//   - On Bybit/OKX the same token has 3-5x thinner books
+//   - Hence these are set to ~2-3x the typical single-level noise floor
+//
+// For per-exchange precision, use TOKEN_DEFAULTS in FilterPanel.jsx or the
+// Individual Settings modal. Users can override any of these via their account.
 // ---------------------------------------------------------------------------
 
 const TOKEN_THRESHOLDS = {
-  // ── Tier 1: Ultra-liquid, only mega walls ─────────────────
-  BTC:  50_000_000,     // $50M – massive books, only show true whales
-  ETH:  30_000_000,     // $30M – second most liquid
+  // ── Tier 1: Ultra-liquid ──────────────────────────────────
+  BTC:  4_000_000,      // $4M – BTC books are massive, $4M+ is meaningful
+  ETH:  2_000_000,      // $2M – second most liquid
 
   // ── Tier 2: Major alts with deep books ────────────────────
-  BNB:  15_000_000,     // $15M
-  SOL:  15_000_000,     // $15M – very active futures & spot
+  BNB:  1_500_000,      // $1.5M
+  SOL:  1_500_000,      // $1.5M
 
   // ── Tier 3: Top 10 by market cap ──────────────────────────
-  XRP:   7_000_000,     // $7M
-  DOGE:  5_000_000,     // $5M – meme king, surprisingly liquid
-  ADA:   4_000_000,     // $4M
-  TRX:   4_000_000,     // $4M
+  XRP:    800_000,      // $800K
+  DOGE:   700_000,      // $700K – meme king, liquid
+  ADA:    600_000,      // $600K
+  TRX:    500_000,      // $500K
 
-  // ── Tier 4: Top 15-20, solid liquidity ────────────────────
-  AVAX:  3_000_000,     // $3M
-  LINK:  3_000_000,     // $3M – major DeFi / oracle
-  TON:   3_000_000,     // $3M
-  SHIB:  3_000_000,     // $3M
-  '1000SHIB': 3_000_000,
-  SUI:   3_000_000,     // $3M
-  BCH:   3_000_000,     // $3M – BTC fork, liquid
-  ETC:   3_000_000,     // $3M – user specified
+  // ── Tier 4: Top 15-25, solid liquidity ────────────────────
+  AVAX:   500_000,      // $500K
+  LINK:   500_000,      // $500K
+  TON:    500_000,      // $500K
+  SHIB:   500_000,      // $500K
+  '1000SHIB': 500_000,
+  SUI:    500_000,      // $500K
+  BCH:    500_000,      // $500K
+  ETC:    400_000,      // $400K
+  XLM:    400_000,      // $400K
+  DOT:    400_000,      // $400K
+  HBAR:   400_000,      // $400K
+  LTC:    400_000,      // $400K
 
-  // ── Tier 5: Top 20-30, established projects ───────────────
-  XLM:   2_000_000,     // $2M
-  DOT:   2_000_000,     // $2M
-  HBAR:  2_000_000,     // $2M
-  LTC:   2_000_000,     // $2M
-  UNI:   2_000_000,     // $2M – major DEX
-  NEAR:  2_000_000,     // $2M
-  APT:   2_000_000,     // $2M
-  PEPE:  2_000_000,     // $2M
-  '1000PEPE': 2_000_000,
-  ICP:   2_000_000,     // $2M
-  AAVE:  2_000_000,     // $2M – DeFi blue chip
-  HYPE:  2_000_000,     // $2M
-  RENDER: 2_000_000,    // $2M – AI/GPU
-  FET:   2_000_000,     // $2M – AI
+  // ── Tier 5: Top 25-50, established projects ───────────────
+  UNI:    300_000,      // $300K
+  NEAR:   300_000,      // $300K
+  APT:    300_000,      // $300K
+  PEPE:   300_000,      // $300K
+  '1000PEPE': 300_000,
+  ICP:    300_000,      // $300K
+  AAVE:   300_000,      // $300K
+  HYPE:   300_000,      // $300K
+  RENDER: 300_000,      // $300K
+  FET:    300_000,      // $300K
+  MNT:    250_000,      // $250K
+  FIL:    250_000,      // $250K
+  ARB:    250_000,      // $250K
+  ATOM:   250_000,      // $250K
+  OP:     250_000,      // $250K
+  TAO:    250_000,      // $250K
+  MKR:    250_000,      // $250K
+  CRO:    250_000,      // $250K
+  STX:    250_000,      // $250K
+  IMX:    250_000,      // $250K
 
-  // ── Tier 6: Top 30-50, moderate liquidity ─────────────────
-  MNT:   1_500_000,     // $1.5M
-  FIL:   1_500_000,     // $1.5M
-  ARB:   1_500_000,     // $1.5M – L2
-  ATOM:  1_500_000,     // $1.5M – Cosmos hub
-  OP:    1_500_000,     // $1.5M – L2
-  TAO:   1_500_000,     // $1.5M – AI
-  MKR:   1_500_000,     // $1.5M – DeFi OG
-  CRO:   1_500_000,     // $1.5M
-  STX:   1_500_000,     // $1.5M – Bitcoin L2
-  IMX:   1_500_000,     // $1.5M – Gaming L2
-
-  // ── Tier 7: Top 50-80 ────────────────────────────────────
-  VET:   1_000_000,     // $1M
-  GRT:   1_000_000,     // $1M
-  INJ:   1_000_000,     // $1M
-  THETA: 1_000_000,     // $1M
-  FTM:   1_000_000,     // $1M (Sonic)
-  ALGO:  1_000_000,     // $1M
-  SEI:   1_000_000,     // $1M
-  JASMY: 1_000_000,     // $1M
-  ONDO:  1_000_000,     // $1M – RWA
-  LDO:   1_000_000,     // $1M – Lido
-  PYTH:  1_000_000,     // $1M
-  TIA:   1_000_000,     // $1M – Celestia
-  BONK:  1_000_000,     // $1M
-  '1000BONK': 1_000_000,
-  FLOKI: 1_000_000,     // $1M
-  '1000FLOKI': 1_000_000,
-  WIF:   1_000_000,     // $1M
-  JUP:   1_000_000,     // $1M
-  PENDLE: 1_000_000,    // $1M
-  RUNE:  1_000_000,     // $1M – THORChain
-  ENS:   1_000_000,     // $1M
-  ENA:   1_000_000,     // $1M – Ethena
-  DYDX:  1_000_000,     // $1M
-  W:     1_000_000,     // $1M – Wormhole
-  BLUR:  1_000_000,     // $1M
-  MINA:  1_000_000,     // $1M
-  FLOW:  1_000_000,     // $1M
-  AXS:   1_000_000,     // $1M
-  SAND:  1_000_000,     // $1M
-  MANA:  1_000_000,     // $1M
-  GALA:  1_000_000,     // $1M
-  APE:   1_000_000,     // $1M
-  SNX:   1_000_000,     // $1M
-  '1INCH': 1_000_000,   // $1M
-  COMP:  1_000_000,     // $1M
-  CRV:   1_000_000,     // $1M
-  SUSHI: 1_000_000,     // $1M
-  YFI:   1_000_000,     // $1M
-  KAVA:  1_000_000,     // $1M
-  CELO:  1_000_000,     // $1M
-  ORDI:  1_000_000,     // $1M
-  '1000SATS': 1_000_000,
-  '1000CAT': 1_000_000,
+  // ── Tier 6: Top 50-80 ────────────────────────────────────
+  VET:    200_000,      // $200K
+  GRT:    200_000,      // $200K
+  INJ:    200_000,      // $200K
+  THETA:  200_000,      // $200K
+  FTM:    200_000,      // $200K (Sonic)
+  ALGO:   200_000,      // $200K
+  SEI:    200_000,      // $200K
+  JASMY:  200_000,      // $200K
+  ONDO:   200_000,      // $200K
+  LDO:    200_000,      // $200K
+  PYTH:   200_000,      // $200K
+  TIA:    200_000,      // $200K
+  BONK:   200_000,      // $200K
+  '1000BONK': 200_000,
+  FLOKI:  200_000,      // $200K
+  '1000FLOKI': 200_000,
+  WIF:    200_000,      // $200K
+  JUP:    200_000,      // $200K
+  PENDLE: 200_000,      // $200K
+  RUNE:   200_000,      // $200K
+  ENS:    200_000,      // $200K
+  ENA:    200_000,      // $200K
+  DYDX:   200_000,      // $200K
+  W:      200_000,      // $200K
+  BLUR:   200_000,      // $200K
+  MINA:   200_000,      // $200K
+  FLOW:   200_000,      // $200K
+  AXS:    200_000,      // $200K
+  SAND:   200_000,      // $200K
+  MANA:   200_000,      // $200K
+  GALA:   200_000,      // $200K
+  APE:    200_000,      // $200K
+  SNX:    200_000,      // $200K
+  '1INCH': 200_000,     // $200K
+  COMP:   200_000,      // $200K
+  CRV:    200_000,      // $200K
+  SUSHI:  200_000,      // $200K
+  YFI:    200_000,      // $200K
+  KAVA:   200_000,      // $200K
+  CELO:   200_000,      // $200K
+  ORDI:   200_000,      // $200K
+  '1000SATS': 200_000,
+  '1000CAT': 200_000,
+  ZEC:    200_000,      // $200K – Zcash
+  WLD:    200_000,      // $200K – Worldcoin
+  KAS:    200_000,      // $200K
 
   // ── Tokenized commodities ─────────────────────────────────
-  XAU:   5_000_000,     // $5M – Gold, very liquid
-  XAG:   4_000_000,     // $4M – Silver
+  XAU:    800_000,      // $800K – Gold, liquid commodity
+  XAG:    500_000,      // $500K – Silver
 };
 
 export default TOKEN_THRESHOLDS;
