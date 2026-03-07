@@ -534,7 +534,7 @@ const PER_PAGE = 20;
 // Approximate market cap ranking for default sort order (top ~80+ coins).
 // Tickers not in this list get rank 999 and sort alphabetically after.
 const MCAP_RANK = {
-  BTC: 1, ETH: 2, USDT: 3, BNB: 4, SOL: 5, XRP: 6, USDC: 7, DOGE: 8, ADA: 9, TRX: 10,
+  BTC: 1, ETH: 2, BNB: 4, SOL: 5, XRP: 6, DOGE: 8, ADA: 9, TRX: 10,
   AVAX: 11, LINK: 12, TON: 13, SHIB: 14, SUI: 15, XLM: 16, DOT: 17, HBAR: 18, BCH: 19, LTC: 20,
   UNI: 21, NEAR: 22, APT: 23, PEPE: 24, ICP: 25, AAVE: 26, ETC: 27, RENDER: 28, FET: 29, MNT: 30,
   FIL: 31, CRO: 32, STX: 33, IMX: 34, ARB: 35, ATOM: 36, OP: 37, TAO: 38, VET: 39, MKR: 40,
@@ -546,19 +546,45 @@ const MCAP_RANK = {
   ORDI: 82, XAG: 83, XAU: 84, HYPE: 85, '1000CAT': 86,
 };
 
-// Suggested default sizes (USD) by market-cap tier, differentiated by market type.
-// Futures get higher thresholds because of leverage → bigger notional walls.
-function getSuggestedSize(ticker, market) {
-  const rank = MCAP_RANK[ticker] ?? 999;
-  const isFut = market === 'futures';
+// Stablecoins — always excluded from density screener (no useful wall data)
+const STABLECOINS = new Set([
+  'USDT', 'USDC', 'BUSD', 'DAI', 'TUSD', 'USDP', 'USDD', 'FDUSD', 'PYUSD',
+  'GUSD', 'FRAX', 'LUSD', 'SUSD', 'CRVUSD', 'GHO', 'USDE', 'USD',
+  'EURC', 'EURT', 'EUR',
+]);
 
-  if (rank <= 3)  return isFut ? 50_000_000 : 20_000_000;   // BTC, ETH, BNB
-  if (rank <= 5)  return isFut ? 30_000_000 : 10_000_000;   // SOL, XRP
-  if (rank <= 10) return isFut ? 15_000_000 : 5_000_000;    // Top 10
-  if (rank <= 20) return isFut ? 15_000_000 : 5_000_000;    // Top 20
-  if (rank <= 30) return isFut ? 15_000_000 : 5_000_000;    // Top 30
-  if (rank <= 999) return null;                              // Others → no suggestion
-  return null;
+// ── Per-token default min wall sizes ────────────────────────────────────────
+// Exact values from the reference settings (stakan.live).
+// Key format: "TICKER|exchange|market" → USD value.
+// Only tokens with explicit defaults are listed; others show "-".
+const TOKEN_DEFAULTS = {
+  // ── 4 ──
+  '4|binance|futures': 350_000,
+  '4|bybit|futures':   450_000,
+  // ── BTC ──
+  'BTC|binance|futures': 50_000_000, 'BTC|binance|spot': 50_000_000,
+  'BTC|bybit|futures':   50_000_000, 'BTC|bybit|spot':   50_000_000,
+  'BTC|okx|futures':     50_000_000, 'BTC|okx|spot':     50_000_000,
+  // ── ETH ──
+  'ETH|binance|futures': 50_000_000, 'ETH|binance|spot': 50_000_000,
+  'ETH|bybit|futures':   50_000_000, 'ETH|bybit|spot':   50_000_000,
+  'ETH|okx|futures':     50_000_000, 'ETH|okx|spot':     50_000_000,
+  // ── SOL ──
+  'SOL|binance|futures': 35_000_000, 'SOL|binance|spot': 24_450_000,
+  'SOL|bybit|futures':   35_000_000, 'SOL|bybit|spot':   50_000_000,
+  'SOL|okx|futures':     50_000_000, 'SOL|okx|spot':     50_000_000,
+  // ── XRP ──
+  'XRP|binance|futures': 7_000_000,  'XRP|binance|spot': 3_500_000,
+  'XRP|bybit|futures':   450_000,    'XRP|bybit|spot':   300_000,
+  'XRP|okx|futures':     450_000,    'XRP|okx|spot':     300_000,
+};
+
+/**
+ * Returns the default min wall size for a ticker/exchange/market combo.
+ * Returns null if no default exists (cell shows "-").
+ */
+function getSuggestedSize(ticker, exchange, market) {
+  return TOKEN_DEFAULTS[`${ticker}|${exchange}|${market}`] ?? null;
 }
 
 function formatWallSize(val) {
@@ -658,12 +684,14 @@ function IndividualSettingsModal({ onClose }) {
         arr.forEach((sym) => {
           // Strip USDT / USDC / USD suffix to get base ticker
           const base = sym.replace(/(USDT|USDC|USD)$/i, '');
-          if (base) set.add(base);
+          if (base && !STABLECOINS.has(base)) set.add(base);
         });
       }
     });
     // Also include tickers from existing settings (in case symbols haven't loaded yet)
-    tokenSettings.forEach((s) => set.add(s.ticker));
+    tokenSettings.forEach((s) => {
+      if (!STABLECOINS.has(s.ticker)) set.add(s.ticker);
+    });
     // Sort by market cap rank (highest first), then alphabetical for unknowns
     return Array.from(set).sort((a, b) => {
       const ra = MCAP_RANK[a] ?? 999;
@@ -836,7 +864,7 @@ function IndividualSettingsModal({ onClose }) {
                           {EXCHANGES_MARKETS.map((em) => {
                             const key = `${ticker}|${em.exchange}|${em.market}`;
                             const val = settingsMap.get(key) ?? null;
-                            const suggested = getSuggestedSize(ticker, em.market);
+                            const suggested = getSuggestedSize(ticker, em.exchange, em.market);
                             return (
                               <td key={`${em.exchange}_${em.market}`} className="px-3 py-2">
                                 <EditableCell

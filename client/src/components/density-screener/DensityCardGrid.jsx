@@ -16,6 +16,18 @@ const EXCHANGE_BADGE = {
 
 const MARKET_ABBR = { futures: 'F', spot: 'S' };
 
+// Stablecoins — excluded from density display
+const STABLECOINS = new Set([
+  'USDT', 'USDC', 'BUSD', 'DAI', 'TUSD', 'USDP', 'USDD', 'FDUSD', 'PYUSD',
+  'GUSD', 'FRAX', 'LUSD', 'SUSD', 'CRVUSD', 'GHO', 'USDE', 'USD',
+  'EURC', 'EURT', 'EUR',
+]);
+
+function isStablecoin(symbol) {
+  const base = symbol.replace(/(USDT|USDC|USD)$/i, '');
+  return STABLECOINS.has(base);
+}
+
 // ---------------------------------------------------------------------------
 // Formatting helpers
 // ---------------------------------------------------------------------------
@@ -231,11 +243,13 @@ const DensityCardGrid = () => {
   } = useDensityScreenerStore();
 
   // Group walls by symbol, compute totals, sort groups by total volume desc
+  // Excludes stablecoins entirely
   const groups = useMemo(() => {
     if (!walls?.length) return [];
 
     const map = new Map();
     for (const wall of walls) {
+      if (isStablecoin(wall.symbol)) continue; // skip stablecoins
       const key = wall.symbol;
       if (!map.has(key)) map.set(key, { symbol: key, walls: [], totalVolume: 0 });
       const group = map.get(key);
