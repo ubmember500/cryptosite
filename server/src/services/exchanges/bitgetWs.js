@@ -1,80 +1,19 @@
 /**
  * Bitget WebSocket Adapter
- * Handles WebSocket connections to Bitget for real-time kline data
+ * Sub-minute (1s/5s/15s): subscribes to trade channel and aggregates via CandleAggregator
+ * Minute+: subscribes to candle channel (as before)
  */
 
 const WebSocket = require('ws');
+const CandleAggregator = require('../../utils/CandleAggregator');
 
-// WebSocket URLs
-const FUTURES_WS_URL = 'wss://ws.bitget.com/v2/ws/public';
-const SPOT_WS_URL = 'wss://ws.bitget.com/v2/ws/public';
-
-// Reconnection settings
+const WS_URL = 'wss://ws.bitget.com/v2/ws/public';
 const RECONNECT_DELAY_MS = 5000;
 const MAX_RECONNECT_ATTEMPTS = 10;
-const PING_INTERVAL_MS = 30000; // Bitget requires ping every 30s
+const PING_INTERVAL_MS = 30000;
 
-/**
- * Resample 1-minute klines into second-interval klines
- */
-function _lcg(seed) { let s = seed | 0; return () => { s = (s * 1103515245 + 12345) & 0x7fffffff; return s / 0x7fffffff; }; }
-function resample1mToSeconds(kline1m, secondInterval) {
-  const spanSec = { '1s': 1, '5s': 5, '15s': 15 }[secondInterval];
-  const N = 60 / spanSec;
-  const result = [];
-  const { time: openTimeSec, open, high, low, close, volume, isClosed: parentClosed } = kline1m;
-  const volumePerSub = volume / N;
-  const range = high - low;
-  if (range === 0) {
-    for (let i = 0; i < N; i++) {
-      result.push({ time: openTimeSec + i * spanSec, open, high, low, close, volume: volumePerSub, isClosed: parentClosed && i === N - 1 });
-    }
-    return result;
-  }
-  const rng = _lcg(openTimeSec * 7 + spanSec);
-  const isGreen = close >= open;
-  const halfN = Math.max(1, Math.floor(N / 2));
-  let hiIdx, loIdx;
-  if (isGreen) { loIdx = 1 + Math.floor(rng() * halfN); hiIdx = halfN + Math.floor(rng() * (N - halfN)); }
-  else { hiIdx = 1 + Math.floor(rng() * halfN); loIdx = halfN + Math.floor(rng() * (N - halfN)); }
-  hiIdx = Math.min(hiIdx, N - 1); loIdx = Math.min(loIdx, N - 1);
-  if (hiIdx === loIdx) { hiIdx = Math.min(hiIdx + 1, N - 1); if (hiIdx === loIdx) loIdx = Math.max(1, loIdx - 1); }
-  const prices = new Array(N + 1);
-  prices[0] = open; prices[N] = close; prices[hiIdx] = high; prices[loIdx] = low;
-  const sorted = [...new Set([0, hiIdx, loIdx, N])].sort((a, b) => a - b);
-  for (let s = 0; s < sorted.length - 1; s++) {
-    const from = sorted[s], to = sorted[s + 1];
-    for (let i = from + 1; i < to; i++) {
-      const t = (i - from) / (to - from);
-      const base = prices[from] + (prices[to] - prices[from]) * t;
-      const noise = (rng() - 0.5) * range * 0.18;
-      prices[i] = Math.min(high, Math.max(low, base + noise));
-    }
-  }
-  for (let i = 0; i < N; i++) {
-    const sO = prices[i], sC = prices[i + 1];
-    const bodyHi = Math.max(sO, sC), bodyLo = Math.min(sO, sC);
-    const wick = range * (0.002 + rng() * 0.014);
-    result.push({ time: openTimeSec + i * spanSec, open: sO, high: Math.min(high, bodyHi + wick), low: Math.max(low, bodyLo - wick), close: sC, volume: volumePerSub, isClosed: parentClosed && i === N - 1 });
-  }
-  return result;
-}
-
-/**
- * Map interval to Bitget WebSocket format
- * Bitget WebSocket uses same format for both spot and futures: 1m, 5m, 15m, 30m, 1H, 4H, 1D
- */
-function mapIntervalToBitget(interval, exchangeType = 'futures') {
-  // WebSocket uses consistent format (short form with capital H)
-  const map = {
-    '1m': '1m',
-    '5m': '5m',
-    '15m': '15m',
-    '30m': '30m',
-    '1h': '1H',
-    '4h': '4H',
-    '1d': '1D',
-  };
+function mapIntervalToBitget(interval) {
+  const map = { '1m': '1m', '5m': '5m', '15m': '15m', '30m': '30m', '1h': '1H', '4h': '4H', '1d': '1D' };
   return map[interval] || interval;
 }
 
@@ -82,361 +21,165 @@ class BitgetWsAdapter {
   constructor(onKlineUpdate) {
     this.onKlineUpdate = onKlineUpdate;
     this.subscriptions = new Map();
-    this.lastKlines1m = new Map();
-    
+    this.aggregators = new Map();
     console.log('[BitgetWs] Adapter initialized');
   }
 
   subscribe(symbol, interval, exchangeType) {
-    // Normalize symbol to uppercase (Bitget requires uppercase)
     const normalizedSymbol = symbol.toUpperCase();
     const subscriptionKey = `${normalizedSymbol}:${interval}:${exchangeType}`;
-    
-    if (this.subscriptions.has(subscriptionKey)) {
-      console.log(`[BitgetWs] Already subscribed: ${subscriptionKey}`);
-      return;
-    }
-
-    console.log(`[BitgetWs] Subscribing: ${subscriptionKey} (normalized from ${symbol})`);
-    
+    if (this.subscriptions.has(subscriptionKey)) return;
+    console.log(`[BitgetWs] Subscribing: ${subscriptionKey}`);
     const isSubMinute = ['1s', '5s', '15s'].includes(interval);
-    const wsInterval = isSubMinute ? '1m' : interval;
-    
-    this.connectStream(normalizedSymbol, wsInterval, interval, exchangeType, subscriptionKey);
+    if (isSubMinute) {
+      this._connectTradeStream(normalizedSymbol, interval, exchangeType, subscriptionKey);
+    } else {
+      this._connectKlineStream(normalizedSymbol, interval, exchangeType, subscriptionKey);
+    }
   }
 
-  connectStream(symbol, wsInterval, targetInterval, exchangeType, subscriptionKey) {
-    const baseUrl = exchangeType === 'futures' ? FUTURES_WS_URL : SPOT_WS_URL;
+  // ---- Trade stream (sub-minute) ----
+  _connectTradeStream(symbol, interval, exchangeType, subscriptionKey) {
+    const instType = exchangeType === 'futures' ? 'USDT-FUTURES' : 'SPOT';
+    const spanSec = { '1s': 1, '5s': 5, '15s': 15 }[interval];
+    const aggregator = new CandleAggregator(spanSec);
+    aggregator.on('candle', (candle) => { this.onKlineUpdate(symbol, interval, exchangeType, candle); });
+    this.aggregators.set(subscriptionKey, aggregator);
 
     let ws;
-    try {
-      ws = new WebSocket(baseUrl);
-    } catch (error) {
-      console.error(`[BitgetWs] Failed to create WebSocket for ${subscriptionKey}:`, error.message);
-      this.scheduleReconnect(symbol, wsInterval, targetInterval, exchangeType, subscriptionKey, 0);
+    try { ws = new WebSocket(WS_URL); } catch (error) {
+      console.error(`[BitgetWs] Failed to create trade WS for ${subscriptionKey}:`, error.message);
+      this._scheduleReconnect(symbol, interval, exchangeType, subscriptionKey, 0, true);
       return;
     }
-
-    const subscription = {
-      ws,
-      reconnectAttempts: 0,
-      reconnectTimer: null,
-      pingTimer: null,
-      subscriptionTimeout: null,
-      confirmed: false,
-      symbol,
-      wsInterval,
-      targetInterval,
-      exchangeType,
-    };
-
-    this.subscriptions.set(subscriptionKey, subscription);
+    const sub = { ws, reconnectAttempts: 0, reconnectTimer: null, pingTimer: null, subscriptionTimeout: null, confirmed: false, symbol, targetInterval: interval, exchangeType, isTrade: true, instType };
+    this.subscriptions.set(subscriptionKey, sub);
 
     ws.on('open', () => {
-      console.log(`[BitgetWs] Connected: ${subscriptionKey}`);
-      subscription.reconnectAttempts = 0;
-
-      // Subscribe to candle stream
-      const bitgetInterval = mapIntervalToBitget(wsInterval, exchangeType);
-      const instType = exchangeType === 'futures' ? 'USDT-FUTURES' : 'SPOT';
-      
-      const subscribeMsg = {
-        op: 'subscribe',
-        args: [
-          {
-            instType,
-            channel: 'candle' + bitgetInterval,
-            instId: symbol,
-          },
-        ],
-      };
-      
-      console.log(`[BitgetWs] Subscribing to channel: candle${bitgetInterval}, instType: ${instType}, instId: ${symbol}`);
-      ws.send(JSON.stringify(subscribeMsg));
-
-      // Set timeout to detect failed subscription
-      subscription.subscriptionTimeout = setTimeout(() => {
-        if (!subscription.confirmed) {
-          console.error(`[BitgetWs] ⏱️ Subscription timeout for ${subscriptionKey} - no confirmation received in 10s`);
-          // Trigger reconnection
-          ws.close();
-        }
-      }, 10000); // 10 second timeout
-
-      // Start ping timer
-      subscription.pingTimer = setInterval(() => {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send('ping');
-          console.log(`[BitgetWs] Ping sent for ${subscriptionKey}`);
-        } else {
-          console.warn(`[BitgetWs] Cannot ping, socket not open: ${subscriptionKey}, state: ${ws.readyState}`);
-        }
-      }, PING_INTERVAL_MS);
-      console.log(`[BitgetWs] Ping timer started (interval: ${PING_INTERVAL_MS}ms)`);
+      console.log(`[BitgetWs] Trade stream connected: ${subscriptionKey}`);
+      sub.reconnectAttempts = 0;
+      ws.send(JSON.stringify({ op: 'subscribe', args: [{ instType, channel: 'trade', instId: symbol }] }));
+      sub.subscriptionTimeout = setTimeout(() => { if (!sub.confirmed) { console.error(`[BitgetWs] Trade sub timeout: ${subscriptionKey}`); ws.close(); } }, 10000);
+      sub.pingTimer = setInterval(() => { if (ws.readyState === WebSocket.OPEN) ws.send('ping'); }, PING_INTERVAL_MS);
     });
-
     ws.on('message', (data) => {
       try {
-        const dataStr = data.toString();
-        
-        // Handle pong response
-        if (dataStr === 'pong') {
-          console.log(`[BitgetWs] Pong received for ${subscriptionKey}`);
-          return;
-        }
-        
-        const message = JSON.parse(dataStr);
-        
-        // Handle subscription confirmation
+        const raw = data.toString();
+        if (raw === 'pong') return;
+        const message = JSON.parse(raw);
         if (message.event === 'subscribe') {
-          console.log(`[BitgetWs] ✅ Subscription confirmed: ${subscriptionKey}`, message.arg);
-          subscription.confirmed = true;
-          // Clear subscription timeout
-          if (subscription.subscriptionTimeout) {
-            clearTimeout(subscription.subscriptionTimeout);
-            subscription.subscriptionTimeout = null;
+          sub.confirmed = true;
+          if (sub.subscriptionTimeout) { clearTimeout(sub.subscriptionTimeout); sub.subscriptionTimeout = null; }
+          return;
+        }
+        if (message.event === 'error' || message.code) { console.error(`[BitgetWs] Trade error:`, message); return; }
+        // Trade data: { action: "snapshot"|"update", arg: { channel: "trade", ... }, data: [{ ts, px, sz, side }] }
+        if (message.data && Array.isArray(message.data) && message.arg && message.arg.channel === 'trade') {
+          for (const trade of message.data) {
+            aggregator.addTrade({ price: parseFloat(trade.px), quantity: parseFloat(trade.sz), timestampMs: parseInt(trade.ts) });
           }
-          return;
         }
-        
-        // Handle error
-        if (message.event === 'error' || message.code) {
-          console.error(`[BitgetWs] ❌ Error: ${subscriptionKey}`, message);
-          return;
-        }
-        
-        // Handle candle data
+      } catch (err) { console.error(`[BitgetWs] Trade parse error:`, err.message); }
+    });
+    ws.on('close', (code) => {
+      if (sub.pingTimer) clearInterval(sub.pingTimer);
+      if (sub.subscriptionTimeout) clearTimeout(sub.subscriptionTimeout);
+      if (this.subscriptions.has(subscriptionKey)) this._scheduleReconnect(symbol, interval, exchangeType, subscriptionKey, sub.reconnectAttempts, true);
+    });
+    ws.on('error', (error) => { console.error(`[BitgetWs] Trade WS error: ${subscriptionKey}:`, error.message); });
+  }
+
+  // ---- Kline stream (minute+) ----
+  _connectKlineStream(symbol, interval, exchangeType, subscriptionKey) {
+    const instType = exchangeType === 'futures' ? 'USDT-FUTURES' : 'SPOT';
+    let ws;
+    try { ws = new WebSocket(WS_URL); } catch (error) {
+      console.error(`[BitgetWs] Failed to create kline WS for ${subscriptionKey}:`, error.message);
+      this._scheduleReconnect(symbol, interval, exchangeType, subscriptionKey, 0, false);
+      return;
+    }
+    const sub = { ws, reconnectAttempts: 0, reconnectTimer: null, pingTimer: null, subscriptionTimeout: null, confirmed: false, symbol, targetInterval: interval, exchangeType, isTrade: false, instType };
+    this.subscriptions.set(subscriptionKey, sub);
+
+    ws.on('open', () => {
+      sub.reconnectAttempts = 0;
+      const bitgetInterval = mapIntervalToBitget(interval);
+      ws.send(JSON.stringify({ op: 'subscribe', args: [{ instType, channel: 'candle' + bitgetInterval, instId: symbol }] }));
+      sub.subscriptionTimeout = setTimeout(() => { if (!sub.confirmed) ws.close(); }, 10000);
+      sub.pingTimer = setInterval(() => { if (ws.readyState === WebSocket.OPEN) ws.send('ping'); }, PING_INTERVAL_MS);
+    });
+    ws.on('message', (data) => {
+      try {
+        const raw = data.toString();
+        if (raw === 'pong') return;
+        const message = JSON.parse(raw);
+        if (message.event === 'subscribe') { sub.confirmed = true; if (sub.subscriptionTimeout) { clearTimeout(sub.subscriptionTimeout); sub.subscriptionTimeout = null; } return; }
+        if (message.event === 'error' || message.code) { console.error(`[BitgetWs] Kline error:`, message); return; }
         if (message.data && Array.isArray(message.data)) {
-          console.log(`[BitgetWs] Kline message received for ${subscriptionKey}, action: ${message.action}, count: ${message.data.length}`);
-          this.handleMessage(message, symbol, targetInterval, exchangeType);
-        } else if (message.arg) {
-          // Log unexpected message format
-          console.warn(`[BitgetWs] Unexpected message for ${subscriptionKey}:`, Object.keys(message), message.action);
+          let candleData;
+          if (message.action === 'snapshot') {
+            candleData = message.data[message.data.length - 1];
+          } else {
+            candleData = message.data[0];
+          }
+          if (!Array.isArray(candleData) || candleData.length < 6) return;
+          const kline = { time: Math.floor(parseInt(candleData[0]) / 1000), open: parseFloat(candleData[1]), high: parseFloat(candleData[2]), low: parseFloat(candleData[3]), close: parseFloat(candleData[4]), volume: parseFloat(candleData[5]), isClosed: false };
+          this.onKlineUpdate(symbol, interval, exchangeType, kline);
         }
-      } catch (error) {
-        console.error(`[BitgetWs] Error parsing message for ${subscriptionKey}:`, error.message, data.toString().substring(0, 200));
-      }
+      } catch (error) { console.error(`[BitgetWs] Kline parse error:`, error.message); }
     });
-
-    ws.on('close', (code, reason) => {
-      console.warn(`[BitgetWs] Connection closed: ${subscriptionKey} (code: ${code})`);
-      
-      if (subscription.pingTimer) {
-        clearInterval(subscription.pingTimer);
-      }
-      
-      if (subscription.subscriptionTimeout) {
-        clearTimeout(subscription.subscriptionTimeout);
-      }
-      
-      if (this.subscriptions.has(subscriptionKey)) {
-        this.scheduleReconnect(symbol, wsInterval, targetInterval, exchangeType, subscriptionKey, subscription.reconnectAttempts);
-      }
+    ws.on('close', (code) => {
+      if (sub.pingTimer) clearInterval(sub.pingTimer);
+      if (sub.subscriptionTimeout) clearTimeout(sub.subscriptionTimeout);
+      if (this.subscriptions.has(subscriptionKey)) this._scheduleReconnect(symbol, interval, exchangeType, subscriptionKey, sub.reconnectAttempts, false);
     });
-
-    ws.on('error', (error) => {
-      console.error(`[BitgetWs] WebSocket error for ${subscriptionKey}:`, error.message);
-    });
+    ws.on('error', (error) => { console.error(`[BitgetWs] Kline WS error: ${subscriptionKey}:`, error.message); });
   }
 
-  handleMessage(message, symbol, targetInterval, exchangeType) {
-    // Validate message structure
-    if (!message.data || !Array.isArray(message.data) || message.data.length === 0) {
-      console.warn('[BitgetWs] Invalid message structure - no data array:', JSON.stringify(message).substring(0, 200));
-      return;
-    }
-
-    // Bitget sends two types of messages:
-    // - "snapshot": 500 historical candles on first connection
-    // - "update": single real-time candle update
-    
-    let candleData;
-    if (message.action === 'snapshot') {
-      // Take the LAST candle from snapshot (most recent) for immediate update
-      console.log(`[BitgetWs] Snapshot received with ${message.data.length} candles, using latest for immediate update`);
-      candleData = message.data[message.data.length - 1];
-    } else if (message.action === 'update') {
-      // Regular real-time update
-      candleData = message.data[0];
-    } else {
-      console.warn(`[BitgetWs] Unknown action: ${message.action}, ignoring`);
-      return;
-    }
-    
-    // Validate candle data is an array
-    if (!Array.isArray(candleData) || candleData.length < 6) {
-      console.error('[BitgetWs] Invalid candle data format:', {
-        isArray: Array.isArray(candleData),
-        length: candleData?.length,
-        data: candleData
-      });
-      return;
-    }
-    
-    // Bitget candle format: [timestamp_ms, open, high, low, close, volume, volumeUsd, volumeUsd]
-    const kline = {
-      time: Math.floor(parseInt(candleData[0]) / 1000), // Convert ms to seconds
-      open: parseFloat(candleData[1]),
-      high: parseFloat(candleData[2]),
-      low: parseFloat(candleData[3]),
-      close: parseFloat(candleData[4]),
-      volume: parseFloat(candleData[5]),
-      isClosed: false, // Bitget doesn't provide explicit closed flag, detect by time change
-    };
-
-    console.log('[BitgetWs] Processing kline:', {
-      symbol,
-      targetInterval,
-      exchangeType,
-      action: message.action,
-      close: kline.close,
-      volume: kline.volume,
-      isClosed: kline.isClosed,
-      time: new Date(kline.time * 1000).toISOString(),
-      rawTimestamp: candleData[0]
-    });
-
-    // Define klineKey for tracking last candle state
-    const klineKey = `${symbol}:${exchangeType}`;
-    const lastKline = this.lastKlines1m.get(klineKey);
-    
-    // Detect closed candles by comparing timestamps
-    if (lastKline && lastKline.time < kline.time) {
-      console.log('[BitgetWs] New candle detected, marking previous as closed');
-      lastKline.isClosed = true;
-    }
-
-    // Handle sub-minute intervals - resample from 1m data
-    if (['1s', '5s', '15s'].includes(targetInterval)) {
-      console.log(`[BitgetWs] Sub-minute interval detected: ${targetInterval}, will resample from 1m`);
-      const isNewOrUpdated = !lastKline || lastKline.time !== kline.time || 
-                             lastKline.close !== kline.close;
-      
-      if (isNewOrUpdated) {
-        this.lastKlines1m.set(klineKey, { ...kline });
-        const subCandles = resample1mToSeconds(kline, targetInterval);
-        console.log(`[BitgetWs] Resampled 1m into ${subCandles.length} ${targetInterval} candles`);
-        subCandles.forEach((subCandle, index) => {
-          console.log(`[BitgetWs] Calling onKlineUpdate for sub-candle ${index + 1}/${subCandles.length}`);
-          this.onKlineUpdate(symbol, targetInterval, exchangeType, subCandle);
-        });
-      } else {
-        console.log(`[BitgetWs] Skipping duplicate 1m candle (no changes)`);
-      }
-    } else {
-      // Direct interval match - emit as-is
-      console.log(`[BitgetWs] Direct interval match, calling onKlineUpdate`);
-      this.lastKlines1m.set(klineKey, { ...kline });
-      this.onKlineUpdate(symbol, targetInterval, exchangeType, kline);
-    }
-  }
-
-  scheduleReconnect(symbol, wsInterval, targetInterval, exchangeType, subscriptionKey, attempts) {
-    if (!this.subscriptions.has(subscriptionKey)) {
-      return;
-    }
-
-    const subscription = this.subscriptions.get(subscriptionKey);
-    subscription.reconnectAttempts = attempts + 1;
-
-    if (subscription.reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
-      console.error(`[BitgetWs] Max reconnection attempts reached for ${subscriptionKey}`);
+  // ---- Reconnection ----
+  _scheduleReconnect(symbol, interval, exchangeType, subscriptionKey, attempts, isTrade) {
+    if (!this.subscriptions.has(subscriptionKey)) return;
+    const sub = this.subscriptions.get(subscriptionKey);
+    sub.reconnectAttempts = attempts + 1;
+    if (sub.reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
+      console.error(`[BitgetWs] Max reconnect attempts for ${subscriptionKey}`);
       this.subscriptions.delete(subscriptionKey);
+      const agg = this.aggregators.get(subscriptionKey); if (agg) { agg.reset(); this.aggregators.delete(subscriptionKey); }
       return;
     }
-
-    const delay = RECONNECT_DELAY_MS * Math.min(subscription.reconnectAttempts, 5);
-    console.log(`[BitgetWs] Reconnecting ${subscriptionKey} in ${delay}ms (attempt ${subscription.reconnectAttempts})`);
-
-    subscription.reconnectTimer = setTimeout(() => {
-      if (this.subscriptions.has(subscriptionKey)) {
-        this.connectStream(symbol, wsInterval, targetInterval, exchangeType, subscriptionKey);
-      }
+    const delay = RECONNECT_DELAY_MS * Math.min(sub.reconnectAttempts, 5);
+    sub.reconnectTimer = setTimeout(() => {
+      if (!this.subscriptions.has(subscriptionKey)) return;
+      this.subscriptions.delete(subscriptionKey);
+      if (isTrade) this._connectTradeStream(symbol, interval, exchangeType, subscriptionKey);
+      else this._connectKlineStream(symbol, interval, exchangeType, subscriptionKey);
     }, delay);
   }
 
   unsubscribe(symbol, interval, exchangeType) {
     const subscriptionKey = `${symbol}:${interval}:${exchangeType}`;
-    
-    const subscription = this.subscriptions.get(subscriptionKey);
-    if (!subscription) {
-      console.log(`[BitgetWs] Not subscribed: ${subscriptionKey}`);
-      return;
-    }
-
-    console.log(`[BitgetWs] Unsubscribing: ${subscriptionKey}`);
-
-    if (subscription.reconnectTimer) {
-      clearTimeout(subscription.reconnectTimer);
-    }
-
-    if (subscription.pingTimer) {
-      clearInterval(subscription.pingTimer);
-    }
-
-    if (subscription.subscriptionTimeout) {
-      clearTimeout(subscription.subscriptionTimeout);
-    }
-
-    if (subscription.ws && subscription.ws.readyState === WebSocket.OPEN) {
-      try {
-        const bitgetInterval = mapIntervalToBitget(subscription.wsInterval, exchangeType);
-        const instType = exchangeType === 'futures' ? 'USDT-FUTURES' : 'SPOT';
-        
-        const unsubscribeMsg = {
-          op: 'unsubscribe',
-          args: [
-            {
-              instType,
-              channel: 'candle' + bitgetInterval,
-              instId: symbol,
-            },
-          ],
-        };
-        subscription.ws.send(JSON.stringify(unsubscribeMsg));
-        subscription.ws.close();
-      } catch (error) {
-        console.error(`[BitgetWs] Error closing WebSocket for ${subscriptionKey}:`, error.message);
-      }
-    }
-
+    const sub = this.subscriptions.get(subscriptionKey);
+    if (!sub) return;
+    if (sub.reconnectTimer) clearTimeout(sub.reconnectTimer);
+    if (sub.pingTimer) clearInterval(sub.pingTimer);
+    if (sub.subscriptionTimeout) clearTimeout(sub.subscriptionTimeout);
+    if (sub.ws) { try { sub.ws.close(); } catch (e) { /* ignore */ } }
     this.subscriptions.delete(subscriptionKey);
-
-    const klineKey = `${symbol}:${exchangeType}`;
-    const hasSubMinuteSubs = Array.from(this.subscriptions.keys()).some((key) => {
-      const [s, i, e] = key.split(':');
-      return s === symbol && e === exchangeType && ['1s', '5s', '15s'].includes(i);
-    });
-    if (!hasSubMinuteSubs) {
-      this.lastKlines1m.delete(klineKey);
-    }
+    const agg = this.aggregators.get(subscriptionKey);
+    if (agg) { agg.flush(); agg.reset(); this.aggregators.delete(subscriptionKey); }
   }
 
   close() {
     console.log('[BitgetWs] Closing all connections...');
-
-    for (const [key, subscription] of this.subscriptions) {
-      if (subscription.reconnectTimer) {
-        clearTimeout(subscription.reconnectTimer);
-      }
-      if (subscription.pingTimer) {
-        clearInterval(subscription.pingTimer);
-      }
-      if (subscription.subscriptionTimeout) {
-        clearTimeout(subscription.subscriptionTimeout);
-      }
-      if (subscription.ws) {
-        try {
-          subscription.ws.close();
-        } catch (error) {
-          console.error(`[BitgetWs] Error closing ${key}:`, error.message);
-        }
-      }
+    for (const [, sub] of this.subscriptions) {
+      if (sub.reconnectTimer) clearTimeout(sub.reconnectTimer);
+      if (sub.pingTimer) clearInterval(sub.pingTimer);
+      if (sub.subscriptionTimeout) clearTimeout(sub.subscriptionTimeout);
+      if (sub.ws) { try { sub.ws.close(); } catch (e) { /* ignore */ } }
     }
-
+    for (const [, agg] of this.aggregators) { agg.reset(); }
     this.subscriptions.clear();
-    this.lastKlines1m.clear();
-
+    this.aggregators.clear();
     console.log('[BitgetWs] All connections closed');
   }
 }

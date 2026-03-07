@@ -136,6 +136,7 @@ import { create } from 'zustand';
 import { marketService } from '../services/marketService';
 import api from '../services/api';
 import { API_BASE_URL } from '../utils/constants';
+import { resample1mToSeconds } from '../utils/resampleKlines';
 
 const CHART_PAGE_LIMIT = 500;
 const WS_HISTORY_RECOVERY_COOLDOWN_MS = 5000;
@@ -494,87 +495,7 @@ const enrichTokensWithNatr14 = async (tokens) => {
   return tokens;
 };
 
-// Simple seeded PRNG (LCG) — deterministic per candle so the same data always renders identically.
-const _lcg = (seed) => {
-  let s = seed | 0;
-  return () => { s = (s * 1103515245 + 12345) & 0x7fffffff; return s / 0x7fffffff; };
-};
-
-const resample1mToSeconds = (klines1m, secondInterval) => {
-  const spanSec = { '1s': 1, '5s': 5, '15s': 15 }[secondInterval];
-  if (!spanSec) return klines1m;
-  const N = 60 / spanSec; // sub-candles per minute: 60, 12, or 4
-  const result = [];
-
-  for (const candle of klines1m) {
-    const { open, high, low, close, volume } = candle;
-    const volPer = volume / N;
-    const range = high - low;
-
-    if (range === 0) {
-      for (let i = 0; i < N; i++) {
-        result.push({ time: candle.time + i * spanSec, open, high, low, close, volume: volPer });
-      }
-      continue;
-    }
-
-    const rng = _lcg(candle.time * 7 + spanSec);
-    const isGreen = close >= open;
-
-    // Pick random sub-candle indices where high and low are reached.
-    // Bullish bias: low early, high late.  Bearish bias: high early, low late.
-    const halfN = Math.max(1, Math.floor(N / 2));
-    let hiIdx, loIdx;
-    if (isGreen) {
-      loIdx = 1 + Math.floor(rng() * halfN);
-      hiIdx = halfN + Math.floor(rng() * (N - halfN));
-    } else {
-      hiIdx = 1 + Math.floor(rng() * halfN);
-      loIdx = halfN + Math.floor(rng() * (N - halfN));
-    }
-    hiIdx = Math.min(hiIdx, N - 1);
-    loIdx = Math.min(loIdx, N - 1);
-    if (hiIdx === loIdx) { hiIdx = Math.min(hiIdx + 1, N - 1); if (hiIdx === loIdx) loIdx = Math.max(1, loIdx - 1); }
-
-    // Set key anchor prices (open, close, high, low)
-    const prices = new Array(N + 1);
-    prices[0] = open;
-    prices[N] = close;
-    prices[hiIdx] = high;
-    prices[loIdx] = low;
-
-    // Fill gaps between anchors using linear interpolation + random noise
-    const sorted = [...new Set([0, hiIdx, loIdx, N])].sort((a, b) => a - b);
-    for (let s = 0; s < sorted.length - 1; s++) {
-      const from = sorted[s], to = sorted[s + 1];
-      for (let i = from + 1; i < to; i++) {
-        const t = (i - from) / (to - from);
-        const base = prices[from] + (prices[to] - prices[from]) * t;
-        const noise = (rng() - 0.5) * range * 0.18;
-        prices[i] = Math.min(high, Math.max(low, base + noise));
-      }
-    }
-
-    // Create sub-candles with small random wicks
-    for (let i = 0; i < N; i++) {
-      const sO = prices[i];
-      const sC = prices[i + 1];
-      const bodyHi = Math.max(sO, sC);
-      const bodyLo = Math.min(sO, sC);
-      const wick = range * (0.002 + rng() * 0.014);
-      result.push({
-        time: candle.time + i * spanSec,
-        open:  sO,
-        high:  Math.min(high, bodyHi + wick),
-        low:   Math.max(low,  bodyLo - wick),
-        close: sC,
-        volume: volPer,
-      });
-    }
-  }
-
-  return result;
-};
+// resample1mToSeconds is now imported from '../utils/resampleKlines'
 
 const fetchJsonFromUrls = async (urls, endpoint, params = {}, validate = null) => {
   const query = new URLSearchParams(params);
