@@ -21,8 +21,8 @@ const Select = forwardRef(({
       <div className="relative">
         <select
           className={cn(
-            "w-full bg-surface border border-border rounded-lg px-4 py-2 pr-10 text-textPrimary appearance-none focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent transition-all cursor-pointer",
-            error && "border-danger focus:ring-danger",
+            "w-full bg-surface/80 border border-border/60 rounded-lg px-4 py-2.5 pr-10 text-textPrimary appearance-none focus:outline-none focus:ring-2 focus:ring-accent/25 focus:border-accent/50 transition-all duration-200 cursor-pointer",
+            error && "border-danger/60 focus:ring-danger/25 focus:border-danger/50",
             className
           )}
           ref={ref}

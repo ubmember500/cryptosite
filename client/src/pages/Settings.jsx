@@ -42,16 +42,18 @@ const Settings = () => {
   };
 
   return (
-    <div className="p-6">
+    <div>
       <div className="flex items-center gap-3 mb-6">
-        <SettingsIcon className="h-6 w-6" style={{ color: '#2dd4bf' }} />
-        <h1 className="text-2xl font-bold text-textPrimary">{t('Settings')}</h1>
+        <div className="bg-teal-500/10 p-2 rounded-xl border border-teal-500/20">
+          <SettingsIcon className="h-5 w-5" style={{ color: '#2dd4bf' }} />
+        </div>
+        <h1 className="text-2xl font-bold text-textPrimary tracking-tight">{t('Settings')}</h1>
       </div>
 
       <Card>
         <div className="mb-6">
           <h2 className="text-xl font-semibold text-textPrimary">{t('Themes')}</h2>
-          <p className="mt-1 text-sm text-textSecondary">{t('Themes subtitle')}</p>
+          <p className="mt-1 text-sm text-textSecondary/80">{t('Themes subtitle')}</p>
         </div>
 
         <Tabs tabs={tabs} activeTab={themeFilter} onChange={setThemeFilter} className="mb-6 max-w-sm" />

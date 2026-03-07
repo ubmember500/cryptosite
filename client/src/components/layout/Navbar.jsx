@@ -48,20 +48,20 @@ const Navbar = () => {
   };
 
   return (
-    <header className="bg-surface border-b border-border shadow-sm z-10">
+    <header className="glass-strong border-b border-border/50 z-10">
       <div className="flex items-center h-12 md:h-14 px-3 md:px-4 gap-2 md:gap-3">
         {/* Left: search */}
         <div className="shrink-0 w-32 sm:w-40 md:w-44 lg:w-56">
           <label htmlFor="search" className="sr-only">{t('Search')}</label>
-          <div className="relative">
+          <div className="relative group">
             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-              <Search className="h-4 w-4 text-textSecondary" />
+              <Search className="h-4 w-4 text-textSecondary group-focus-within:text-accent transition-colors" />
             </div>
             <form onSubmit={handleSearch}>
               <input
                 id="search"
                 name="search"
-                className="block w-full pl-9 pr-2 py-1.5 border border-border rounded-md leading-5 bg-surfaceHover text-textPrimary placeholder-textSecondary focus:outline-none focus:bg-surface focus:border-accent focus:ring-accent text-xs transition-colors"
+                className="block w-full pl-9 pr-3 py-1.5 border border-border/60 rounded-lg leading-5 bg-surfaceHover/50 text-textPrimary placeholder-textSecondary/60 focus:outline-none focus:bg-surface focus:border-accent/50 focus:ring-1 focus:ring-accent/30 text-xs transition-all duration-200"
                 placeholder={t('Search coins...')}
                 type="search"
                 value={searchQuery}
@@ -78,18 +78,18 @@ const Navbar = () => {
 
         {/* Right: language switcher, theme toggle, user menu */}
         <div className="shrink-0 flex items-center gap-1.5 md:gap-2">
-          <div className="flex items-center rounded-lg border border-border bg-surfaceHover/50 p-0.5" role="group" aria-label="Language">
+          <div className="flex items-center rounded-lg border border-border/40 bg-surfaceDark/50 p-0.5" role="group" aria-label="Language">
             <button
               type="button"
               onClick={() => handleLanguageChange('en')}
-              className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-offset-surface focus:ring-accent ${language === 'en' ? 'bg-accent text-white' : 'text-textSecondary hover:text-textPrimary'}`}
+              className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all duration-200 focus:outline-none focus:ring-1 focus:ring-accent/50 ${language === 'en' ? 'bg-accent text-white shadow-sm' : 'text-textSecondary hover:text-textPrimary hover:bg-surfaceHover/50'}`}
             >
               EN
             </button>
             <button
               type="button"
               onClick={() => handleLanguageChange('ru')}
-              className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-offset-surface focus:ring-accent ${language === 'ru' ? 'bg-accent text-white' : 'text-textSecondary hover:text-textPrimary'}`}
+              className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all duration-200 focus:outline-none focus:ring-1 focus:ring-accent/50 ${language === 'ru' ? 'bg-accent text-white shadow-sm' : 'text-textSecondary hover:text-textPrimary hover:bg-surfaceHover/50'}`}
             >
               RUS
             </button>
@@ -98,7 +98,7 @@ const Navbar = () => {
           <button
             type="button"
             onClick={toggleTheme}
-            className="p-1.5 rounded-full text-textSecondary hover:text-textPrimary focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-surface focus:ring-accent"
+            className="p-1.5 rounded-lg text-textSecondary hover:text-accent hover:bg-accent/10 focus:outline-none focus:ring-1 focus:ring-accent/50 transition-all duration-200"
             aria-label={currentIsDark ? t('Switch to light theme') : t('Switch to dark theme')}
           >
             {currentIsDark ? (
@@ -108,7 +108,7 @@ const Navbar = () => {
             )}
           </button>
 
-          <UserAccountMenu chipClassName="border-border bg-surface px-2.5 py-1.5 hover:bg-surfaceHover focus:ring-accent focus:ring-offset-2 focus:ring-offset-surface" />
+          <UserAccountMenu chipClassName="border-border/40 bg-surfaceDark/50 px-2.5 py-1.5 hover:bg-surfaceHover focus:ring-accent/50" />
         </div>
       </div>
     </header>

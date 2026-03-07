@@ -100,14 +100,15 @@ const ForgotPassword = () => {
 
   if (success) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background px-4">
-        <div className="w-full max-w-md">
-          <div className="bg-surface border border-border rounded-xl shadow-xl p-8 text-center">
-            <div className="w-14 h-14 bg-green-500/10 rounded-full flex items-center justify-center mx-auto mb-4">
+      <div className="min-h-screen flex items-center justify-center bg-background px-4 relative overflow-hidden">
+        <div className="absolute top-[-20%] left-[-10%] w-[500px] h-[500px] rounded-full bg-accent/[0.07] blur-[100px]" />
+        <div className="w-full max-w-md relative z-10">
+          <div className="bg-surface/80 border border-border/40 rounded-2xl shadow-2xl shadow-black/20 p-8 text-center backdrop-blur-xl">
+            <div className="w-14 h-14 bg-green-500/10 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-green-500/20">
               <Mail size={28} className="text-green-400" />
             </div>
             <h1 className="text-3xl font-bold text-textPrimary mb-2">Check your email</h1>
-            <p className="text-textSecondary mb-6">
+            <p className="text-textSecondary/80 text-sm mb-6">
               {resetLink
                 ? 'Use the link below to reset your password (dev mode).'
                 : 'If an account exists with this email, you will receive a password reset link.'}
@@ -115,15 +116,15 @@ const ForgotPassword = () => {
             {resetLink && (
               <a
                 href={resetLink}
-                className="block mb-6 px-4 py-3 bg-accent hover:bg-accent/80 text-white rounded-lg font-medium break-all"
+                className="block mb-6 px-4 py-3 bg-accent hover:brightness-110 text-white rounded-xl font-medium break-all transition-all"
               >
                 Open reset link
               </a>
             )}
 
             {/* Resend email section */}
-            <div className="mb-6 pt-4 border-t border-border">
-              <p className="text-sm text-textSecondary mb-3">
+            <div className="mb-6 pt-4 border-t border-border/40">
+              <p className="text-sm text-textSecondary/80 mb-3">
                 Didn't receive the email? Check your spam folder or resend it.
               </p>
 
@@ -161,7 +162,7 @@ const ForgotPassword = () => {
 
             <Link
               to={ROUTES.LOGIN}
-              className="text-blue-400 hover:text-blue-300 font-medium"
+              className="text-accent hover:text-accent/80 font-medium transition-colors"
             >
               Back to login
             </Link>
@@ -172,22 +173,23 @@ const ForgotPassword = () => {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background px-4">
-      <div className="w-full max-w-md">
-        <div className="bg-surface border border-border rounded-xl shadow-xl p-8">
+    <div className="min-h-screen flex items-center justify-center bg-background px-4 relative overflow-hidden">
+      <div className="absolute bottom-[-20%] right-[-10%] w-[400px] h-[400px] rounded-full bg-sky-500/[0.05] blur-[100px]" />
+      <div className="w-full max-w-md relative z-10">
+        <div className="bg-surface/80 border border-border/40 rounded-2xl shadow-2xl shadow-black/20 p-8 backdrop-blur-xl">
           <div className="text-center mb-8">
             <h1 className="text-3xl font-bold text-textPrimary mb-2">Restore account</h1>
-            <p className="text-textSecondary">Enter your email address</p>
+            <p className="text-textSecondary/80 text-sm">Enter your email address</p>
           </div>
 
           {error && (
-            <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-sm flex items-center">
-              <AlertCircle size={16} className="mr-2" />
+            <div className="mb-4 p-3 bg-danger/10 border border-danger/20 rounded-xl text-danger text-sm flex items-center">
+              <AlertCircle size={16} className="mr-2 shrink-0" />
               <span>{error}</span>
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-5">
             <Input
               label="Email"
               type="email"
@@ -201,7 +203,7 @@ const ForgotPassword = () => {
             <Button
               type="submit"
               variant="primary"
-              className="w-full"
+              className="w-full h-11"
               loading={loading}
             >
               Send reset link
@@ -209,7 +211,7 @@ const ForgotPassword = () => {
           </form>
 
           <div className="mt-6 text-center">
-            <Link to={ROUTES.LOGIN} className="text-sm text-blue-400 hover:text-blue-300">
+            <Link to={ROUTES.LOGIN} className="text-sm text-accent hover:text-accent/80 transition-colors">
               Back to login
             </Link>
           </div>

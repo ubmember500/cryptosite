@@ -15,49 +15,50 @@ const Sidebar = () => {
   ];
 
   return (
-    <div className="hidden md:flex flex-col w-48 bg-surface border-r border-border">
-      <div className="flex items-center justify-center h-16 border-b border-border">
+    <div className="hidden md:flex flex-col w-52 glass-strong border-r border-border/50">
+      {/* Logo area */}
+      <div className="flex items-center justify-center h-16 border-b border-border/50">
         <Link
           to="/market"
-          className="group flex items-center gap-2.5 rounded px-1 py-1 focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2 focus:ring-offset-surface"
+          className="group flex items-center gap-2.5 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-accent/50 transition-all"
         >
-          <div className="bg-accent/10 p-1.5 rounded-lg border border-accent/20 group-hover:bg-accent/20 transition-colors">
+          <div className="bg-accent/10 p-2 rounded-xl border border-accent/20 group-hover:bg-accent/20 group-hover:border-accent/30 group-hover:shadow-accent-glow transition-all duration-300">
             <TrendingUp className="h-5 w-5 text-accent" />
           </div>
-          <span className="text-xl font-bold bg-gradient-to-r from-sky-400 via-cyan-300 to-teal-400 bg-clip-text text-transparent">
+          <span className="text-xl font-bold text-gradient-brand">
             {t('CryptoAlerts')}
           </span>
         </Link>
       </div>
       
-      <div className="flex-1 flex flex-col overflow-y-auto py-4">
-        <nav className="flex-1 px-2 space-y-2">
+      <div className="flex-1 flex flex-col overflow-y-auto py-5">
+        <nav className="flex-1 px-3 space-y-1">
           {navItems.map((item) => (
             <NavLink
               key={item.path}
               to={item.path}
               className={({ isActive }) =>
                 cn(
-                  'flex items-center px-4 py-2 text-sm font-medium rounded-md transition-colors',
+                  'group flex items-center px-3 py-2.5 text-sm font-medium rounded-lg transition-all duration-200',
                   isActive
-                    ? 'bg-accent/10 text-accent'
-                    : 'text-textSecondary hover:bg-surfaceHover hover:text-textPrimary'
+                    ? 'bg-accent/10 text-accent border-l-2 border-accent shadow-sm'
+                    : 'text-textSecondary hover:bg-surfaceHover/70 hover:text-textPrimary border-l-2 border-transparent'
                 )
               }
             >
-              <item.icon className="mr-3 h-5 w-5 shrink-0" style={{ color: item.iconColor }} />
+              <item.icon className="mr-3 h-[18px] w-[18px] shrink-0 transition-transform duration-200 group-hover:scale-110" style={{ color: item.iconColor }} />
               {t(item.labelKey)}
             </NavLink>
           ))}
         </nav>
       </div>
 
-      <div className="p-4 border-t border-border">
+      <div className="p-3 border-t border-border/50">
         <button
           onClick={logout}
-          className="flex items-center w-full px-4 py-2 text-sm font-medium text-textSecondary rounded-md hover:bg-surfaceHover hover:text-textPrimary transition-colors"
+          className="group flex items-center w-full px-3 py-2.5 text-sm font-medium text-textSecondary rounded-lg hover:bg-danger/10 hover:text-danger transition-all duration-200"
         >
-          <LogOut className="mr-3 h-5 w-5 shrink-0" style={{ color: '#f87171' }} />
+          <LogOut className="mr-3 h-[18px] w-[18px] shrink-0 transition-transform duration-200 group-hover:scale-110" style={{ color: '#f87171' }} />
           {t('Logout')}
         </button>
       </div>
