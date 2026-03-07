@@ -24,6 +24,7 @@ model User {
   telegramConnectTokens TelegramConnectToken[]
   activityEvents       UserActivityEvent[]
   dailyActivity        UserDailyActivity[]
+  tokenSettings        UserTokenSetting[]
 }
 
 model UserActivityEvent {
@@ -154,4 +155,23 @@ model EngineLease {
 
   @@index([expiresAt], map: "EngineLease_expiresAt_idx")
   @@map("EngineLease")
+}
+
+// Per-user, per-ticker, per-exchange+market min wall size overrides.
+// When a user sets a custom minWallSize for e.g. BTC on Binance Futures,
+// the density screener uses that threshold instead of the global minVolume.
+// ticker is the base symbol (e.g. "BTC", "ETH", "SOL") — NOT "BTCUSDT".
+model UserTokenSetting {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ticker      String   // e.g. "BTC", "ETH", "SOL"
+  exchange    String   // "binance" | "bybit" | "okx"
+  market      String   // "futures" | "spot"
+  minWallSize Int      // custom min wall size in USD (e.g. 50000000 = $50M)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([userId, ticker, exchange, market])
+  @@index([userId])
 }
