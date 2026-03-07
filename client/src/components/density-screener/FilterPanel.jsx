@@ -1,6 +1,7 @@
 import React, { useRef, useCallback, useState } from 'react';
 import { SlidersHorizontal, X, RotateCcw, Save, ChevronDown, ChevronUp, Settings } from 'lucide-react';
 import { useDensityScreenerStore } from '../../store/densityScreenerStore';
+import TOKEN_THRESHOLDS from '../../config/tokenThresholds';
 
 const EXCHANGES = [
   { key: 'binance', label: 'Binance', color: 'yellow' },
@@ -581,10 +582,10 @@ const TOKEN_DEFAULTS = {
 
 /**
  * Returns the default min wall size for a ticker/exchange/market combo.
- * Returns null if no default exists (cell shows "-").
+ * Priority: specific TOKEN_DEFAULTS entry → TOKEN_THRESHOLDS per-ticker → null.
  */
 function getSuggestedSize(ticker, exchange, market) {
-  return TOKEN_DEFAULTS[`${ticker}|${exchange}|${market}`] ?? null;
+  return TOKEN_DEFAULTS[`${ticker}|${exchange}|${market}`] ?? TOKEN_THRESHOLDS[ticker] ?? null;
 }
 
 function formatWallSize(val) {

@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useDensityScreenerStore } from '../../store/densityScreenerStore';
 import { cn } from '../../utils/cn';
 import { Download, ExternalLink, Loader2 } from 'lucide-react';
+import TOKEN_THRESHOLDS from '../../config/tokenThresholds';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -240,16 +241,33 @@ const DensityCardGrid = () => {
     lastUpdated,
     isFetching,
     exportCSV,
+    tokenSettings,
   } = useDensityScreenerStore();
 
-  // Group walls by symbol, compute totals, sort groups by total volume desc
-  // Excludes stablecoins entirely
+  // Build a lookup: "TICKER|exchange|market" → user's custom minWallSize
+  const userThresholds = useMemo(() => {
+    const m = new Map();
+    for (const s of tokenSettings) {
+      m.set(`${s.ticker}|${s.exchange}|${s.market}`, s.minWallSize);
+    }
+    return m;
+  }, [tokenSettings]);
+
+  // Group walls by symbol, compute totals, sort groups by total volume desc.
+  // Excludes stablecoins and walls below per-token thresholds.
   const groups = useMemo(() => {
     if (!walls?.length) return [];
 
     const map = new Map();
     for (const wall of walls) {
       if (isStablecoin(wall.symbol)) continue; // skip stablecoins
+
+      // ── Per-token minimum threshold filtering ──
+      const baseTicker = wall.symbol.replace(/(USDT|USDC|USD)$/i, '');
+      const userKey = `${baseTicker}|${wall.exchange}|${wall.market}`;
+      const minSize = userThresholds.get(userKey) ?? TOKEN_THRESHOLDS[baseTicker] ?? 0;
+      if (minSize > 0 && (wall.volumeUSD || 0) < minSize) continue; // below threshold
+
       const key = wall.symbol;
       if (!map.has(key)) map.set(key, { symbol: key, walls: [], totalVolume: 0 });
       const group = map.get(key);
@@ -258,7 +276,7 @@ const DensityCardGrid = () => {
     }
 
     return Array.from(map.values()).sort((a, b) => b.totalVolume - a.totalVolume);
-  }, [walls]);
+  }, [walls, userThresholds]);
 
   // ── Loading state ─────────────────────────────────────────
   if (loading && walls.length === 0) {
