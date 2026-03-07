@@ -4,20 +4,63 @@ const { extractWalls, normalizeSymbol, delay } = require('./utils');
 const OKX_BASE = 'https://www.okx.com';
 const CACHE_TTL = 30000; // 30 seconds
 const BATCH_SIZE = 15; // OKX rate limits are strict: 40 req/2s = 20/s
+const CTVAL_CACHE_TTL = 10 * 60 * 1000; // Refresh contract values every 10 min
 
 class OkxFastScanner {
   constructor(market = 'futures') {
     this.market = market;
     this.instType = market === 'futures' ? 'SWAP' : 'SPOT';
     this.orderBookCache = new Map();
+
+    // Contract value cache for SWAP instruments.
+    // Maps instId (e.g. "BTC-USDT-SWAP") → ctVal (e.g. 0.01).
+    // For SWAP: order book size is in CONTRACTS, not base coin.
+    // Real quantity = contracts × ctVal. Without this, volumes are wildly wrong
+    // (BTC 100× inflated, DOGE 100× deflated).
+    this.ctValMap = new Map();
+    this.ctValCachedAt = 0;
+  }
+
+  /**
+   * Fetch contract values (ctVal) for all SWAP instruments.
+   * ctVal converts contract count → base coin quantity.
+   * E.g. BTC-USDT-SWAP ctVal=0.01 means 1 contract = 0.01 BTC.
+   * Cached for 10 minutes — ctVal rarely changes.
+   */
+  async _fetchContractValues() {
+    if (this.instType !== 'SWAP') return; // Spot doesn't need ctVal
+    if (this.ctValMap.size > 0 && Date.now() - this.ctValCachedAt < CTVAL_CACHE_TTL) return;
+
+    try {
+      const response = await axios.get(`${OKX_BASE}/api/v5/public/instruments`, {
+        params: { instType: 'SWAP' },
+        timeout: 10000,
+      });
+
+      const instruments = response.data?.data || [];
+      let count = 0;
+
+      for (const inst of instruments) {
+        if (inst.instId && inst.ctVal) {
+          this.ctValMap.set(inst.instId, parseFloat(inst.ctVal));
+          count++;
+        }
+      }
+
+      this.ctValCachedAt = Date.now();
+      console.log(`[OkxFast:${this.market}] Loaded ctVal for ${count} SWAP instruments`);
+    } catch (error) {
+      console.error(`[OkxFast:${this.market}] Failed to fetch ctVal: ${error.message}`);
+      // Keep using cached values if available
+    }
   }
 
   /**
    * Get all USDT symbols from OKX, sorted by 24h volume descending.
    * Single API call. Filter by USDT pairs only.
    *
-   * For SPOT: instId format is "BTC-USDT", volCcy24h is in USDT.
-   * For SWAP: instId format is "BTC-USDT-SWAP", vol24h is in contracts.
+   * For SPOT: volCcy24h is in quote currency (USDT) — use directly.
+   * For SWAP: volCcy24h is in base currency — multiply by last price for USD.
    */
   async getAllSymbols(minVolumeUSD = 0) {
     try {
@@ -41,24 +84,14 @@ class OkxFastScanner {
           let volumeUSD;
 
           if (this.instType === 'SPOT') {
-            // volCcy24h is already in quote currency (USDT)
+            // SPOT: volCcy24h is in quote currency (USDT) — use directly
             volumeUSD = parseFloat(t.volCcy24h) || 0;
           } else {
-            // SWAP: volCcy24h can be in base currency
-            // Use volCcy24h * last as a rough USDT estimate
+            // SWAP: volCcy24h is ALWAYS in base currency (per OKX docs)
+            // Multiply by last price to get USD volume
             const volCcy = parseFloat(t.volCcy24h) || 0;
             const last = parseFloat(t.last) || 0;
-
-            // If volCcy24h seems unreasonably small (likely base coin), multiply by last
-            if (volCcy > 0 && last > 0 && volCcy < 1000 && last > 100) {
-              volumeUSD = volCcy * last;
-            } else if (volCcy > 0) {
-              // Likely already in USDT or large enough to use directly
-              volumeUSD = volCcy;
-            } else {
-              // Fallback: vol24h (contracts) * last
-              volumeUSD = (parseFloat(t.vol24h) || 0) * last;
-            }
+            volumeUSD = volCcy * last;
           }
 
           return {
@@ -104,13 +137,19 @@ class OkxFastScanner {
       });
 
       const bookData = response.data?.data?.[0] || {};
+
+      // For SWAP: size is in CONTRACTS, not base coin.
+      // Multiply by ctVal to get real base-coin quantity.
+      // E.g. BTC-USDT-SWAP ctVal=0.01 → 100 contracts = 1 BTC, not 100 BTC.
+      const ctVal = this.ctValMap.get(instId) || 1;
+
       const bids = (bookData.bids || []).map(([price, size]) => [
         parseFloat(price),
-        parseFloat(size),
+        parseFloat(size) * ctVal,
       ]);
       const asks = (bookData.asks || []).map(([price, size]) => [
         parseFloat(price),
-        parseFloat(size),
+        parseFloat(size) * ctVal,
       ]);
 
       const orderBook = { bids, asks };
@@ -143,6 +182,9 @@ class OkxFastScanner {
   } = {}) {
     const startTime = Date.now();
     const depthPercent = depth;
+
+    // Load contract values for SWAP instruments (cached 10 min)
+    await this._fetchContractValues();
 
     const symbols = await this.getAllSymbols(minVolumeUSD);
     if (symbols.length === 0) {

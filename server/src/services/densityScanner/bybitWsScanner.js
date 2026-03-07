@@ -81,7 +81,7 @@ class BybitWsScanner {
 
     /**
      * Order books maintained via snapshot + delta updates.
-     * Map<symbol, { bids: Map<priceStr, qtyStr>, asks: Map<priceStr, qtyStr>, updatedAt }>
+     * Map<symbol, { bids: Map<priceStr, qtyStr>, asks: Map<priceStr, qtyStr>, updatedAt, seq }>
      * Using Map<priceStr, qtyStr> for O(1) delta updates; converted to sorted arrays for scanning.
      */
     this.orderBooks = new Map();
@@ -93,6 +93,7 @@ class BybitWsScanner {
     this._reconnectTimer = null;
     this._symbolRefreshTimer = null;
     this._pingTimer = null;
+    this._resubQueue = new Set(); // symbols needing re-snapshot due to seq gap
 
     this._init();
   }
@@ -268,6 +269,9 @@ class BybitWsScanner {
 
   /**
    * Process an order book WebSocket message (snapshot or delta).
+   * Validates sequence numbers to detect missed messages.
+   * On sequence gap or crossed book, discards the book and re-subscribes
+   * to get a fresh snapshot.
    */
   _handleOrderBookMessage(msg) {
     // topic: "orderbook.{depth}.BTCUSDT" (e.g. orderbook.200.BTCUSDT or orderbook.50.BTCUSDT)
@@ -277,6 +281,8 @@ class BybitWsScanner {
 
     const data = msg.data;
     if (!data) return;
+
+    const msgSeq = data.seq || data.u || 0;
 
     if (msg.type === 'snapshot') {
       // Full snapshot — replace entire book
@@ -290,11 +296,22 @@ class BybitWsScanner {
         asks.set(p, q);
       }
 
-      this.orderBooks.set(symbol, { bids, asks, updatedAt: Date.now() });
+      this.orderBooks.set(symbol, { bids, asks, updatedAt: Date.now(), seq: msgSeq });
+      this._resubQueue.delete(symbol);
     } else if (msg.type === 'delta') {
       // Incremental update
       const book = this.orderBooks.get(symbol);
       if (!book) return; // no snapshot yet, skip delta
+
+      // Sequence gap detection: if we missed messages, the book is corrupted
+      if (book.seq && msgSeq && msgSeq > book.seq + 1) {
+        console.warn(
+          `[${this.label}] Seq gap for ${symbol}: expected ${book.seq + 1}, got ${msgSeq} — requesting re-snapshot`
+        );
+        this.orderBooks.delete(symbol);
+        this._requestResnapshot(symbol);
+        return;
+      }
 
       for (const [p, q] of (data.b || [])) {
         if (q === '0') {
@@ -312,8 +329,75 @@ class BybitWsScanner {
         }
       }
 
+      book.seq = msgSeq;
       book.updatedAt = Date.now();
+
+      // Crossed-book sanity check: best bid must be < best ask
+      this._validateBook(symbol, book);
     }
+  }
+
+  /**
+   * Validate book integrity: detect crossed books and oversized books.
+   * If corrupt, delete and request fresh snapshot.
+   */
+  _validateBook(symbol, book) {
+    // Quick crossed-book check using first-found entries
+    let bestBid = 0;
+    let bestAsk = Infinity;
+
+    for (const p of book.bids.keys()) {
+      const pf = parseFloat(p);
+      if (pf > bestBid) bestBid = pf;
+    }
+    for (const p of book.asks.keys()) {
+      const pf = parseFloat(p);
+      if (pf < bestAsk) bestAsk = pf;
+    }
+
+    if (bestBid > 0 && bestAsk < Infinity && bestBid >= bestAsk) {
+      console.warn(
+        `[${this.label}] Crossed book for ${symbol}: bid=${bestBid} >= ask=${bestAsk} — requesting re-snapshot`
+      );
+      this.orderBooks.delete(symbol);
+      this._requestResnapshot(symbol);
+      return;
+    }
+
+    // Guard against unbounded book growth (should be ~200 levels per side max)
+    const MAX_LEVELS = 500;
+    if (book.bids.size > MAX_LEVELS || book.asks.size > MAX_LEVELS) {
+      console.warn(
+        `[${this.label}] Oversized book for ${symbol}: ${book.bids.size} bids, ${book.asks.size} asks — requesting re-snapshot`
+      );
+      this.orderBooks.delete(symbol);
+      this._requestResnapshot(symbol);
+    }
+  }
+
+  /**
+   * Request a fresh snapshot by unsubscribing and resubscribing to the topic.
+   * Debounced per symbol to avoid re-sub storms.
+   */
+  _requestResnapshot(symbol) {
+    if (this._resubQueue.has(symbol)) return; // already pending
+    this._resubQueue.add(symbol);
+
+    const depth = this.cfg.bookDepth || 50;
+    const topic = `orderbook.${depth}.${symbol}`;
+
+    try {
+      this.ws.send(JSON.stringify({ op: 'unsubscribe', args: [topic] }));
+    } catch (e) { /* ignore */ }
+
+    // Small delay before resubscribing to let the unsub process
+    setTimeout(() => {
+      try {
+        if (this._connected && this.ws) {
+          this.ws.send(JSON.stringify({ op: 'subscribe', args: [topic] }));
+        }
+      } catch (e) { /* ignore */ }
+    }, 500);
   }
 
   /**
