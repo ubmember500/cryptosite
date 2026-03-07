@@ -546,17 +546,19 @@ const MCAP_RANK = {
   ORDI: 82, XAG: 83, XAU: 84, HYPE: 85, '1000CAT': 86,
 };
 
-// Suggested default sizes (USD) by market-cap tier — shown as dim placeholder so users
-// immediately understand "this is a $ wall size I can customize".
-function getSuggestedSize(ticker) {
+// Suggested default sizes (USD) by market-cap tier, differentiated by market type.
+// Futures get higher thresholds because of leverage → bigger notional walls.
+function getSuggestedSize(ticker, market) {
   const rank = MCAP_RANK[ticker] ?? 999;
-  if (rank <= 2)  return 50_000_000;  // BTC / ETH → $50M
-  if (rank <= 5)  return 10_000_000;  // Top 5 → $10M
-  if (rank <= 10) return 5_000_000;   // Top 10 → $5M
-  if (rank <= 20) return 2_000_000;   // Top 20 → $2M
-  if (rank <= 50) return 1_000_000;   // Top 50 → $1M
-  if (rank <= 100) return 500_000;    // Top 100 → $500K
-  return 300_000;                     // Others → $300K
+  const isFut = market === 'futures';
+
+  if (rank <= 3)  return isFut ? 50_000_000 : 20_000_000;   // BTC, ETH, BNB
+  if (rank <= 5)  return isFut ? 30_000_000 : 10_000_000;   // SOL, XRP
+  if (rank <= 10) return isFut ? 15_000_000 : 5_000_000;    // Top 10
+  if (rank <= 20) return isFut ? 15_000_000 : 5_000_000;    // Top 20
+  if (rank <= 30) return isFut ? 15_000_000 : 5_000_000;    // Top 30
+  if (rank <= 999) return null;                              // Others → no suggestion
+  return null;
 }
 
 function formatWallSize(val) {
@@ -828,13 +830,13 @@ function IndividualSettingsModal({ onClose }) {
                     ) : pageTickers.length === 0 ? (
                       <tr><td colSpan={7} className="text-center py-8 text-textSecondary text-sm">No tickers found</td></tr>
                     ) : pageTickers.map((ticker, i) => {
-                      const suggested = getSuggestedSize(ticker);
                       return (
                         <tr key={ticker} className={`border-b border-border/50 ${i % 2 === 0 ? 'bg-surface' : 'bg-surfaceHover/30'} hover:bg-surfaceHover/60 transition-colors`}>
                           <td className="px-4 py-2.5 text-textPrimary font-semibold text-sm sticky left-0 bg-inherit">{ticker}</td>
                           {EXCHANGES_MARKETS.map((em) => {
                             const key = `${ticker}|${em.exchange}|${em.market}`;
                             const val = settingsMap.get(key) ?? null;
+                            const suggested = getSuggestedSize(ticker, em.market);
                             return (
                               <td key={`${em.exchange}_${em.market}`} className="px-3 py-2">
                                 <EditableCell

@@ -86,24 +86,43 @@ function WallRow({ wall }) {
   const isFresh = wall.wallAgeMs != null && wall.wallAgeMs < 120000;
   const pct = wall.percentFromMid;
 
+  // Volume-based row background intensity
+  const bidBg = wall.volumeUSD >= 10_000_000 ? 'bg-green-500/25 hover:bg-green-500/35' :
+                wall.volumeUSD >= 5_000_000  ? 'bg-green-500/20 hover:bg-green-500/30' :
+                wall.volumeUSD >= 1_000_000  ? 'bg-green-500/15 hover:bg-green-500/25' :
+                                               'bg-green-500/10 hover:bg-green-500/20';
+  const askBg = wall.volumeUSD >= 10_000_000 ? 'bg-red-500/25 hover:bg-red-500/35' :
+                wall.volumeUSD >= 5_000_000  ? 'bg-red-500/20 hover:bg-red-500/30' :
+                wall.volumeUSD >= 1_000_000  ? 'bg-red-500/15 hover:bg-red-500/25' :
+                                               'bg-red-500/10 hover:bg-red-500/20';
+
   return (
     <div className={cn(
-      'flex items-center gap-1.5 px-2 py-1 text-xs leading-snug rounded transition-colors hover:bg-surfaceHover/50',
-      isBid ? 'border-l-[3px] border-l-green-500/70' : 'border-l-[3px] border-l-red-500/70',
+      'flex items-center gap-1.5 px-2 py-[5px] text-[13px] leading-snug rounded-sm transition-colors',
+      isBid ? bidBg : askBg,
     )}>
       {/* Exchange + market badge */}
       <span className={cn('px-1 py-0.5 rounded text-[9px] font-bold border shrink-0 uppercase leading-none', badge.color)}>
         {badge.abbr} {marketLabel}
       </span>
 
+      {/* Volume — prominent, first after badge */}
+      <span className={cn(
+        'font-bold shrink-0',
+        wall.volumeUSD >= 5_000_000 ? 'text-yellow-300' :
+        wall.volumeUSD >= 1_000_000 ? 'text-textPrimary' : 'text-textSecondary',
+      )}>
+        {formatUSD(wall.volumeUSD)}
+      </span>
+
       {/* Price */}
-      <span className="font-mono text-textSecondary shrink-0 text-[11px]">${formatPrice(wall.price)}</span>
+      <span className="font-mono text-textSecondary shrink-0 text-[12px]">${formatPrice(wall.price)}</span>
 
       {/* % from mid */}
       {pct != null && (
         <span className={cn(
-          'text-[10px] shrink-0',
-          Math.abs(pct) <= 1 ? 'text-green-400' : Math.abs(pct) <= 3 ? 'text-yellow-400' : 'text-textSecondary/50',
+          'text-[11px] shrink-0',
+          Math.abs(pct) <= 1 ? 'text-green-300' : Math.abs(pct) <= 3 ? 'text-yellow-300' : 'text-textSecondary/60',
         )}>
           {Math.abs(pct).toFixed(1)}%
         </span>
@@ -112,20 +131,11 @@ function WallRow({ wall }) {
       {/* Spacer */}
       <span className="flex-1" />
 
-      {/* Volume */}
-      <span className={cn(
-        'font-semibold shrink-0 text-xs',
-        wall.volumeUSD >= 5_000_000 ? 'text-yellow-400' :
-        wall.volumeUSD >= 1_000_000 ? 'text-textPrimary' : 'text-textSecondary',
-      )}>
-        {formatUSD(wall.volumeUSD)}
-      </span>
-
       {/* Age */}
-      <span className="text-textSecondary/60 shrink-0 text-[10px] w-8 text-right">
+      <span className="text-textSecondary/70 shrink-0 text-[11px]">
         {formatAge(wall.wallAgeMs)}
         {isFresh && (
-          <span className="inline-block ml-0.5 w-1.5 h-1.5 rounded-full bg-green-500 align-middle" />
+          <span className="inline-block ml-0.5 w-1.5 h-1.5 rounded-full bg-green-400 align-middle" />
         )}
       </span>
 
@@ -135,7 +145,7 @@ function WallRow({ wall }) {
           href={tradeUrl}
           target="_blank"
           rel="noopener noreferrer"
-          className="text-accent/40 hover:text-accent transition-colors shrink-0 hidden sm:inline"
+          className="text-textSecondary/40 hover:text-accent transition-colors shrink-0"
           title={`Open on ${wall.exchange}`}
         >
           <ExternalLink size={11} />
@@ -162,16 +172,16 @@ function TokenCard({ symbol, walls, totalVolume }) {
   return (
     <div className="bg-surface border border-border rounded-lg overflow-hidden flex flex-col">
       {/* Card header */}
-      <div className="flex items-center justify-between px-3 py-2 bg-surfaceHover/40 border-b border-border">
+      <div className="flex items-center justify-between px-3 py-2 bg-surfaceHover/50 border-b border-border">
         <div className="flex items-center gap-2 min-w-0">
           <span className="text-sm font-bold text-textPrimary truncate">{baseSymbol}</span>
-          <span className="text-[10px] text-textSecondary">{walls.length}</span>
+          <span className="text-[11px] text-textSecondary">{walls.length}</span>
         </div>
-        <span className="text-xs font-semibold text-accent shrink-0">{formatUSD(totalVolume)}</span>
+        <span className="text-sm font-bold text-accent shrink-0">{formatUSD(totalVolume)}</span>
       </div>
 
       {/* Walls list */}
-      <div className="flex-1 flex flex-col gap-0 p-1">
+      <div className="flex-1 flex flex-col gap-[1px] bg-border/30 p-0">
         {sortedWalls.map((wall, i) => (
           <WallRow
             key={`${wall.exchange}-${wall.market}-${wall.side}-${wall.price}-${i}`}
