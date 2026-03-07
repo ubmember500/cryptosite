@@ -2,7 +2,7 @@ import React, { useEffect } from 'react';
 import { useDensityScreenerStore } from '../store/densityScreenerStore';
 import usePageTitle from '../hooks/usePageTitle';
 import FilterPanel from '../components/density-screener/FilterPanel';
-import DensityTable from '../components/density-screener/DensityTable';
+import DensityCardGrid from '../components/density-screener/DensityCardGrid';
 import StatusBar from '../components/density-screener/StatusBar';
 
 const DensityScreener = () => {
@@ -51,9 +51,9 @@ const DensityScreener = () => {
             <FilterPanel />
           </div>
 
-          {/* Table + status area */}
+          {/* Card grid + status area */}
           <div className="flex-1 min-w-0 flex flex-col gap-3">
-            <DensityTable />
+            <DensityCardGrid />
             <StatusBar />
           </div>
         </div>
