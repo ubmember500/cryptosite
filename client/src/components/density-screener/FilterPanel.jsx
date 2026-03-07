@@ -1,5 +1,5 @@
 import React, { useRef, useCallback, useState } from 'react';
-import { SlidersHorizontal, X, RotateCcw, Save, ChevronDown, ChevronUp, EyeOff } from 'lucide-react';
+import { SlidersHorizontal, X, RotateCcw, Save, ChevronDown, ChevronUp, Settings } from 'lucide-react';
 import { useDensityScreenerStore } from '../../store/densityScreenerStore';
 
 const EXCHANGES = [
@@ -53,12 +53,6 @@ const AGE_OPTIONS = [
   { label: '4h+', value: 14400 },
 ];
 
-const SORT_OPTIONS = [
-  { key: 'volumeUSD', label: 'Volume USD' },
-  { key: 'wallAgeMs', label: 'Wall Age' },
-  { key: 'percentFromMid', label: 'Distance from Mid' },
-];
-
 function formatVolume(value) {
   if (value >= 1000000) return `$${(value / 1000000).toFixed(value % 1000000 === 0 ? 0 : 1)}M`;
   if (value >= 1000) return `$${(value / 1000).toFixed(value % 1000 === 0 ? 0 : 1)}K`;
@@ -87,10 +81,10 @@ export default function FilterPanel() {
 
   const debounceRef = useRef(null);
   const [tokenInput, setTokenInput] = useState('');
-  const [hideTokenInput, setHideTokenInput] = useState('');
   const [presetName, setPresetName] = useState('');
   const [showPresetInput, setShowPresetInput] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [showIndividualSettings, setShowIndividualSettings] = useState(false);
 
   const debouncedFetch = useCallback(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -174,34 +168,6 @@ export default function FilterPanel() {
     const current = filters.symbols || [];
     handleFilterChange(
       'symbols',
-      current.filter((s) => s !== sym),
-    );
-  };
-
-  // --- Hidden tokens ---
-  const handleHideTokenKeyDown = (e) => {
-    if (e.key === 'Enter' && hideTokenInput.trim()) {
-      e.preventDefault();
-      addHiddenTokens();
-    }
-  };
-
-  const addHiddenTokens = () => {
-    if (!hideTokenInput.trim()) return;
-    const newSymbols = hideTokenInput
-      .split(',')
-      .map((s) => s.trim().toUpperCase())
-      .filter(Boolean);
-    const current = filters.hiddenSymbols || [];
-    const merged = [...new Set([...current, ...newSymbols])];
-    handleFilterChange('hiddenSymbols', merged);
-    setHideTokenInput('');
-  };
-
-  const removeHiddenSymbol = (sym) => {
-    const current = filters.hiddenSymbols || [];
-    handleFilterChange(
-      'hiddenSymbols',
       current.filter((s) => s !== sym),
     );
   };
@@ -348,9 +314,9 @@ export default function FilterPanel() {
             Add
           </button>
         </div>
-        <div className="mt-1.5 flex flex-wrap gap-1 min-h-[20px]">
-          {(filters.symbols || []).length > 0 ? (
-            (filters.symbols || []).map((sym) => (
+        {(filters.symbols || []).length > 0 && (
+          <div className="mt-1.5 flex flex-wrap gap-1">
+            {(filters.symbols || []).map((sym) => (
               <span
                 key={sym}
                 className="inline-flex items-center gap-0.5 px-2 py-0.5 text-[11px] font-medium rounded-full bg-accent/15 text-accent border border-accent/30"
@@ -363,59 +329,20 @@ export default function FilterPanel() {
                   <X size={10} />
                 </button>
               </span>
-            ))
-          ) : (
-            <span className="text-[11px] text-textSecondary/60 italic">All tokens</span>
-          )}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
 
-      {/* Hidden tokens */}
+      {/* Individual Settings */}
       <div>
-        <SectionLabel>
-          <span className="flex items-center gap-1">
-            <EyeOff size={11} />
-            Hide Tokens
-          </span>
-        </SectionLabel>
-        <div className="flex gap-1.5">
-          <input
-            type="text"
-            value={hideTokenInput}
-            onChange={(e) => setHideTokenInput(e.target.value)}
-            onKeyDown={handleHideTokenKeyDown}
-            placeholder="BTCUSDT, ETHUSDT…"
-            className="flex-1 min-w-0 px-2 py-1 text-xs rounded-lg bg-background border border-border text-textPrimary placeholder:text-textSecondary/50 focus:outline-none focus:border-accent/60"
-          />
-          <button
-            onClick={addHiddenTokens}
-            disabled={!hideTokenInput.trim()}
-            className="px-2 py-1 text-xs rounded-lg bg-red-500/20 text-red-400 hover:bg-red-500/30 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-          >
-            Hide
-          </button>
-        </div>
-        <div className="mt-1.5 flex flex-wrap gap-1 min-h-[20px]">
-          {(filters.hiddenSymbols || []).length > 0 ? (
-            (filters.hiddenSymbols || []).map((sym) => (
-              <span
-                key={sym}
-                className="inline-flex items-center gap-0.5 px-2 py-0.5 text-[11px] font-medium rounded-full bg-red-500/15 text-red-400 border border-red-500/30"
-              >
-                {sym}
-                <button
-                  onClick={() => removeHiddenSymbol(sym)}
-                  className="ml-0.5 hover:text-textPrimary transition-colors"
-                  title="Stop hiding"
-                >
-                  <X size={10} />
-                </button>
-              </span>
-            ))
-          ) : (
-            <span className="text-[11px] text-textSecondary/60 italic">None hidden</span>
-          )}
-        </div>
+        <button
+          onClick={() => setShowIndividualSettings(true)}
+          className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs font-medium rounded-lg border border-accent/40 bg-accent/10 text-accent hover:bg-accent/20 hover:border-accent/60 transition-colors"
+        >
+          <Settings size={14} />
+          Individual Settings
+        </button>
       </div>
 
       {/* Min wall age */}
@@ -459,39 +386,6 @@ export default function FilterPanel() {
           <span className="text-xs font-mono text-textPrimary min-w-[3rem] text-right">
             {(filters.maxDistFromMid || 10).toFixed(1)}%
           </span>
-        </div>
-      </div>
-
-      {/* Sort by */}
-      <div>
-        <SectionLabel>Sort By</SectionLabel>
-        <div className="flex gap-1.5">
-          <select
-            value={filters.sort || 'volumeUSD'}
-            onChange={(e) => handleFilterChange('sort', e.target.value)}
-            className="flex-1 px-2 py-1.5 text-xs rounded-lg bg-background border border-border text-textPrimary focus:outline-none focus:border-accent/60 appearance-none cursor-pointer"
-            style={{
-              backgroundImage:
-                'url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'12\' height=\'12\' viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'%239ca3af\' stroke-width=\'2\'%3E%3Cpolyline points=\'6 9 12 15 18 9\'%3E%3C/polyline%3E%3C/svg%3E")',
-              backgroundRepeat: 'no-repeat',
-              backgroundPosition: 'right 8px center',
-            }}
-          >
-            {SORT_OPTIONS.map((opt) => (
-              <option key={opt.key} value={opt.key}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-          <button
-            onClick={() =>
-              handleFilterChange('order', filters.order === 'desc' ? 'asc' : 'desc')
-            }
-            className="px-2 py-1.5 text-xs rounded-lg bg-surfaceHover border border-border text-textSecondary hover:text-accent hover:border-accent/40 transition-colors"
-            title={filters.order === 'desc' ? 'Descending' : 'Ascending'}
-          >
-            {filters.order === 'asc' ? '↑' : '↓'}
-          </button>
         </div>
       </div>
 
@@ -615,6 +509,163 @@ export default function FilterPanel() {
         </div>
         {panelContent}
       </div>
+
+      {/* Individual Settings Modal */}
+      {showIndividualSettings && (
+        <IndividualSettingsModal onClose={() => setShowIndividualSettings(false)} />
+      )}
     </>
+  );
+}
+
+// ─── Individual Settings Modal ────────────────────────────────────────────────
+// Placeholder — will be fully implemented with DB-backed per-token settings in subsequent steps.
+
+function IndividualSettingsModal({ onClose }) {
+  const [activeTab, setActiveTab] = React.useState('individual');
+  const [search, setSearch] = React.useState('');
+  const [page, setPage] = React.useState(1);
+
+  // Sample tokens for the preview structure
+  const PREVIEW_TOKENS = [
+    { ticker: '4', binanceFut: '350K', binanceSpot: '-', bybitFut: '450K', bybitSpot: '-', okxFut: '-', okxSpot: '-' },
+    { ticker: 'BTC', binanceFut: '50M', binanceSpot: '50M', bybitFut: '50M', bybitSpot: '50M', okxFut: '50M', okxSpot: '50M' },
+    { ticker: 'ETH', binanceFut: '50M', binanceSpot: '50M', bybitFut: '50M', bybitSpot: '50M', okxFut: '50M', okxSpot: '50M' },
+    { ticker: 'SOL', binanceFut: '35M', binanceSpot: '24.45M', bybitFut: '35M', bybitSpot: '50M', okxFut: '50M', okxSpot: '50M' },
+    { ticker: 'XRP', binanceFut: '7M', binanceSpot: '3.5M', bybitFut: '450K', bybitSpot: '300K', okxFut: '450K', okxSpot: '300K' },
+  ];
+
+  const totalPages = 5;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
+      <div
+        className="bg-surface border border-border rounded-2xl shadow-2xl w-full max-w-[900px] mx-4 max-h-[85vh] overflow-hidden flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border shrink-0">
+          <h2 className="text-accent text-lg font-bold tracking-wide uppercase">Settings</h2>
+          <div className="flex items-center gap-2">
+            <button className="p-1.5 rounded-lg text-textSecondary hover:text-textPrimary hover:bg-surfaceHover transition-colors" title="Reset all">
+              <RotateCcw size={16} />
+            </button>
+            <button
+              onClick={onClose}
+              className="p-1.5 rounded-lg text-textSecondary hover:text-textPrimary hover:bg-surfaceHover transition-colors"
+            >
+              <X size={16} />
+            </button>
+          </div>
+        </div>
+
+        {/* Tabs */}
+        <div className="flex border-b border-border shrink-0">
+          <button
+            onClick={() => setActiveTab('main')}
+            className={`flex-1 px-4 py-3 text-sm font-medium transition-colors border-b-2 ${
+              activeTab === 'main'
+                ? 'text-accent border-accent'
+                : 'text-textSecondary border-transparent hover:text-textPrimary'
+            }`}
+          >
+            <span className="flex items-center justify-center gap-2">
+              <SlidersHorizontal size={14} />
+              Main
+            </span>
+          </button>
+          <button
+            onClick={() => setActiveTab('individual')}
+            className={`flex-1 px-4 py-3 text-sm font-medium transition-colors border-b-2 ${
+              activeTab === 'individual'
+                ? 'text-accent border-accent'
+                : 'text-textSecondary border-transparent hover:text-textPrimary'
+            }`}
+          >
+            <span className="flex items-center justify-center gap-2">
+              <span className="text-base font-bold">$</span>
+              Individual
+            </span>
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 overflow-auto">
+          {activeTab === 'main' ? (
+            <div className="p-6 text-center text-textSecondary text-sm">
+              <p>Main settings are available in the sidebar filter panel.</p>
+            </div>
+          ) : (
+            <div className="p-4">
+              {/* Search + Only changed */}
+              <div className="flex items-center gap-3 mb-4">
+                <input
+                  type="text"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search"
+                  className="flex-1 px-3 py-2 text-sm rounded-lg bg-background border border-border text-textPrimary placeholder:text-textSecondary/50 focus:outline-none focus:border-accent/60"
+                />
+                <label className="flex items-center gap-2 text-sm text-textSecondary cursor-pointer select-none">
+                  <input type="checkbox" className="rounded border-border bg-background text-accent focus:ring-accent/50" />
+                  Only changed
+                </label>
+              </div>
+
+              {/* Table */}
+              <div className="overflow-x-auto rounded-lg border border-red-500/30">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-red-500/10 border-b border-red-500/20">
+                      <th className="px-4 py-2.5 text-left text-xs font-semibold text-accent">Ticker</th>
+                      <th className="px-3 py-2.5 text-left text-xs font-semibold text-accent">Binance Futures</th>
+                      <th className="px-3 py-2.5 text-left text-xs font-semibold text-accent">Binance Spot</th>
+                      <th className="px-3 py-2.5 text-left text-xs font-semibold text-accent">Bybit Futures</th>
+                      <th className="px-3 py-2.5 text-left text-xs font-semibold text-accent">Bybit Spot</th>
+                      <th className="px-3 py-2.5 text-left text-xs font-semibold text-accent">OKX Futures</th>
+                      <th className="px-3 py-2.5 text-left text-xs font-semibold text-accent">OKX Spot</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {PREVIEW_TOKENS.filter(t => !search || t.ticker.toLowerCase().includes(search.toLowerCase())).map((token, i) => (
+                      <tr key={token.ticker} className={`border-b border-border/50 ${i % 2 === 0 ? 'bg-surface' : 'bg-surfaceHover/30'} hover:bg-surfaceHover/60 transition-colors`}>
+                        <td className="px-4 py-2.5 text-textSecondary font-medium">{token.ticker}</td>
+                        <td className="px-3 py-2.5"><span className={token.binanceFut !== '-' ? 'text-yellow-400 font-medium' : 'text-textSecondary/40'}>{token.binanceFut}</span></td>
+                        <td className="px-3 py-2.5"><span className={token.binanceSpot !== '-' ? 'text-yellow-400 font-medium' : 'text-textSecondary/40'}>{token.binanceSpot}</span></td>
+                        <td className="px-3 py-2.5"><span className={token.bybitFut !== '-' ? 'text-orange-400 font-medium' : 'text-textSecondary/40'}>{token.bybitFut}</span></td>
+                        <td className="px-3 py-2.5"><span className={token.bybitSpot !== '-' ? 'text-orange-400 font-medium' : 'text-textSecondary/40'}>{token.bybitSpot}</span></td>
+                        <td className="px-3 py-2.5"><span className={token.okxFut !== '-' ? 'text-blue-400 font-medium' : 'text-textSecondary/40'}>{token.okxFut}</span></td>
+                        <td className="px-3 py-2.5"><span className={token.okxSpot !== '-' ? 'text-blue-400 font-medium' : 'text-textSecondary/40'}>{token.okxSpot}</span></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Pagination */}
+              <div className="flex items-center justify-center gap-1 mt-4">
+                <button onClick={() => setPage(1)} disabled={page === 1} className="px-2 py-1 text-xs rounded border border-border text-textSecondary hover:text-textPrimary hover:bg-surfaceHover disabled:opacity-30 transition-colors">&laquo;</button>
+                <button onClick={() => setPage(Math.max(1, page - 1))} disabled={page === 1} className="px-2 py-1 text-xs rounded border border-border text-textSecondary hover:text-textPrimary hover:bg-surfaceHover disabled:opacity-30 transition-colors">&lsaquo;</button>
+                {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
+                  <button
+                    key={p}
+                    onClick={() => setPage(p)}
+                    className={`px-2.5 py-1 text-xs rounded border transition-colors ${
+                      p === page
+                        ? 'bg-accent/20 border-accent/50 text-accent font-semibold'
+                        : 'border-border text-textSecondary hover:text-textPrimary hover:bg-surfaceHover'
+                    }`}
+                  >
+                    {p}
+                  </button>
+                ))}
+                <button onClick={() => setPage(Math.min(totalPages, page + 1))} disabled={page === totalPages} className="px-2 py-1 text-xs rounded border border-border text-textSecondary hover:text-textPrimary hover:bg-surfaceHover disabled:opacity-30 transition-colors">&rsaquo;</button>
+                <button onClick={() => setPage(totalPages)} disabled={page === totalPages} className="px-2 py-1 text-xs rounded border border-border text-textSecondary hover:text-textPrimary hover:bg-surfaceHover disabled:opacity-30 transition-colors">&raquo;</button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
