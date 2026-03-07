@@ -35,7 +35,7 @@ const MARKET_CONFIG = {
     wsURL: 'wss://stream.bybit.com/v5/public/spot',
     category: 'spot',
     label: 'BybitWS:spot',
-    bookDepth: 50,          // orderbook.50 — spot only supports 50-level books
+    bookDepth: 200,         // orderbook.200 — Bybit V5 spot supports 200-level books
   },
 };
 

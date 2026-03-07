@@ -4,7 +4,7 @@ import api from '../services/api';
 // Default filter values
 const DEFAULT_FILTERS = {
   exchanges: ['binance', 'bybit', 'okx'],
-  markets: ['futures'],
+  markets: ['futures', 'spot'],
   minVolume: 100000,    // $100K — lower default to surface more walls (matches stakan.live coverage)
   side: 'Both',
   symbols: [],          // empty = all symbols

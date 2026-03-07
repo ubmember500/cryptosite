@@ -13,7 +13,7 @@ const densityScannerService = require('../services/densityScanner');
  * 
  * Query params:
  *   exchanges   — comma-separated: binance,bybit,okx (default: all)
- *   markets     — comma-separated: futures,spot (default: futures)
+ *   markets     — comma-separated: futures,spot (default: both)
  *   minVolume   — minimum wall volumeUSD (default: 100000)
  *   maxVolume   — maximum wall volumeUSD (optional, no default)
  *   side        — BID, ASK, or Both (default: Both)
@@ -36,7 +36,7 @@ async function getWalls(req, res, next) {
     
     let marketFilter = req.query.markets
       ? req.query.markets.split(',').map(m => m.trim().toLowerCase()).filter(Boolean)
-      : ['futures'];
+      : ['futures', 'spot'];
     if (marketFilter.length === 0) marketFilter = ['futures', 'spot'];
     
     const minVolume = parseFloat(req.query.minVolume) || 100000;

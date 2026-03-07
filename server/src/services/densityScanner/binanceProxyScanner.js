@@ -35,12 +35,12 @@ const DEFAULT_PROXY_URL = 'https://cryptosite2027.vercel.app';
 const MARKET_CONFIG = {
   futures: {
     depthLimit: 500,        // 500 levels per side — deeper books catch walls at 5-15% from mid
-    depthWeight: 10,        // Binance API weight: limit=500 → weight 10
+    depthWeight: 10,        // Binance API weight: /fapi/v1/depth limit=500 → weight 10
     rateLimitPerMin: 2400,  // Binance futures /fapi/v1 rate limit
   },
   spot: {
     depthLimit: 500,        // 500 levels per side — matches futures depth for full wall coverage
-    depthWeight: 10,        // Binance API weight: limit=500 → weight 10
+    depthWeight: 25,        // Binance API weight: /api/v3/depth limit=101-500 → weight 25
     rateLimitPerMin: 6000,  // Binance spot /api/v3 rate limit (more generous)
   },
 };
@@ -124,8 +124,8 @@ class BinanceProxyScanner {
     const maxPerCycle = Math.floor(
       (cfg.rateLimitPerMin * RATE_LIMIT_SAFETY) / cfg.depthWeight / scansPerMin
     );
-    // futures: floor(2400 * 0.9 / 5 / 4) = 108
-    // spot:    floor(6000 * 0.9 / 5 / 4) = 270
+    // futures: floor(2400 * 0.9 / 10 / 4) = 54
+    // spot:    floor(6000 * 0.9 / 25 / 4) = 54
 
     const groups = [];
     for (let i = 0; i < symbols.length; i += maxPerCycle) {
