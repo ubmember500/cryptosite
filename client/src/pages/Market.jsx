@@ -215,51 +215,35 @@ const Market = () => {
     fetchBinanceTokens(exchangeType, searchQuery);
   }, [exchange, exchangeType]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Debug helper - expose to window for console access
+  // Debug helper - expose to window for console access (dev only, runs once)
   useEffect(() => {
-    if (typeof window !== 'undefined') {
+    if (import.meta.env?.DEV && typeof window !== 'undefined') {
       window.debugMarketApi = () => {
         checkApiConfig();
         testBinanceApi();
       };
-      
       window.debugRealtimeStatus = () => {
+        const state = useMarketStore.getState();
         console.log('=== Real-time Status ===');
-        console.log('Socket:', socket);
-        console.log('Socket connected:', socket?.connected);
-        console.log('Socket ID:', socket?.id);
-        console.log('Active subscription:', activeSubscription);
-        console.log('Is realtime connected:', isRealtimeConnected);
-        console.log('Chart data length:', chartData?.length);
-        console.log('Last candle:', chartData?.[chartData.length - 1]);
-        
-        // Test subscription status from server
-        fetch(`${API_BASE_URL}/market/debug/subscriptions`)
-          .then(r => r.json())
-          .then(data => {
-            console.log('Server subscriptions:', data);
-          })
-          .catch(e => console.error('Failed to fetch subscriptions:', e));
+        console.log('Active subscription:', state.activeSubscription);
+        console.log('Is realtime connected:', state.isRealtimeConnected);
+        const cd = state.chartData;
+        console.log('Chart data length:', cd?.length);
+        console.log('Last candle:', cd?.[cd.length - 1]);
       };
-      
       window.forceResubscribe = () => {
-        if (!socket || !selectedToken) {
-          console.error('No socket or token selected');
-          return;
-        }
+        const state = useMarketStore.getState();
         console.log('Force resubscribing...');
-        unsubscribeFromKline(socket);
+        state.unsubscribeFromKline?.(socket);
         setTimeout(() => {
-          subscribeToKline(socket, exchange, selectedToken.fullSymbol, chartInterval, exchangeType);
+          const s = useMarketStore.getState();
+          if (s.selectedToken) {
+            s.subscribeToKline?.(socket, s.exchange, s.selectedToken.fullSymbol, chartInterval, s.exchangeType);
+          }
         }, 1000);
       };
-      
-      console.log('💡 Debug helpers available:');
-      console.log('  - window.debugMarketApi() - Test API connection');
-      console.log('  - window.debugRealtimeStatus() - Check realtime subscription status');
-      console.log('  - window.forceResubscribe() - Force resubscribe to current token');
     }
-  }, [socket, activeSubscription, isRealtimeConnected, chartData, selectedToken, exchange, exchangeType, chartInterval]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Handle search change with debounce
   const handleSearchChange = useCallback((e) => {
@@ -660,8 +644,8 @@ const Market = () => {
           )}
         </div>
 
-        {/* Token Table */}
-        <div className="flex-1 overflow-auto">
+        {/* Token Table — BinanceMarketTable handles its own virtualized scrolling */}
+        <div className="flex-1 overflow-hidden min-h-0">
           <BinanceMarketTable
             onTokenSelect={handleTokenSelect}
             highlightToken={isMultiChart && activeChartSlot !== null ? chartSlotTokens[activeChartSlot] : null}

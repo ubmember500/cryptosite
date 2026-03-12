@@ -3,6 +3,8 @@ import { io } from 'socket.io-client';
 import { useAuthStore } from '../store/authStore';
 import { SOCKET_URL } from '../utils/constants';
 
+const __DEV__ = import.meta.env?.DEV ?? false;
+
 /**
  * useSocket hook - manages Socket.IO connection for real-time alerts and klines
  * @param {Object} options - Optional callbacks
@@ -48,7 +50,7 @@ export const useSocket = (options = {}) => {
 
     // Connection event
     socket.on('connect', () => {
-      console.log('[Socket] ✅ Connected, socket ID:', socket.id);
+      if (__DEV__) console.log('[Socket] ✅ Connected, socket ID:', socket.id);
       if (callbacksRef.current.onConnect) {
         callbacksRef.current.onConnect();
       }
@@ -56,7 +58,7 @@ export const useSocket = (options = {}) => {
 
     // Disconnection event
     socket.on('disconnect', () => {
-      console.log('Socket disconnected');
+      if (__DEV__) console.log('Socket disconnected');
       if (callbacksRef.current.onDisconnect) {
         callbacksRef.current.onDisconnect();
       }
@@ -91,15 +93,6 @@ export const useSocket = (options = {}) => {
     // Listen for kline updates
     socket.on('kline-update', (klineData) => {
       if (!callbacksRef.current.onKlineUpdate) return;
-      console.log('[Socket] 📊 kline-update event received:', {
-        exchange: klineData.exchange,
-        symbol: klineData.symbol,
-        interval: klineData.interval,
-        exchangeType: klineData.exchangeType,
-        close: klineData.kline?.close,
-        time: klineData.kline?.time,
-        isClosed: klineData.kline?.isClosed,
-      });
       callbacksRef.current.onKlineUpdate(klineData);
     });
 
@@ -110,28 +103,11 @@ export const useSocket = (options = {}) => {
 
     // Add methods to socket instance for external access
     socket.subscribeKline = (exchange, symbol, interval, exchangeType) => {
-      console.log(`[Socket] 📤 Emitting subscribe-kline:`, {
-        exchange,
-        symbol,
-        interval,
-        exchangeType,
-        socketId: socket.id,
-        connected: socket.connected
-      });
       socket.emit('subscribe-kline', { exchange, symbol, interval, exchangeType });
-      console.log('[Socket] ✅ subscribe-kline event emitted');
     };
 
     socket.unsubscribeKline = (exchange, symbol, interval, exchangeType) => {
-      console.log(`[Socket] 📤 Emitting unsubscribe-kline:`, {
-        exchange,
-        symbol,
-        interval,
-        exchangeType,
-        socketId: socket.id
-      });
       socket.emit('unsubscribe-kline', { exchange, symbol, interval, exchangeType });
-      console.log('[Socket] ✅ unsubscribe-kline event emitted');
     };
 
     // Cleanup on unmount or when auth changes

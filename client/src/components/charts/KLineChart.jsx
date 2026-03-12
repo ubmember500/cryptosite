@@ -593,82 +593,40 @@ const KLineChart = ({
   );
 
   // Transform backend data to KLineChart format
+  // Performance: optimized hot path — minimal branching, no per-candle logging
   const transformDataForKLineChart = useCallback((backendData) => {
-    if (!backendData || !Array.isArray(backendData)) {
-      console.warn('[KLineChart] Invalid backend data:', backendData);
-      return [];
-    }
+    if (!backendData || !Array.isArray(backendData)) return [];
 
-    const transformedData = [];
-    const invalidIndices = [];
+    const len = backendData.length;
+    const transformedData = new Array(len);
+    let writeIdx = 0;
 
-    backendData.forEach((candle, index) => {
-      // Backend format: { time: UnixSeconds, open, high, low, close, volume }
-      // KLineChart format: { timestamp: milliseconds, open, high, low, close, volume }
-      
-      let timestamp = candle.time;
-      
-      // Convert to number if string
-      if (typeof timestamp === 'string') {
-        timestamp = parseFloat(timestamp);
-      }
-      
+    for (let i = 0; i < len; i++) {
+      const candle = backendData[i];
+
+      let timestamp = +candle.time;
       // Convert seconds to milliseconds if needed (Unix seconds < 10000000000)
-      if (timestamp < 10000000000) {
-        timestamp = timestamp * 1000;
-      }
-      
-      // Ensure all values are numbers
-      const open = typeof candle.open === 'string' ? parseFloat(candle.open) : Number(candle.open);
-      const high = typeof candle.high === 'string' ? parseFloat(candle.high) : Number(candle.high);
-      const low = typeof candle.low === 'string' ? parseFloat(candle.low) : Number(candle.low);
-      const close = typeof candle.close === 'string' ? parseFloat(candle.close) : Number(candle.close);
-      const volume = typeof candle.volume === 'string' ? parseFloat(candle.volume) : Number(candle.volume || 0);
-      const turnover = typeof candle.turnover === 'string' ? parseFloat(candle.turnover) : Number(candle.turnover || 0);
+      if (timestamp < 1e10) timestamp *= 1000;
 
-      // Validate data
-      if (
-        isNaN(timestamp) || !isFinite(timestamp) ||
-        isNaN(open) || !isFinite(open) ||
-        isNaN(high) || !isFinite(high) ||
-        isNaN(low) || !isFinite(low) ||
-        isNaN(close) || !isFinite(close) ||
-        isNaN(volume) || !isFinite(volume)
-      ) {
-        console.warn(`[KLineChart] Invalid data at index ${index}:`, candle);
-        invalidIndices.push(index);
-        return; // Skip invalid data point
-      }
+      const open = +candle.open;
+      const high = +candle.high;
+      const low = +candle.low;
+      const close = +candle.close;
+      const volume = +(candle.volume || 0);
+      const turnover = +(candle.turnover || 0);
 
-      // Validate OHLC logic
-      if (high < low || high < Math.max(open, close) || low > Math.min(open, close)) {
-        console.warn(`[KLineChart] Invalid OHLC logic at index ${index}:`, {
-          open, high, low, close
-        });
-        invalidIndices.push(index);
-        return; // Skip invalid data point
-      }
-
-      // Validate positive prices
-      if (open <= 0 || high <= 0 || low <= 0 || close <= 0) {
-        console.warn(`[KLineChart] Invalid price values at index ${index}:`, {
-          open, high, low, close
-        });
-        invalidIndices.push(index);
-        return; // Skip invalid data point
+      // Fast NaN/Infinity check — skip invalid candles silently
+      if (!(timestamp > 0) || !(open > 0) || !(high > 0) || !(low > 0) || !(close > 0) || !isFinite(volume)) {
+        continue;
       }
 
       // Use USDT dollar volume (turnover) for all volume-based indicators.
-      // Binance/Bybit REST & WS provide turnover = quote asset volume (USDT).
-      // Fall back to base volume × close price if turnover is unavailable.
       const dollarVolume =
-        (isFinite(turnover) && turnover > 0)
-          ? turnover
-          : (isFinite(volume) && volume > 0 && isFinite(close) && close > 0)
-            ? volume * close
+        turnover > 0 ? turnover
+          : volume > 0 && close > 0 ? volume * close
             : volume;
 
-      transformedData.push({
+      transformedData[writeIdx++] = {
         timestamp,
         open,
         high,
@@ -676,13 +634,11 @@ const KLineChart = ({
         close,
         volume: dollarVolume,
         turnover,
-      });
-    });
-
-    if (invalidIndices.length > 0) {
-      console.warn(`[KLineChart] Filtered out ${invalidIndices.length} invalid data points out of ${backendData.length} total`);
+      };
     }
 
+    // Trim pre-allocated array to actual size
+    transformedData.length = writeIdx;
     return transformedData;
   }, []);
 

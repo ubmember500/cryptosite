@@ -148,6 +148,9 @@ const NATR14_CACHE_TTL_MS = 5 * 60 * 1000;
 const NATR14_ENRICH_TOP_LIMIT = 60;
 const NATR14_ENRICH_CONCURRENCY = 6;
 const wsHistoryRecoveryAttemptBySeries = {};
+
+// Performance: suppress verbose logging in production
+const __DEV__ = import.meta.env?.DEV ?? (typeof process !== 'undefined' && process.env?.NODE_ENV !== 'production');
 const natr14CacheBySymbol = new Map();
 
 const getChartHistoryKey = ({ exchange, exchangeType, symbol, interval }) => {
@@ -178,9 +181,9 @@ const getKlineRangeSummary = (klines) => {
   };
 };
 
-const logChartTelemetry = (event, payload) => {
-  console.log(`[MarketStore][ChartTelemetry] ${event}`, payload);
-};
+const logChartTelemetry = __DEV__
+  ? (event, payload) => { console.log(`[MarketStore][ChartTelemetry] ${event}`, payload); }
+  : () => {};
 
 const getRequestErrorSummary = (error) => {
   const responseData = error?.response?.data;
@@ -528,25 +531,21 @@ const fetchJsonFromUrls = async (urls, endpoint, params = {}, validate = null) =
 };
 
 const fetchBinanceFuturesTokensDirect = async (searchQuery = '') => {
-  const prices = await fetchJsonFromUrls(
-    BINANCE_FUTURES_BASE_URLS,
-    '/ticker/price',
-    {},
-    (data) => Array.isArray(data)
-  );
-
-  let stats24h = [];
-  try {
-    const payload = await fetchJsonFromUrls(
+  // Fetch both endpoints in parallel for faster loading
+  const [prices, stats24h] = await Promise.all([
+    fetchJsonFromUrls(
+      BINANCE_FUTURES_BASE_URLS,
+      '/ticker/price',
+      {},
+      (data) => Array.isArray(data)
+    ),
+    fetchJsonFromUrls(
       BINANCE_FUTURES_BASE_URLS,
       '/ticker/24hr',
       {},
       (data) => Array.isArray(data)
-    );
-    stats24h = Array.isArray(payload) ? payload : [];
-  } catch {
-    stats24h = [];
-  }
+    ).catch(() => []),
+  ]);
 
   const priceList = Array.isArray(prices) ? prices : [];
   const statsMap = new Map(
@@ -965,7 +964,7 @@ export const useMarketStore = create((set, get) => ({
     }
   },
   
-  fetchChartData: async (symbol, exchangeType, interval = '15m') => {
+  fetchChartData: async (symbol, exchangeType, interval = '15m', { forceRefresh = false } = {}) => {
     const isSecondInterval = ['1s', '5s', '15s'].includes(interval);
     // For sub-minute intervals, we fetch 1m candles from the API and resample them client-side.
     const apiInterval = isSecondInterval ? '1m' : interval;
@@ -975,6 +974,23 @@ export const useMarketStore = create((set, get) => ({
     const exchange = get().exchange;
     const historyKey = getChartHistoryKey({ exchange, exchangeType, symbol, interval });
     const seriesKey = getChartSeriesKey({ exchange, exchangeType, symbol, interval });
+
+    // Performance: skip network fetch if we already have sufficient cached data
+    // for this series. The cache is populated by previous fetches and kept in
+    // sync by real-time kline updates. This prevents redundant requests when
+    // the user switches back to a previously viewed symbol or timeframe.
+    if (!forceRefresh) {
+      const cachedData = get().chartDataMap[seriesKey];
+      if (Array.isArray(cachedData) && cachedData.length >= 20) {
+        // Update chartData reference so single-chart mode sees it immediately
+        const isSelectedSymbol = get().selectedToken?.fullSymbol === symbol;
+        if (isSelectedSymbol) {
+          set({ chartData: cachedData, loadingChart: false, chartError: null });
+        }
+        return;
+      }
+    }
+
     // Increment the per-series generation counter.  If another fetchChartData
     // call for the SAME series (symbol+interval) starts before this one
     // finishes, our captured generation will be stale and we will skip applying
@@ -1624,14 +1640,7 @@ export const useMarketStore = create((set, get) => ({
 
   // Subscribe to real-time kline updates
   subscribeToKline: (socket, exchange, symbol, interval, exchangeType) => {
-    console.log('[MarketStore] 🔔 subscribeToKline called:', {
-      exchange,
-      symbol,
-      interval,
-      exchangeType,
-      hasSocket: !!socket,
-      socketId: socket?.id
-    });
+    if (__DEV__) console.log('[MarketStore] 🔔 subscribeToKline called:', { exchange, symbol, interval, exchangeType });
 
     if (!socket) {
       console.error('[MarketStore] ❌ Cannot subscribe: socket not available');
@@ -1641,7 +1650,7 @@ export const useMarketStore = create((set, get) => ({
     // Unsubscribe from previous subscription if exists
     const currentSub = get().activeSubscription;
     if (currentSub) {
-      console.log('[MarketStore] 🔄 Unsubscribing from previous:', currentSub);
+      if (__DEV__) console.log('[MarketStore] 🔄 Unsubscribing from previous:', currentSub);
       socket.unsubscribeKline(
         currentSub.exchange,
         currentSub.symbol,
@@ -1652,15 +1661,13 @@ export const useMarketStore = create((set, get) => ({
 
     // Subscribe to new kline stream
     const subscription = { exchange, symbol, interval, exchangeType };
-    console.log('[MarketStore] 📤 Calling socket.subscribeKline...');
+    if (__DEV__) console.log('[MarketStore] 📤 Calling socket.subscribeKline...');
     socket.subscribeKline(exchange, symbol, interval, exchangeType);
     
     set({ 
       activeSubscription: subscription,
       isRealtimeConnected: true 
     });
-
-    console.log('[MarketStore] ✅ Subscription state updated:', subscription);
   },
 
   // Unsubscribe from kline updates
@@ -1676,27 +1683,12 @@ export const useMarketStore = create((set, get) => ({
       activeSubscription: null,
       isRealtimeConnected: false 
     });
-
-    console.log('[MarketStore] Unsubscribed from kline:', sub);
   },
 
   // Handle incoming kline update from WebSocket
   handleKlineUpdate: (updateData) => {
-    console.log('[MarketStore] 📨 handleKlineUpdate called:', {
-      exchange: updateData.exchange,
-      symbol: updateData.symbol,
-      interval: updateData.interval,
-      exchangeType: updateData.exchangeType,
-      close: updateData.kline?.close,
-      time: updateData.kline?.time,
-      timeISO: updateData.kline?.time ? new Date(updateData.kline.time * 1000).toISOString() : 'N/A',
-      isClosed: updateData.kline?.isClosed
-    });
-
     const { exchange, symbol, interval, exchangeType, kline } = updateData;
     const currentSub = get().activeSubscription;
-    
-    console.log('[MarketStore] 🔍 Current subscription:', currentSub);
     
     // Verify it matches current subscription
     if (!currentSub || 
@@ -1704,14 +1696,8 @@ export const useMarketStore = create((set, get) => ({
         currentSub.symbol !== symbol ||
         currentSub.interval !== interval ||
         currentSub.exchangeType !== exchangeType) {
-      console.warn('[MarketStore] ❌ Update does not match active subscription, ignoring:', {
-        received: { exchange, symbol, interval, exchangeType },
-        expected: currentSub
-      });
       return;
     }
-    
-    console.log('[MarketStore] ✅ Update matches subscription, applying to chartData');
 
     const seriesKey = getChartSeriesKey({ exchange, exchangeType, symbol, interval });
     const existingSeries = get().chartDataMap[seriesKey] || [];
@@ -1761,7 +1747,7 @@ export const useMarketStore = create((set, get) => ({
           });
           return state;
         }
-        console.log('[MarketStore] 📊 First candle, initializing chartData');
+        if (__DEV__) console.log('[MarketStore] 📊 First candle, initializing chartData');
         nextData = [newCandle];
       } else {
         const existingIndex = dataToUpdate.findIndex(c => c.time === newCandle.time);

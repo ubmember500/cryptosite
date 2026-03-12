@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useMarketStore } from '../../store/marketStore';
 import { useMarketFlags, FLAG_COLORS } from '../../hooks/useMarketFlags';
@@ -6,6 +6,10 @@ import { ChevronUp, ChevronDown, Flag } from 'lucide-react';
 import { cn } from '../../utils/cn';
 import LoadingSpinner from '../common/LoadingSpinner';
 import TokenContextMenu from './TokenContextMenu';
+
+// Performance: Row height constant for virtualization
+const ROW_HEIGHT = 40; // px — matches py-1 + content
+const OVERSCAN = 15;   // extra rows above/below viewport
 
 /** Hover tooltip that drops below column headers */
 const HeaderTooltip = ({ text }) => {
@@ -51,6 +55,9 @@ const BinanceMarketTable = ({ onTokenSelect, highlightToken }) => {
   const [contextMenu, setContextMenu] = useState(null); // { x, y, token }
   const [hoveredHeader, setHoveredHeader] = useState(null);
   const popoverRef = useRef(null);
+  const scrollContainerRef = useRef(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [containerHeight, setContainerHeight] = useState(600);
 
   // Close popover on click outside
   useEffect(() => {
@@ -63,6 +70,24 @@ const BinanceMarketTable = ({ onTokenSelect, highlightToken }) => {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [openPopoverFor]);
+
+  // Virtualization: track scroll position and container size
+  const handleScroll = useCallback((e) => {
+    setScrollTop(e.target.scrollTop);
+  }, []);
+
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setContainerHeight(entry.contentRect.height);
+      }
+    });
+    ro.observe(container);
+    setContainerHeight(container.clientHeight);
+    return () => ro.disconnect();
+  }, []);
 
   const VOLUME_HIGH_THRESHOLD = 100_000_000;
 
@@ -242,9 +267,18 @@ const BinanceMarketTable = ({ onTokenSelect, highlightToken }) => {
     );
   }
 
+  // Virtualization: compute visible row window
+  const totalRows = sortedTokens.length;
+  const totalHeight = totalRows * ROW_HEIGHT;
+  const startIndex = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
+  const endIndex = Math.min(totalRows, Math.ceil((scrollTop + containerHeight) / ROW_HEIGHT) + OVERSCAN);
+  const topPadding = startIndex * ROW_HEIGHT;
+  const bottomPadding = Math.max(0, (totalRows - endIndex) * ROW_HEIGHT);
+  const visibleTokens = sortedTokens.slice(startIndex, endIndex);
+
   return (
     <>
-      <div className="w-full">
+      <div className="w-full h-full flex flex-col">
         <table className="w-full text-sm">
         <thead className="sticky top-0 z-10 bg-surface" style={{ borderBottom: '1px solid var(--color-border)', overflow: 'visible' }}>
           <tr>
@@ -313,119 +347,136 @@ const BinanceMarketTable = ({ onTokenSelect, highlightToken }) => {
             </th>
           </tr>
         </thead>
-        <tbody className="divide-y" style={{ borderColor: 'rgba(28,40,67,0.6)' }}>
-          {sortedTokens.map((token) => {
-            const flagged = isFlagged(exchange, exchangeType, token.fullSymbol);
-            const flagColor = getFlag(exchange, exchangeType, token.fullSymbol);
-            const showFlag = flagged || hoveredRow === token.fullSymbol;
-            const isPopoverOpen = openPopoverFor === token.fullSymbol;
+        </table>
+        <div
+          ref={scrollContainerRef}
+          className="flex-1 overflow-y-auto"
+          onScroll={handleScroll}
+        >
+          <table className="w-full text-sm">
+          <tbody className="divide-y" style={{ borderColor: 'rgba(28,40,67,0.6)' }}>
+            {/* Top spacer for virtualized rows above viewport */}
+            {topPadding > 0 && (
+              <tr aria-hidden="true"><td colSpan={5} style={{ height: topPadding, padding: 0, border: 'none' }} /></tr>
+            )}
+            {visibleTokens.map((token) => {
+              const flagged = isFlagged(exchange, exchangeType, token.fullSymbol);
+              const flagColor = getFlag(exchange, exchangeType, token.fullSymbol);
+              const showFlag = flagged || hoveredRow === token.fullSymbol;
+              const isPopoverOpen = openPopoverFor === token.fullSymbol;
 
-            return (
-              <tr
-                key={token.fullSymbol}
-                className={cn(
-                  'cursor-pointer transition-all duration-150 group',
-                  tokenToHighlight?.fullSymbol === token.fullSymbol
-                    ? 'bg-accent/[0.07] border-l-2 border-accent'
-                    : 'hover:bg-surfaceHover/60 border-l-2 border-transparent'
-                )}
-                onClick={() => handleRowClick(token)}
-                onContextMenu={(e) => handleContextMenu(e, token)}
-                onMouseEnter={() => setHoveredRow(token.fullSymbol)}
-                onMouseLeave={() => setHoveredRow(null)}
-              >
-                <td
-                  className="px-2 py-1 w-10 align-middle relative"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <div ref={isPopoverOpen ? popoverRef : null} className="relative inline-block">
-                    <button
-                      type="button"
-                      className={cn(
-                        'inline-flex items-center justify-center w-7 h-7 rounded transition-opacity',
-                        showFlag ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-                      )}
-                      onClick={() => setOpenPopoverFor(isPopoverOpen ? null : token.fullSymbol)}
-                      title={flagged ? t('Change flag color') : t('Flag token')}
-                      aria-label={flagged ? t('Change flag color') : t('Flag token')}
-                    >
-                      <Flag
-                        className="w-4 h-4 flex-shrink-0"
-                        style={flagColor ? { color: flagColor, fill: flagColor } : {}}
-                        strokeWidth={flagged ? 2 : 1.5}
-                      />
-                    </button>
-                    {isPopoverOpen && (
-                      <div
-                        className="absolute left-0 top-full mt-1 z-20 flex items-center gap-2 bg-surface border border-border rounded-lg shadow-lg p-2"
-                        style={{ minWidth: '180px' }}
-                      >
-                        <Flag className="w-4 h-4 text-textSecondary flex-shrink-0" />
-                        <div className="flex items-center gap-1.5">
-                          {FLAG_COLORS.map(({ hex, id }) => (
-                            <button
-                              key={id}
-                              type="button"
-                              className="w-6 h-6 rounded-full border-2 border-transparent hover:border-white/50 focus:outline-none focus:ring-2 focus:ring-accent"
-                              style={{ backgroundColor: hex }}
-                              onClick={() => {
-                                setFlag(exchange, exchangeType, token.fullSymbol, hex);
-                                setOpenPopoverFor(null);
-                              }}
-                              title={hex}
-                            />
-                          ))}
-                        </div>
-                        <button
-                          type="button"
-                          className="text-xs text-textSecondary hover:text-textPrimary whitespace-nowrap ml-1"
-                          onClick={() => {
-                            removeFlag(exchange, exchangeType, token.fullSymbol);
-                            setOpenPopoverFor(null);
-                          }}
-                        >
-                          {t('Remove flag')}
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </td>
-                <td className="px-1 py-1 whitespace-nowrap">
-                  <div className="text-textPrimary font-bold text-sm leading-tight">{token.symbol}</div>
-                  <div className="text-[11px] text-textSecondary">{token.fullSymbol}</div>
-                </td>
-                <td className="px-4 py-1 whitespace-nowrap text-right">
-                  {formatPercent(token.priceChangePercent24h)}
-                </td>
-                <td className="px-4 py-1 whitespace-nowrap text-right">
-                  {token.natr != null ? (
-                    <span
-                      className="font-semibold"
-                      style={{ color: '#f59e0b', textShadow: '0 0 8px rgba(245,158,11,0.45)' }}
-                    >
-                      {token.natr.toFixed(2)}%
-                    </span>
-                  ) : (
-                    <span className="text-textSecondary opacity-40 text-xs">—</span>
+              return (
+                <tr
+                  key={token.fullSymbol}
+                  style={{ height: ROW_HEIGHT }}
+                  className={cn(
+                    'cursor-pointer transition-all duration-150 group',
+                    tokenToHighlight?.fullSymbol === token.fullSymbol
+                      ? 'bg-accent/[0.07] border-l-2 border-accent'
+                      : 'hover:bg-surfaceHover/60 border-l-2 border-transparent'
                   )}
-                </td>
-                <td className="px-4 py-1 whitespace-nowrap text-right">
-                  <span
-                    className={cn(
-                      (token.volume24h != null && Number(token.volume24h) >= VOLUME_HIGH_THRESHOLD)
-                        ? 'font-semibold text-fuchsia-400'
-                        : 'text-textPrimary'
-                    )}
+                  onClick={() => handleRowClick(token)}
+                  onContextMenu={(e) => handleContextMenu(e, token)}
+                  onMouseEnter={() => setHoveredRow(token.fullSymbol)}
+                  onMouseLeave={() => setHoveredRow(null)}
+                >
+                  <td
+                    className="px-2 py-1 w-10 align-middle relative"
+                    onClick={(e) => e.stopPropagation()}
                   >
-                    {formatVolume(token.volume24h)}
-                  </span>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
+                    <div ref={isPopoverOpen ? popoverRef : null} className="relative inline-block">
+                      <button
+                        type="button"
+                        className={cn(
+                          'inline-flex items-center justify-center w-7 h-7 rounded transition-opacity',
+                          showFlag ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                        )}
+                        onClick={() => setOpenPopoverFor(isPopoverOpen ? null : token.fullSymbol)}
+                        title={flagged ? t('Change flag color') : t('Flag token')}
+                        aria-label={flagged ? t('Change flag color') : t('Flag token')}
+                      >
+                        <Flag
+                          className="w-4 h-4 flex-shrink-0"
+                          style={flagColor ? { color: flagColor, fill: flagColor } : {}}
+                          strokeWidth={flagged ? 2 : 1.5}
+                        />
+                      </button>
+                      {isPopoverOpen && (
+                        <div
+                          className="absolute left-0 top-full mt-1 z-20 flex items-center gap-2 bg-surface border border-border rounded-lg shadow-lg p-2"
+                          style={{ minWidth: '180px' }}
+                        >
+                          <Flag className="w-4 h-4 text-textSecondary flex-shrink-0" />
+                          <div className="flex items-center gap-1.5">
+                            {FLAG_COLORS.map(({ hex, id }) => (
+                              <button
+                                key={id}
+                                type="button"
+                                className="w-6 h-6 rounded-full border-2 border-transparent hover:border-white/50 focus:outline-none focus:ring-2 focus:ring-accent"
+                                style={{ backgroundColor: hex }}
+                                onClick={() => {
+                                  setFlag(exchange, exchangeType, token.fullSymbol, hex);
+                                  setOpenPopoverFor(null);
+                                }}
+                                title={hex}
+                              />
+                            ))}
+                          </div>
+                          <button
+                            type="button"
+                            className="text-xs text-textSecondary hover:text-textPrimary whitespace-nowrap ml-1"
+                            onClick={() => {
+                              removeFlag(exchange, exchangeType, token.fullSymbol);
+                              setOpenPopoverFor(null);
+                            }}
+                          >
+                            {t('Remove flag')}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </td>
+                  <td className="px-1 py-1 whitespace-nowrap">
+                    <div className="text-textPrimary font-bold text-sm leading-tight">{token.symbol}</div>
+                    <div className="text-[11px] text-textSecondary">{token.fullSymbol}</div>
+                  </td>
+                  <td className="px-4 py-1 whitespace-nowrap text-right">
+                    {formatPercent(token.priceChangePercent24h)}
+                  </td>
+                  <td className="px-4 py-1 whitespace-nowrap text-right">
+                    {token.natr != null ? (
+                      <span
+                        className="font-semibold"
+                        style={{ color: '#f59e0b', textShadow: '0 0 8px rgba(245,158,11,0.45)' }}
+                      >
+                        {token.natr.toFixed(2)}%
+                      </span>
+                    ) : (
+                      <span className="text-textSecondary opacity-40 text-xs">—</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-1 whitespace-nowrap text-right">
+                    <span
+                      className={cn(
+                        (token.volume24h != null && Number(token.volume24h) >= VOLUME_HIGH_THRESHOLD)
+                          ? 'font-semibold text-fuchsia-400'
+                          : 'text-textPrimary'
+                      )}
+                    >
+                      {formatVolume(token.volume24h)}
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
+            {/* Bottom spacer for virtualized rows below viewport */}
+            {bottomPadding > 0 && (
+              <tr aria-hidden="true"><td colSpan={5} style={{ height: bottomPadding, padding: 0, border: 'none' }} /></tr>
+            )}
+          </tbody>
+        </table>
+        </div>
+      </div>
 
     {/* Context Menu */}
     {contextMenu && (
