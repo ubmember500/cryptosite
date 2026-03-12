@@ -13,6 +13,7 @@ export const getThemePalette = () => {
   const danger = getColor('--color-danger', '#ff1744');
 
   return {
+    background: getColor('--color-background', '#131722'),
     surface: getColor('--color-surface', '#1a1d29'),
     surfaceHover: getColor('--color-surface-hover', '#252836'),
     surfaceDark: getColor('--color-surface-dark', '#141721'),

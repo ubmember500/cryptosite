@@ -16,6 +16,7 @@ import IndicatorsButton from './IndicatorsButton';
 import { useToastStore } from '../../store/toastStore';
 import { getThemePalette } from '../../utils/themePalette';
 import { useCandleColorStore } from '../../store/candleColorStore';
+import { useThemeStore } from '../../store/themeStore';
 
 // Drawing tool constants
 export const DRAWING_TOOLS = {
@@ -441,6 +442,7 @@ const KLineChart = ({
   const candleUpColor   = useCandleColorStore((s) => s.upColor);
   const candleDownColor = useCandleColorStore((s) => s.downColor);
   const candleType      = useCandleColorStore((s) => s.candleType);
+  const currentTheme    = useThemeStore((s) => s.theme);
 
   const [showIndicatorsModal, setShowIndicatorsModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
@@ -1732,7 +1734,7 @@ const KLineChart = ({
           },
           background: {
             type: 'solid',
-            color: '#131722',
+            color: themeColors.background,
           },
           textColor: themeColors.textPrimary,
         },
@@ -1832,6 +1834,65 @@ const KLineChart = ({
       setIsInitialized(false);
     }
   }, [symbol, handleGetBars, applyCompactViewportDefaults]); // Re-initialize only when symbol changes; interval changes are handled by the separate period-update effect
+
+  // Re-apply full theme styles when the user switches themes in settings
+  useEffect(() => {
+    if (!chartRef.current || !isInitialized) return;
+    try {
+      const palette = getThemePalette();
+      const { upColor: storedUp, downColor: storedDown } = useCandleColorStore.getState();
+      const up   = storedUp   || palette.candleUp;
+      const down = storedDown || palette.candleDown;
+      chartRef.current.setStyles({
+        background: { color: palette.background },
+        candle: {
+          bar: {
+            upColor: up, downColor: down,
+            noChangeColor: palette.textSecondary,
+            upBorderColor: up, downBorderColor: down,
+            noChangeBorderColor: palette.textSecondary,
+            upWickColor: up, downWickColor: down,
+            noChangeWickColor: palette.textSecondary,
+          },
+          priceMark: {
+            high: { color: palette.textSecondary },
+            low: { color: palette.textSecondary },
+            last: {
+              upColor: palette.textSecondary,
+              downColor: palette.textSecondary,
+              noChangeColor: palette.textSecondary,
+              line: { color: palette.textSecondary },
+              text: { borderColor: palette.textSecondary, color: palette.textPrimary },
+            },
+          },
+        },
+        xAxis: {
+          axisLine: { color: palette.border },
+          tickLine: { color: palette.border },
+          tickText: { color: palette.textSecondary },
+        },
+        yAxis: {
+          axisLine: { color: palette.border },
+          tickLine: { color: palette.border },
+          tickText: { color: palette.textSecondary },
+        },
+        separator: { color: palette.border },
+        crosshair: {
+          horizontal: {
+            line: { color: palette.border },
+            text: { borderColor: palette.border, color: palette.textPrimary, backgroundColor: palette.surface },
+          },
+          vertical: {
+            line: { color: palette.border },
+            text: { borderColor: palette.border, color: palette.textPrimary, backgroundColor: palette.surface },
+          },
+        },
+        textColor: palette.textPrimary,
+      });
+    } catch (e) {
+      // ignore – chart may be mid-dispose
+    }
+  }, [currentTheme, isInitialized]);
 
   // Re-apply candle type when the user changes it in settings
   useEffect(() => {
@@ -2360,7 +2421,7 @@ const KLineChart = ({
             style={{
               minHeight: 0,
               minWidth: 0,
-              backgroundColor: '#131722',
+              backgroundColor: 'var(--color-background, #131722)',
               width: '100%',
               height: '100%',
               boxSizing: 'border-box',
