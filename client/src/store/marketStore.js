@@ -169,8 +169,12 @@ const ensureKlineSocket = () => {
   const { accessToken, isAuthenticated } = useAuthStore.getState();
   if (!isAuthenticated || !accessToken) return null;
 
-  // Reuse existing socket if auth hasn't changed
-  if (_klineSocket && _klineSocket.connected && _klineSocketToken === accessToken) {
+  // Reuse existing socket if auth hasn't changed (even if mid-reconnect)
+  if (_klineSocket && _klineSocketToken === accessToken) {
+    // If disconnected, nudge Socket.IO to reconnect now
+    if (!_klineSocket.connected && !_klineSocket.active) {
+      _klineSocket.connect();
+    }
     return _klineSocket;
   }
 
@@ -234,6 +238,51 @@ const disconnectKlineSocket = () => {
     _klineSocket = null;
     _klineSocketToken = null;
   }
+};
+
+// ---------------------------------------------------------------------------
+// Tab visibility recovery — when the browser tab regains focus after being
+// backgrounded (alt-tab, minimised, phone screen off, etc.), browsers
+// aggressively throttle / freeze WebSocket connections. This listener
+// re-establishes the socket, re-subscribes, and force-refreshes chart data
+// so the user always sees an up-to-date chart.
+// ---------------------------------------------------------------------------
+let _visibilityListenerAttached = false;
+
+const attachVisibilityRecovery = () => {
+  if (_visibilityListenerAttached || typeof document === 'undefined') return;
+  _visibilityListenerAttached = true;
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return;
+
+    const store = useMarketStore.getState();
+    const sub = store.activeSubscription;
+    if (!sub) return;
+
+    if (__DEV__) console.log('[KlineSocket] Tab visible — recovering socket & chart data');
+
+    // 1. Ensure the socket is alive and re-subscribe
+    const socket = ensureKlineSocket();
+    if (socket) {
+      // Always re-emit subscribe even if socket thinks it's connected,
+      // because the server may have cleaned up the room during the idle period.
+      socket.emit('subscribe-kline', {
+        exchange: sub.exchange,
+        symbol: sub.symbol,
+        interval: sub.interval,
+        exchangeType: sub.exchangeType,
+      });
+    }
+
+    // 2. Force-refresh chart data to fill any candle gap
+    store.fetchChartData(
+      sub.symbol,
+      sub.exchangeType,
+      sub.interval,
+      { forceRefresh: true },
+    );
+  });
 };
 
 const natr14CacheBySymbol = new Map();
@@ -1726,6 +1775,9 @@ export const useMarketStore = create((set, get) => ({
   // Subscribe to real-time kline updates (uses persistent store-managed socket)
   subscribeToKline: (exchange, symbol, interval, exchangeType) => {
     if (__DEV__) console.log('[MarketStore] 🔔 subscribeToKline called:', { exchange, symbol, interval, exchangeType });
+
+    // Attach the tab-visibility recovery listener (once)
+    attachVisibilityRecovery();
 
     const socket = ensureKlineSocket();
     if (!socket) {
