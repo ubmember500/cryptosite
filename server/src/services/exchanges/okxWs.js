@@ -122,7 +122,7 @@ class OkxWsAdapter {
         if (message.data && Array.isArray(message.data) && message.data.length > 0) {
           const d = message.data[0];
           if (!Array.isArray(d) || d.length < 9) return;
-          const kline = { time: Math.floor(parseInt(d[0]) / 1000), open: parseFloat(d[1]), high: parseFloat(d[2]), low: parseFloat(d[3]), close: parseFloat(d[4]), volume: parseFloat(d[5]), isClosed: d[8] === '1' };
+          const kline = { time: Math.floor(parseInt(d[0]) / 1000), open: parseFloat(d[1]), high: parseFloat(d[2]), low: parseFloat(d[3]), close: parseFloat(d[4]), volume: parseFloat(d[5]), turnover: parseFloat(d[7]) || parseFloat(d[6]) || 0, isClosed: d[8] === '1' };
           this.onKlineUpdate(symbol, interval, exchangeType, kline);
         }
       } catch (error) { console.error(`[OkxWs] Kline parse error:`, error.message); }

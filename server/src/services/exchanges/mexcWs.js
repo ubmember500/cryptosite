@@ -148,7 +148,7 @@ class MexcWsAdapter {
         }
         if (message.symbol && message.data && message.data.t) {
           const d = message.data;
-          const kline = { time: Math.floor(d.t / 1000), open: parseFloat(d.o), high: parseFloat(d.h), low: parseFloat(d.l), close: parseFloat(d.c), volume: parseFloat(d.a || 0), isClosed: false };
+          const kline = { time: Math.floor(d.t / 1000), open: parseFloat(d.o), high: parseFloat(d.h), low: parseFloat(d.l), close: parseFloat(d.c), volume: parseFloat(d.v || 0), turnover: parseFloat(d.a || 0), isClosed: false };
           this.onKlineUpdate(originalSymbol, interval, exchangeType, kline);
         }
       } catch (error) { console.error(`[MexcWs] Futures kline parse error:`, error.message); }

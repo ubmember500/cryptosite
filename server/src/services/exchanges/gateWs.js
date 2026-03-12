@@ -139,6 +139,7 @@ class GateWsAdapter {
             low: parseFloat(candleData.l),
             close: parseFloat(candleData.c),
             volume: parseFloat(candleData.v || candleData.a || 0),
+            turnover: parseFloat(candleData.a || 0),
             isClosed: candleData.w === true,
           };
           this.onKlineUpdate(symbol, interval, exchangeType, kline);

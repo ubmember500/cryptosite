@@ -113,7 +113,7 @@ class BybitWsAdapter {
         if (message.op === 'subscribe') { if (message.success) { subscription.confirmed = true; if (subscription.subscriptionTimeout) { clearTimeout(subscription.subscriptionTimeout); subscription.subscriptionTimeout = null; } } return; }
         if (message.topic && message.topic.startsWith('kline.') && message.data && message.data.length > 0) {
           const k = message.data[0];
-          const kline = { time: Math.floor(k.start / 1000), open: parseFloat(k.open), high: parseFloat(k.high), low: parseFloat(k.low), close: parseFloat(k.close), volume: parseFloat(k.volume), isClosed: k.confirm === true };
+          const kline = { time: Math.floor(k.start / 1000), open: parseFloat(k.open), high: parseFloat(k.high), low: parseFloat(k.low), close: parseFloat(k.close), volume: parseFloat(k.volume), turnover: parseFloat(k.turnover) || 0, isClosed: k.confirm === true };
           this.onKlineUpdate(symbol, interval, exchangeType, kline);
         }
       } catch (error) { console.error(`[BybitWs] Kline parse error:`, error.message); }

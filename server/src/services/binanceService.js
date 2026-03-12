@@ -1314,6 +1314,7 @@ async function fetchKlines(
           low,
           close,
           volume,
+          turnover: parseFloat(kline[7]) || 0, // Quote asset volume (USDT)
         };
       });
 

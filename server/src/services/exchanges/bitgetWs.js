@@ -123,7 +123,7 @@ class BitgetWsAdapter {
             candleData = message.data[0];
           }
           if (!Array.isArray(candleData) || candleData.length < 6) return;
-          const kline = { time: Math.floor(parseInt(candleData[0]) / 1000), open: parseFloat(candleData[1]), high: parseFloat(candleData[2]), low: parseFloat(candleData[3]), close: parseFloat(candleData[4]), volume: parseFloat(candleData[5]), isClosed: false };
+          const kline = { time: Math.floor(parseInt(candleData[0]) / 1000), open: parseFloat(candleData[1]), high: parseFloat(candleData[2]), low: parseFloat(candleData[3]), close: parseFloat(candleData[4]), volume: parseFloat(candleData[5]), turnover: parseFloat(candleData[6]) || 0, isClosed: false };
           this.onKlineUpdate(symbol, interval, exchangeType, kline);
         }
       } catch (error) { console.error(`[BitgetWs] Kline parse error:`, error.message); }

@@ -216,6 +216,38 @@ function createVolumeIndicatorTooltip({ indicator, crosshair }) {
 }());
 
 // ===========================================================================
+// Indicator localStorage persistence helpers
+// ===========================================================================
+const PERSISTED_INDICATORS_KEY = 'kline-chart-pinned-indicators';
+
+/** Load user-pinned indicator configs from localStorage. */
+function loadPersistedIndicators() {
+  try {
+    const raw = localStorage.getItem(PERSISTED_INDICATORS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Save the current set of user-pinned indicators to localStorage. */
+function savePersistedIndicators(configs) {
+  try {
+    const toSave = (configs || []).map(({ name, params, isStack, visible }) => ({
+      name,
+      params: params || [],
+      isStack: !!isStack,
+      visible: visible !== false,
+    }));
+    localStorage.setItem(PERSISTED_INDICATORS_KEY, JSON.stringify(toSave));
+  } catch {
+    // silently ignore
+  }
+}
+
+// ===========================================================================
 // SymbolPickerDropdown — inline token search shown when user clicks symbol
 // ===========================================================================
 const SymbolPickerDropdown = ({ isOpen, onClose, onSelect, currentSymbol }) => {
@@ -398,6 +430,9 @@ const KLineChart = ({
   // Indicators state management
   const [indicators, setIndicators] = useState([]); // Store indicator configs: [{ id, name, params, visible, isStack }]
   const indicatorsRef = useRef([]); // Ref for cleanup access
+  // Tracks user-pinned indicator configs (loaded from localStorage) so they
+  // survive chart re-initialization when the symbol changes.
+  const pinnedIndicatorConfigsRef = useRef(loadPersistedIndicators());
   // intervalRef keeps the current interval accessible inside callbacks (like
   // handleGetBars) that are wrapped in useCallback without re-creating them on
   // every interval change – avoiding unnecessary chart re-initialisation.
@@ -623,13 +658,23 @@ const KLineChart = ({
         return; // Skip invalid data point
       }
 
+      // Use USDT dollar volume (turnover) for all volume-based indicators.
+      // Binance/Bybit REST & WS provide turnover = quote asset volume (USDT).
+      // Fall back to base volume × close price if turnover is unavailable.
+      const dollarVolume =
+        (isFinite(turnover) && turnover > 0)
+          ? turnover
+          : (isFinite(volume) && volume > 0 && isFinite(close) && close > 0)
+            ? volume * close
+            : volume;
+
       transformedData.push({
         timestamp,
         open,
         high,
         low,
         close,
-        volume,
+        volume: dollarVolume,
         turnover,
       });
     });
@@ -1319,6 +1364,21 @@ const KLineChart = ({
           return updated;
         });
 
+        // Persist user-pinned indicators to localStorage so they survive
+        // chart re-init on symbol change (skip auto-volume indicators).
+        if (!options._isAutoRestore) {
+          const existingPinned = pinnedIndicatorConfigsRef.current;
+          // Avoid duplicates: don't pin the same indicator name + isStack twice
+          const alreadyPinned = existingPinned.some(
+            (p) => p.name === indicatorName && p.isStack === isStack
+          );
+          if (!alreadyPinned) {
+            const updated = [...existingPinned, { name: indicatorName, params, isStack, visible }];
+            pinnedIndicatorConfigsRef.current = updated;
+            savePersistedIndicators(updated);
+          }
+        }
+
         console.log('[KLineChart] Indicator added:', {
           id: indicatorId,
           name: indicatorName,
@@ -1346,6 +1406,10 @@ const KLineChart = ({
     }
 
     try {
+      // Retrieve the indicator config before removing so we can update the
+      // pinned list in localStorage.
+      const removedConfig = indicatorsRef.current.find(ind => ind.id === indicatorId);
+
       chartRef.current.removeIndicator(indicatorId);
       
       // Remove from state
@@ -1354,6 +1418,15 @@ const KLineChart = ({
         indicatorsRef.current = updated;
         return updated;
       });
+
+      // Also remove from persisted pinned indicators
+      if (removedConfig) {
+        const updatedPinned = pinnedIndicatorConfigsRef.current.filter(
+          (p) => !(p.name === removedConfig.name && p.isStack === removedConfig.isStack)
+        );
+        pinnedIndicatorConfigsRef.current = updatedPinned;
+        savePersistedIndicators(updatedPinned);
+      }
       
       console.log('[KLineChart] Indicator removed:', indicatorId);
       return true;
@@ -1415,6 +1488,9 @@ const KLineChart = ({
 
       setIndicators([]);
       indicatorsRef.current = [];
+      // Clear persisted pinned indicators as well
+      pinnedIndicatorConfigsRef.current = [];
+      savePersistedIndicators([]);
       console.log('[KLineChart] All indicators cleared');
     } catch (error) {
       console.error('[KLineChart] Error clearing indicators:', error);
@@ -1858,6 +1934,32 @@ const KLineChart = ({
       autoVolumeIndicatorIdRef.current = indicatorId;
     }
   }, [isInitialized, showVolumeIndicator, showInlineVolumeOverlay, stackVolumeInMainPane, addIndicator, removeIndicator]);
+
+  // Re-apply pinned indicators after chart re-initialization (e.g. symbol change).
+  // Runs once per init. Skips indicators already present (e.g. auto-volume).
+  useEffect(() => {
+    if (!chartRef.current || !isInitialized) return;
+    const pinned = pinnedIndicatorConfigsRef.current;
+    if (!pinned || pinned.length === 0) return;
+
+    // Use a small delay so auto-volume and other init effects settle first
+    const timer = setTimeout(() => {
+      if (!chartRef.current) return;
+      const currentNames = new Set(indicatorsRef.current.map((i) => `${i.name}__${i.isStack}`));
+      pinned.forEach((cfg) => {
+        const key = `${cfg.name}__${cfg.isStack}`;
+        if (currentNames.has(key)) return; // already on chart
+        addIndicator(cfg.name, {
+          params: cfg.params || [],
+          isStack: !!cfg.isStack,
+          visible: cfg.visible !== false,
+          _isAutoRestore: true, // flag so addIndicator doesn't re-persist
+        });
+      });
+    }, 100);
+    return () => clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isInitialized, symbol]);
 
   // Resize chart when container size changes (window resize, layout change, different monitor resolution)
   // klinecharts uses container.clientWidth/clientHeight; calling resize() recaches bounding and redraws.

@@ -99,7 +99,7 @@ class BinanceWsAdapter {
         const message = JSON.parse(data.toString());
         const k = message.k;
         if (!k) return;
-        const kline = { time: Math.floor(k.t / 1000), open: parseFloat(k.o), high: parseFloat(k.h), low: parseFloat(k.l), close: parseFloat(k.c), volume: parseFloat(k.v), isClosed: k.x };
+        const kline = { time: Math.floor(k.t / 1000), open: parseFloat(k.o), high: parseFloat(k.h), low: parseFloat(k.l), close: parseFloat(k.c), volume: parseFloat(k.v), turnover: parseFloat(k.q) || 0, isClosed: k.x };
         this.onKlineUpdate(k.s, interval, exchangeType, kline);
       } catch (error) { console.error(`[BinanceWs] Kline parse error:`, error.message); }
     });
