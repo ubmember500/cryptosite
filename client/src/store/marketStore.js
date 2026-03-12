@@ -133,10 +133,12 @@ const fetchBybitKlinesDirect = async (symbol, exchangeType = 'futures', interval
   throw new Error('Failed to fetch Bybit klines');
 };
 import { create } from 'zustand';
+import { io } from 'socket.io-client';
 import { marketService } from '../services/marketService';
 import api from '../services/api';
-import { API_BASE_URL } from '../utils/constants';
+import { API_BASE_URL, SOCKET_URL } from '../utils/constants';
 import { resample1mToSeconds } from '../utils/resampleKlines';
+import { useAuthStore } from './authStore';
 
 const CHART_PAGE_LIMIT = 500;
 const WS_HISTORY_RECOVERY_COOLDOWN_MS = 5000;
@@ -151,6 +153,89 @@ const wsHistoryRecoveryAttemptBySeries = {};
 
 // Performance: suppress verbose logging in production
 const __DEV__ = import.meta.env?.DEV ?? (typeof process !== 'undefined' && process.env?.NODE_ENV !== 'production');
+
+// ---------------------------------------------------------------------------
+// Persistent kline WebSocket — survives page navigations
+// ---------------------------------------------------------------------------
+let _klineSocket = null;        // Socket.IO instance
+let _klineSocketToken = null;   // auth token it was created with
+
+/**
+ * Return (or create) a persistent Socket.IO connection for kline data.
+ * The socket stays alive across page navigations so the chart store keeps
+ * receiving real-time candle updates even when the user is on /alerts, etc.
+ */
+const ensureKlineSocket = () => {
+  const { accessToken, isAuthenticated } = useAuthStore.getState();
+  if (!isAuthenticated || !accessToken) return null;
+
+  // Reuse existing socket if auth hasn't changed
+  if (_klineSocket && _klineSocket.connected && _klineSocketToken === accessToken) {
+    return _klineSocket;
+  }
+
+  // If token changed, disconnect old socket
+  if (_klineSocket) {
+    _klineSocket.off('kline-update');
+    _klineSocket.off('kline-error');
+    _klineSocket.disconnect();
+    _klineSocket = null;
+  }
+
+  const socket = io(SOCKET_URL, {
+    auth: { token: accessToken },
+    transports: ['websocket', 'polling'],
+  });
+  _klineSocketToken = accessToken;
+
+  socket.on('connect', () => {
+    if (__DEV__) console.log('[KlineSocket] \u2705 Connected, id:', socket.id);
+    // Re-subscribe to the active subscription after reconnect
+    const sub = useMarketStore.getState().activeSubscription;
+    if (sub) {
+      socket.emit('subscribe-kline', {
+        exchange: sub.exchange,
+        symbol: sub.symbol,
+        interval: sub.interval,
+        exchangeType: sub.exchangeType,
+      });
+      if (__DEV__) console.log('[KlineSocket] \u267B\uFE0F Re-subscribed after reconnect:', sub);
+    }
+    useMarketStore.getState().setRealtimeConnected(true);
+  });
+
+  socket.on('disconnect', () => {
+    if (__DEV__) console.log('[KlineSocket] Disconnected');
+    useMarketStore.getState().setRealtimeConnected(false);
+  });
+
+  socket.on('connect_error', (err) => {
+    console.error('[KlineSocket] Connection error:', err.message);
+  });
+
+  socket.on('kline-update', (klineData) => {
+    useMarketStore.getState().handleKlineUpdate(klineData);
+  });
+
+  socket.on('kline-error', (errorData) => {
+    console.error('[KlineSocket] Kline error:', errorData.error);
+  });
+
+  _klineSocket = socket;
+  return socket;
+};
+
+/** Tear down the persistent kline socket (e.g. on logout). */
+const disconnectKlineSocket = () => {
+  if (_klineSocket) {
+    _klineSocket.off('kline-update');
+    _klineSocket.off('kline-error');
+    _klineSocket.disconnect();
+    _klineSocket = null;
+    _klineSocketToken = null;
+  }
+};
+
 const natr14CacheBySymbol = new Map();
 
 const getChartHistoryKey = ({ exchange, exchangeType, symbol, interval }) => {
@@ -1638,51 +1723,75 @@ export const useMarketStore = create((set, get) => ({
     return get().chartDataMap[seriesKey] ?? get().chartDataMap[symbol] ?? null;
   },
 
-  // Subscribe to real-time kline updates
-  subscribeToKline: (socket, exchange, symbol, interval, exchangeType) => {
+  // Subscribe to real-time kline updates (uses persistent store-managed socket)
+  subscribeToKline: (exchange, symbol, interval, exchangeType) => {
     if (__DEV__) console.log('[MarketStore] 🔔 subscribeToKline called:', { exchange, symbol, interval, exchangeType });
 
+    const socket = ensureKlineSocket();
     if (!socket) {
-      console.error('[MarketStore] ❌ Cannot subscribe: socket not available');
+      if (__DEV__) console.warn('[MarketStore] ❌ Cannot subscribe: no auth or socket');
       return;
     }
 
-    // Unsubscribe from previous subscription if exists
+    // Skip if already subscribed to exactly the same stream
     const currentSub = get().activeSubscription;
+    if (
+      currentSub &&
+      currentSub.exchange === exchange &&
+      currentSub.symbol === symbol &&
+      currentSub.interval === interval &&
+      currentSub.exchangeType === exchangeType
+    ) {
+      // Ensure socket is still connected
+      if (socket.connected) return;
+    }
+
+    // Unsubscribe from previous subscription if exists
     if (currentSub) {
       if (__DEV__) console.log('[MarketStore] 🔄 Unsubscribing from previous:', currentSub);
-      socket.unsubscribeKline(
-        currentSub.exchange,
-        currentSub.symbol,
-        currentSub.interval,
-        currentSub.exchangeType
-      );
+      socket.emit('unsubscribe-kline', {
+        exchange: currentSub.exchange,
+        symbol: currentSub.symbol,
+        interval: currentSub.interval,
+        exchangeType: currentSub.exchangeType,
+      });
     }
 
     // Subscribe to new kline stream
     const subscription = { exchange, symbol, interval, exchangeType };
-    if (__DEV__) console.log('[MarketStore] 📤 Calling socket.subscribeKline...');
-    socket.subscribeKline(exchange, symbol, interval, exchangeType);
+    if (__DEV__) console.log('[MarketStore] 📤 Emitting subscribe-kline...');
+    socket.emit('subscribe-kline', { exchange, symbol, interval, exchangeType });
     
     set({ 
       activeSubscription: subscription,
-      isRealtimeConnected: true 
+      isRealtimeConnected: socket.connected,
     });
   },
 
-  // Unsubscribe from kline updates
-  unsubscribeFromKline: (socket) => {
+  // Unsubscribe from kline updates (keeps persistent socket alive)
+  unsubscribeFromKline: () => {
     const sub = get().activeSubscription;
-    if (!sub || !socket) {
-      return;
-    }
+    if (!sub) return;
 
-    socket.unsubscribeKline(sub.exchange, sub.symbol, sub.interval, sub.exchangeType);
+    if (_klineSocket && _klineSocket.connected) {
+      _klineSocket.emit('unsubscribe-kline', {
+        exchange: sub.exchange,
+        symbol: sub.symbol,
+        interval: sub.interval,
+        exchangeType: sub.exchangeType,
+      });
+    }
     
     set({ 
       activeSubscription: null,
       isRealtimeConnected: false 
     });
+  },
+
+  // Tear down the persistent kline socket (e.g. on logout)
+  disconnectKlineSocket: () => {
+    disconnectKlineSocket();
+    set({ activeSubscription: null, isRealtimeConnected: false });
   },
 
   // Handle incoming kline update from WebSocket

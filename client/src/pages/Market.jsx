@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useCallback, useState, useMemo } from 'react';
 import { useMarketStore } from '../store/marketStore';
-import { useSocket } from '../hooks/useSocket';
 import ExchangeSelector from '../components/market/ExchangeSelector';
 import BinanceMarketTable from '../components/market/BinanceMarketTable';
 import KLineChart from '../components/charts/KLineChart';
@@ -40,10 +39,8 @@ const Market = () => {
     getChartHistoryMeta,
     subscribeToKline,
     unsubscribeFromKline,
-    handleKlineUpdate,
     isRealtimeConnected,
     activeSubscription,
-    setRealtimeConnected,
   } = useMarketStore();
   
   const [chartInterval, setChartInterval] = useState('15m');
@@ -95,6 +92,13 @@ const Market = () => {
     };
   }, []);
 
+  // Create debounced search function
+  const debouncedSearchRef = useRef(
+    debounce((query, type) => {
+      fetchBinanceTokens(type, query);
+    }, 300)
+  );
+
   const handleCreateWatchlist = (watchlistName) => {
     console.log('Creating watchlist:', watchlistName);
     const watchlistId = useMarketStore.getState().createWatchlist(watchlistName);
@@ -102,24 +106,6 @@ const Market = () => {
     useMarketStore.getState().selectWatchlist(watchlistId);
     setIsWatchlistModalOpen(false);
   };
-
-  // Initialize socket with kline update handler
-  const socket = useSocket({
-    onKlineUpdate: handleKlineUpdate,
-    onConnect: () => {
-      setRealtimeConnected(true);
-    },
-    onDisconnect: () => {
-      setRealtimeConnected(false);
-    },
-  });
-
-  // Create debounced search function
-  const debouncedSearchRef = useRef(
-    debounce((query, type) => {
-      fetchBinanceTokens(type, query);
-    }, 300)
-  );
 
   // Sync chartSlotTokens length with chartCount; when switching to multi, fill all slots with BTC by default
   useEffect(() => {
@@ -162,22 +148,27 @@ const Market = () => {
   }, [isMultiChart, chartCount, chartInterval]);
 
   // Fetch chart data: single chart = selectedToken; multi = each slot's token
+  // On mount, force-refresh so any candles missed while on another page are fetched.
+  const isMountRef = useRef(true);
   useEffect(() => {
+    const forceRefresh = isMountRef.current;
+    isMountRef.current = false;
     if (isMultiChart) {
       chartSlotTokens.forEach((token, index) => {
         if (token?.fullSymbol) {
           const interval = chartSlotIntervals[index] || chartInterval;
-          fetchChartData(token.fullSymbol, exchangeType, interval);
+          fetchChartData(token.fullSymbol, exchangeType, interval, { forceRefresh });
         }
       });
     } else if (selectedToken) {
-      fetchChartData(selectedToken.fullSymbol, exchangeType, chartInterval);
+      fetchChartData(selectedToken.fullSymbol, exchangeType, chartInterval, { forceRefresh });
     }
   }, [isMultiChart, selectedToken, exchangeType, chartInterval, fetchChartData, chartSlotTokens, chartSlotIntervals]);
 
-  // Subscribe to real-time kline updates (single subscription: first slot or selectedToken)
+  // Subscribe to real-time kline updates via persistent store socket.
+  // The subscription is NOT torn down on unmount — the store socket keeps
+  // receiving candle data even when the user navigates to another page.
   useEffect(() => {
-    if (!socket) return;
     const symbol = isMultiChart && chartSlotTokens[0]?.fullSymbol
       ? chartSlotTokens[0].fullSymbol
       : selectedToken?.fullSymbol;
@@ -185,12 +176,12 @@ const Market = () => {
       ? (chartSlotIntervals[0] || chartInterval)
       : chartInterval;
     if (!symbol) {
-      unsubscribeFromKline(socket);
+      unsubscribeFromKline();
       return;
     }
-    subscribeToKline(socket, exchange, symbol, interval, exchangeType);
-    return () => unsubscribeFromKline(socket);
-  }, [socket, isMultiChart, chartSlotTokens, selectedToken, exchange, exchangeType, chartInterval, chartSlotIntervals, subscribeToKline, unsubscribeFromKline]);
+    subscribeToKline(exchange, symbol, interval, exchangeType);
+    // Intentionally no cleanup — keep subscription alive across page navigations
+  }, [isMultiChart, chartSlotTokens, selectedToken, exchange, exchangeType, chartInterval, chartSlotIntervals, subscribeToKline, unsubscribeFromKline]);
 
   // When user picks a token from the list: assign to active slot (multi) or set selectedToken (single)
   const handleTokenSelect = useCallback((token) => {
@@ -234,11 +225,11 @@ const Market = () => {
       window.forceResubscribe = () => {
         const state = useMarketStore.getState();
         console.log('Force resubscribing...');
-        state.unsubscribeFromKline?.(socket);
+        state.unsubscribeFromKline?.();
         setTimeout(() => {
           const s = useMarketStore.getState();
           if (s.selectedToken) {
-            s.subscribeToKline?.(socket, s.exchange, s.selectedToken.fullSymbol, chartInterval, s.exchangeType);
+            s.subscribeToKline?.(s.exchange, s.selectedToken.fullSymbol, chartInterval, s.exchangeType);
           }
         }, 1000);
       };
