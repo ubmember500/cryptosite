@@ -1,34 +1,20 @@
-const PROD_API_FALLBACK = 'https://cryptosite-rud8.onrender.com/api';
-const DEV_API_FALLBACK = 'http://localhost:5000/api';
+/* eslint-disable no-undef */
+// __PROD_API_URL__ and __PROD_SOCKET_URL__ are injected by vite.config.js `define`.
+// They are compile-time constants that CANNOT be overridden by Cloudflare/Vercel env vars.
+const PROD_API = typeof __PROD_API_URL__ !== 'undefined' ? __PROD_API_URL__ : 'https://cryptosite-rud8.onrender.com/api';
+const PROD_SOCKET = typeof __PROD_SOCKET_URL__ !== 'undefined' ? __PROD_SOCKET_URL__ : 'https://cryptosite-rud8.onrender.com';
 
-const configuredApiBase = String(import.meta.env.VITE_API_BASE_URL || '').trim();
-const configuredApiIsLocalhost = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//i.test(configuredApiBase);
-const configuredApiIsRelative = /^\//.test(configuredApiBase);
-const configuredApiIsAbsolute = /^https?:\/\//i.test(configuredApiBase);
-const configuredApiLooksLikePlaceholder = /VITE_[A-Z0-9_]+/i.test(configuredApiBase);
-const configuredApiIsUsableInProd = configuredApiIsAbsolute && !configuredApiIsLocalhost && !configuredApiLooksLikePlaceholder;
-const configuredApiIsUsableInDev = (configuredApiIsRelative || configuredApiIsAbsolute) && !configuredApiLooksLikePlaceholder;
+// Dev: respect env vars; Prod: always use the hardcoded Render URLs.
+export const API_BASE_URL = import.meta.env.PROD
+  ? PROD_API
+  : (import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api');
 
-export const API_BASE_URL =
-  (import.meta.env.PROD
-    ? (configuredApiIsUsableInProd ? configuredApiBase : PROD_API_FALLBACK)
-    : (configuredApiIsUsableInDev ? configuredApiBase : DEV_API_FALLBACK)) ||
-  (import.meta.env.PROD ? PROD_API_FALLBACK : DEV_API_FALLBACK);
+export const SOCKET_URL = import.meta.env.PROD
+  ? PROD_SOCKET
+  : (import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000');
 
-const configuredSocketUrl = String(import.meta.env.VITE_SOCKET_URL || '').trim();
-const configuredSocketLooksLikePlaceholder = /VITE_[A-Z0-9_]+/i.test(configuredSocketUrl);
-const configuredSocketIsUsableInProd = /^https?:\/\//i.test(configuredSocketUrl) && !configuredSocketLooksLikePlaceholder;
-const configuredSocketIsUsableInDev = (/^https?:\/\//i.test(configuredSocketUrl) || /^\//.test(configuredSocketUrl)) && !configuredSocketLooksLikePlaceholder;
-
-export const SOCKET_URL =
-  (import.meta.env.PROD
-    ? (configuredSocketIsUsableInProd ? configuredSocketUrl : API_BASE_URL.replace(/\/api\/?$/, ''))
-    : (configuredSocketIsUsableInDev ? configuredSocketUrl : API_BASE_URL.replace(/\/api\/?$/, ''))) || API_BASE_URL.replace(/\/api\/?$/, '');
-
-if (import.meta.env.DEV || typeof window !== 'undefined') {
-  console.log('[Config] API_BASE_URL =', API_BASE_URL);
-  console.log('[Config] VITE_API_BASE_URL env =', configuredApiBase);
-}
+console.log('[Config] API_BASE_URL =', API_BASE_URL);
+console.log('[Config] SOCKET_URL =', SOCKET_URL);
 
 export const ROUTES = {
   HOME: '/',
