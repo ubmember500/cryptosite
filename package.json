@@ -2,6 +2,8 @@
   "name": "crypto-exchange-alerts",
   "private": true,
   "scripts": {
+    "build": "npm --prefix client install && npm --prefix client run build",
+    "build:client": "npm --prefix client run build",
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
     "dev:server": "cd server && npm run dev",
     "dev:client": "cd client && npm run dev",
