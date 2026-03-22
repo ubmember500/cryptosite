@@ -26,10 +26,13 @@ const isLocalDevOrigin = (origin) =>
 const isTrustedVercelOrigin = (origin) =>
   /^https:\/\/[a-z0-9-]+\.vercel\.app$/i.test(origin);
 
+const isTrustedCloudflarePagesOrigin = (origin) =>
+  /^https:\/\/[a-z0-9.-]+\.pages\.dev$/i.test(origin);
+
 // CORS configuration
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.has(origin) || isLocalDevOrigin(origin) || isTrustedVercelOrigin(origin)) {
+    if (!origin || allowedOrigins.has(origin) || isLocalDevOrigin(origin) || isTrustedVercelOrigin(origin) || isTrustedCloudflarePagesOrigin(origin)) {
       return callback(null, true);
     }
     return callback(new Error(`CORS blocked for origin: ${origin}`));
