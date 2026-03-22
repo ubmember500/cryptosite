@@ -8,6 +8,7 @@ export const authService = {
 
   async login(email, password) {
     try {
+      console.log('[authService.login] Calling POST', api.defaults.baseURL + '/auth/login');
       const response = await api.post('/auth/login', { email, password }, { _skipAuthRedirect: true });
       // response.data should have { user, accessToken, refreshToken }
       if (!response?.data) {

@@ -13,6 +13,11 @@ export const API_BASE_URL =
 export const SOCKET_URL =
   import.meta.env.VITE_SOCKET_URL || API_BASE_URL.replace(/\/api\/?$/, '');
 
+if (import.meta.env.DEV || typeof window !== 'undefined') {
+  console.log('[Config] API_BASE_URL =', API_BASE_URL);
+  console.log('[Config] VITE_API_BASE_URL env =', configuredApiBase);
+}
+
 export const ROUTES = {
   HOME: '/',
   ACCOUNT: '/account',
